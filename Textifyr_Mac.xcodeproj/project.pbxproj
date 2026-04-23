@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		89148FB32F9A894300D354DF /* TextifyrModels in Frameworks */ = {isa = PBXBuildFile; productRef = 89148FB22F9A894300D354DF /* TextifyrModels */; };
+		89148FB52F9A894300D354DF /* TextifyrServices in Frameworks */ = {isa = PBXBuildFile; productRef = 89148FB42F9A894300D354DF /* TextifyrServices */; };
+		89148FB72F9A894300D354DF /* TextifyrViewModels in Frameworks */ = {isa = PBXBuildFile; productRef = 89148FB62F9A894300D354DF /* TextifyrViewModels */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		89625BB12F99434600FACC87 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +58,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				89148FB72F9A894300D354DF /* TextifyrViewModels in Frameworks */,
+				89148FB32F9A894300D354DF /* TextifyrModels in Frameworks */,
+				89148FB52F9A894300D354DF /* TextifyrServices in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +121,9 @@
 			);
 			name = Textifyr_Mac;
 			packageProductDependencies = (
+				89148FB22F9A894300D354DF /* TextifyrModels */,
+				89148FB42F9A894300D354DF /* TextifyrServices */,
+				89148FB62F9A894300D354DF /* TextifyrViewModels */,
 			);
 			productName = Textifyr_Mac;
 			productReference = 89625BA32F99434500FACC87 /* Textifyr_Mac.app */;
@@ -195,6 +207,9 @@
 			);
 			mainGroup = 89625B9A2F99434500FACC87;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				89148FB12F9A894300D354DF /* XCLocalSwiftPackageReference "../TextifyrCore" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 89625BA42F99434500FACC87 /* Products */;
 			projectDirPath = "";
@@ -392,11 +407,23 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GDR6PYP3RX;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = YES;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -422,11 +449,23 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GDR6PYP3RX;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = YES;
+				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -563,6 +602,28 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		89148FB12F9A894300D354DF /* XCLocalSwiftPackageReference "../TextifyrCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../TextifyrCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		89148FB22F9A894300D354DF /* TextifyrModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TextifyrModels;
+		};
+		89148FB42F9A894300D354DF /* TextifyrServices */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TextifyrServices;
+		};
+		89148FB62F9A894300D354DF /* TextifyrViewModels */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TextifyrViewModels;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 89625B9B2F99434500FACC87 /* Project object */;
 }
