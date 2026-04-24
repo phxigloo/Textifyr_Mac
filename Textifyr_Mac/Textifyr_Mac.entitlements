@@ -11,20 +11,25 @@
     <array>
         <string>iCloud.com.wecandoit.Textifyr</string>
     </array>
-    <!-- Required for CloudKit push notifications -->
     <key>com.apple.developer.aps-environment</key>
     <string>development</string>
-    <!-- Microphone access -->
+
+    <!-- Hardware -->
     <key>com.apple.security.device.audio-input</key>
     <true/>
-    <!-- Camera access -->
     <key>com.apple.security.device.camera</key>
     <true/>
-    <!-- Network client (Web URL capture) -->
+
+    <!-- Network: required for SpeakerKit model download and web capture -->
     <key>com.apple.security.network.client</key>
     <true/>
-    <!-- Read user-selected files -->
-    <key>com.apple.security.files.user-selected.read-only</key>
+
+    <!-- File access: user-selected files (audio, PDF, image import) -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+
+    <!-- Screen recording (ScreenCaptureKit) -->
+    <key>com.apple.security.screen-capture</key>
     <true/>
 </dict>
 </plist>

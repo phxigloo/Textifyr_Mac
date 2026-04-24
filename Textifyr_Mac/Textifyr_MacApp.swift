@@ -1,23 +1,53 @@
-//
-//  Textifyr_MacApp.swift
-//  Textifyr_Mac
-//
-//  Created by Bill Miles on 4/22/26.
-//
-
 import SwiftUI
-
-// TextifyrCore will be imported here once the package is linked in Xcode (Phase 1).
-// For now this is a placeholder entry point.
+import SwiftData
+import TextifyrModels
+import TextifyrServices
+import TextifyrViewModels
 
 @main
 struct Textifyr_MacApp: App {
+    let container: ModelContainer
+    @StateObject private var appState = AppState()
+
+    init() {
+        do {
+            container = try ModelContainerFactory.makeContainer()
+        } catch {
+            fatalError("Failed to create ModelContainer: \(error)")
+        }
+        DataSeeder.seedIfNeeded(context: container.mainContext)
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(appState)
+                .frame(minWidth: 900, minHeight: 600)
+                .task { await prefetchDiarizationModels() }
+        }
+        .modelContainer(container)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("New Document") {
+                    NotificationCenter.default.post(name: .newDocument, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: .command)
+            }
         }
 
-        // macOS Settings window — populated in Phase 10
-        // Settings { SettingsView() }
+        Settings {
+            SettingsView()
+        }
+        .modelContainer(container)
     }
+}
+
+// Downloads SpeakerKit CoreML models silently in the background on first launch.
+private func prefetchDiarizationModels() async {
+    let service = DiarizationService()
+    _ = await service.ensureModelsLoaded(onDownloadNeeded: {})
+}
+
+extension Notification.Name {
+    static let newDocument = Notification.Name("TextifyrNewDocument")
 }
