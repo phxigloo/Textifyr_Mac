@@ -48,12 +48,13 @@ struct SpeakerIdentificationView: View {
             }
 
             HStack(spacing: 16) {
-                Button("Skip") {
-                    captureVM.skipSpeakerRename()
+                Button("Cancel") {
+                    captureVM.reset()
+                    dismiss()
                 }
                 .buttonStyle(.bordered)
 
-                Button("Confirm") {
+                Button("Save") {
                     captureVM.confirmSpeakers()
                 }
                 .buttonStyle(.borderedProminent)

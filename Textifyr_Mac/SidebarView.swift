@@ -70,19 +70,14 @@ private struct SidebarRow: View {
     let document: TextifyrDocument
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(document.title)
-                    .font(.body)
-                    .lineLimit(1)
-                Spacer()
-                if let stage = document.stage {
-                    StageBadgeView(stage: stage)
-                }
+        HStack {
+            Text(document.title)
+                .font(.body)
+                .lineLimit(1)
+            Spacer()
+            if let stage = document.stage {
+                StageBadgeView(stage: stage)
             }
-            Text(document.modificationDate, style: .relative)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
     }
