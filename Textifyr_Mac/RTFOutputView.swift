@@ -6,9 +6,11 @@ import TextifyrServices
 
 struct RTFOutputView: View {
     let document: TextifyrDocument
+    @StateObject private var formatState = TextFormatState()
 
     var body: some View {
         VStack(spacing: 0) {
+            // Header
             HStack {
                 Text("Output")
                     .font(.headline)
@@ -23,9 +25,21 @@ struct RTFOutputView: View {
 
             Divider()
 
-            if let rtfData = document.outputRTF,
-               let attributed = NSAttributedString(rtf: rtfData, documentAttributes: nil) {
-                RTFTextView(attributedString: attributed)
+            if document.hasOutput {
+                // Formatting toolbar
+                FormattingToolbar(fmt: formatState)
+
+                Divider()
+
+                // Editable rich text view bound to document.outputRTF
+                RichTextEditor(
+                    rtfData: Binding(
+                        get: { document.outputRTF },
+                        set: { document.outputRTF = $0 }
+                    ),
+                    isEditable: true,
+                    formatState: formatState
+                )
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "sparkles")
@@ -45,30 +59,6 @@ struct RTFOutputView: View {
     }
 }
 
-// MARK: - NSTextView wrapper
-
-private struct RTFTextView: NSViewRepresentable {
-    let attributedString: NSAttributedString
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
-        if let textView = scrollView.documentView as? NSTextView {
-            textView.isEditable = false
-            textView.isSelectable = true
-            textView.textContainerInset = NSSize(width: 20, height: 20)
-            textView.backgroundColor = NSColor.textBackgroundColor
-            textView.textStorage?.setAttributedString(attributedString)
-        }
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        if let textView = scrollView.documentView as? NSTextView {
-            textView.textStorage?.setAttributedString(attributedString)
-        }
-    }
-}
-
 // MARK: - Export menu
 
 private struct ExportMenuButton: View {
@@ -76,9 +66,9 @@ private struct ExportMenuButton: View {
 
     var body: some View {
         Menu {
-            Button("Export as RTF…") { export(format: .rtf) }
+            Button("Export as RTF…")        { export(format: .rtf) }
             Button("Export as Plain Text…") { export(format: .plainText) }
-            Button("Export as Markdown…") { export(format: .markdown) }
+            Button("Export as Markdown…")   { export(format: .markdown) }
         } label: {
             Label("Export", systemImage: "square.and.arrow.up")
                 .font(.caption)
@@ -103,7 +93,6 @@ private struct ExportMenuButton: View {
                 try? FileManager.default.copyItem(at: url, to: dest)
             }
         } catch {
-            // Surface error via NSAlert since we have no SwiftUI environment here
             let alert = NSAlert()
             alert.messageText = "Export Failed"
             alert.informativeText = error.localizedDescription

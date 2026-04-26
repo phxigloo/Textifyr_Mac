@@ -3,36 +3,40 @@ import AppKit
 import ScreenCaptureKit
 
 enum ScreenCaptureService {
-    /// Captures the main screen and writes a PNG to a temp file, returning its URL.
-    static func captureScreen() async throws -> URL {
-        // Request permission first (SCShareableContent implicitly triggers it)
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-        guard let display = content.displays.first else {
+
+    /// Captures all connected displays, excluding the current app's windows.
+    /// Returns an ordered list of (display name, CGImage) for each display.
+    static func captureAllDisplays() async throws -> [(name: String, image: CGImage)] {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+
+        guard !content.displays.isEmpty else {
             throw TextifyrCaptureError.noDisplayFound
         }
 
-        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-        let config = SCStreamConfiguration()
-        config.width  = display.width
-        config.height = display.height
-
-        let image = try await SCScreenshotManager.captureImage(
-            contentFilter: filter,
-            configuration: config
-        )
-
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("png")
-
-        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
-            throw TextifyrCaptureError.saveFailed
+        let excludedApps = content.applications.filter {
+            $0.bundleIdentifier == Bundle.main.bundleIdentifier
         }
-        CGImageDestinationAddImage(dest, image, nil)
-        guard CGImageDestinationFinalize(dest) else {
-            throw TextifyrCaptureError.saveFailed
+
+        var results: [(name: String, image: CGImage)] = []
+        for (index, display) in content.displays.enumerated() {
+            let filter = SCContentFilter(
+                display: display,
+                excludingApplications: excludedApps,
+                exceptingWindows: []
+            )
+            let config = SCStreamConfiguration()
+            config.width = display.width * 2
+            config.height = display.height * 2
+            config.showsCursor = false
+
+            let image = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: config
+            )
+            let name = "Display \(index + 1) (\(display.width)×\(display.height))"
+            results.append((name: name, image: image))
         }
-        return url
+        return results
     }
 }
 
