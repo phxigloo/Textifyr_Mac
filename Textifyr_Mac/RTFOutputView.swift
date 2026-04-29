@@ -1,37 +1,69 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 import TextifyrModels
 import TextifyrServices
+import TextifyrViewModels
 
 struct RTFOutputView: View {
-    let document: TextifyrDocument
+    @ObservedObject var viewModel: DocumentEditorViewModel
     @StateObject private var formatState = TextFormatState()
+    @State private var showExportSheet = false
+
+    private var document: TextifyrDocument { viewModel.document }
+
+    private var pictureSessions: [SourceSession] {
+        (document.sourceSessions ?? [])
+            .filter { $0.isPictureSession }
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Output")
-                    .font(.headline)
-                Spacer()
-                if document.hasOutput {
-                    ExportMenuButton(document: document)
+            headerBar
+            Divider()
+            ZStack {
+                contentArea
+                if viewModel.isFormatting {
+                    formattingOverlay
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(.bar)
+        }
+        .sheet(isPresented: $showExportSheet) {
+            ExportFormatSheet(viewModel: viewModel)
+        }
+    }
 
-            Divider()
+    // MARK: - Header
 
-            if document.hasOutput {
-                // Formatting toolbar
+    private var headerBar: some View {
+        HStack {
+            Text("Output")
+                .font(.headline)
+            Spacer()
+            if document.hasOutput && !viewModel.isFormatting {
+                Button {
+                    showExportSheet = true
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help("Export document")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var contentArea: some View {
+        if document.hasOutput {
+            VStack(spacing: 0) {
                 FormattingToolbar(fmt: formatState)
-
                 Divider()
-
-                // Editable rich text view bound to document.outputRTF
                 RichTextEditor(
                     rtfData: Binding(
                         get: { document.outputRTF },
@@ -40,63 +72,119 @@ struct RTFOutputView: View {
                     isEditable: true,
                     formatState: formatState
                 )
-            } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.tertiary)
-                    Text("No formatted output yet")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text("Add sources and run the formatting pipeline.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
+                if !pictureSessions.isEmpty {
+                    Divider()
+                    pictureStrip
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        } else if !viewModel.isFormatting {
+            emptyState
         }
+    }
+
+    // MARK: - Picture strip
+
+    private var pictureStrip: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Picture Sources")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Text("(\(pictureSessions.count))")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Text("Included in RTF export")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .controlBackgroundColor))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(pictureSessions, id: \.id) { session in
+                        PictureThumbnailView(session: session)
+                    }
+                }
+                .padding(10)
+            }
+            .frame(height: 120)
+            .background(Color(nsColor: .textBackgroundColor))
+        }
+    }
+
+    // MARK: - Formatting overlay
+
+    private var formattingOverlay: some View {
+        ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+            VStack(spacing: 16) {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .scaleEffect(1.2)
+                VStack(spacing: 4) {
+                    Text("Formatting…")
+                        .font(.headline)
+                    if !viewModel.formattingStep.isEmpty {
+                        Text(viewModel.formattingStep)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+            }
+            .padding(32)
+        }
+        .ignoresSafeArea()
+    }
+
+    // MARK: - Empty state
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 40))
+                .foregroundStyle(.tertiary)
+            Text("No formatted output yet")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("Add sources and run the formatting pipeline.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// MARK: - Export menu
+// MARK: - Picture thumbnail
 
-private struct ExportMenuButton: View {
-    let document: TextifyrDocument
+private struct PictureThumbnailView: View {
+    let session: SourceSession
 
     var body: some View {
-        Menu {
-            Button("Export as RTF…")        { export(format: .rtf) }
-            Button("Export as Plain Text…") { export(format: .plainText) }
-            Button("Export as Markdown…")   { export(format: .markdown) }
-        } label: {
-            Label("Export", systemImage: "square.and.arrow.up")
-                .font(.caption)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Export document")
-    }
-
-    private func export(format: ExportFormat) {
-        do {
-            let url = try ExportService.exportFile(
-                rtfData: document.outputRTF,
-                fallbackText: document.mergedSourceText,
-                format: format
-            )
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = url.lastPathComponent
-            let utType: UTType = format == .rtf ? .rtf : format == .markdown ? .text : .plainText
-            panel.allowedContentTypes = [utType]
-            if panel.runModal() == .OK, let dest = panel.url {
-                try? FileManager.default.copyItem(at: url, to: dest)
+        VStack(spacing: 4) {
+            if let pngData = session.rawRTFData, let nsImage = NSImage(data: pngData) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 80, height: 80)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5)
+                    )
             }
-        } catch {
-            let alert = NSAlert()
-            alert.messageText = "Export Failed"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+            if !session.rawText.isEmpty {
+                Text(session.previewText)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .frame(width: 80)
+            }
         }
     }
 }

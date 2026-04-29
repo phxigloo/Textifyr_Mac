@@ -39,7 +39,7 @@ struct DocumentEditorView: View {
                     .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
 
                 // Right: formatted output
-                RTFOutputView(document: viewModel.document)
+                RTFOutputView(viewModel: viewModel)
                     .frame(minWidth: 320, maxWidth: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

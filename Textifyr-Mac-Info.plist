@@ -8,5 +8,7 @@
 	<string>Textifyr uses speech recognition to convert spoken audio to text.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Textifyr needs to use the device Screen Capture System</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Textifyr accesses your photo library to extract text from photos using OCR.</string>
 </dict>
 </plist>

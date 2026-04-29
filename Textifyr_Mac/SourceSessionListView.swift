@@ -86,6 +86,12 @@ private struct SessionRowView: View {
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
                 Spacer()
+                if session.containsCopyrightNotice {
+                    Image(systemName: "c.circle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption2)
+                        .help("This session may contain copyrighted material")
+                }
                 Text(session.createdAt, style: .date)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)

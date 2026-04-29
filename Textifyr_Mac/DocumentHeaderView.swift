@@ -9,7 +9,6 @@ struct DocumentHeaderView: View {
     @EnvironmentObject private var appState: AppState
 
     @Query(sort: \WorkStage.sortOrder) private var stages: [WorkStage]
-    @Query(sort: \FormattingPipeline.name) private var pipelines: [FormattingPipeline]
 
     @FocusState private var titleFocused: Bool
 
@@ -51,22 +50,7 @@ struct DocumentHeaderView: View {
             .fixedSize()
 
             // Pipeline picker
-            Menu {
-                ForEach(pipelines) { pipeline in
-                    Button(pipeline.name) {
-                        viewModel.selectPipeline(pipeline)
-                    }
-                }
-            } label: {
-                Label(
-                    viewModel.document.pipeline?.name ?? "Pipeline",
-                    systemImage: "wand.and.sparkles"
-                )
-                .font(.caption)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Select a formatting pipeline")
+            PipelinePickerView(viewModel: viewModel)
 
             // Format button
             if viewModel.isFormatting {
@@ -76,6 +60,11 @@ struct DocumentHeaderView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    Button("Cancel") {
+                        viewModel.cancelFormatting(appState: appState)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             } else {
                 Button {
@@ -92,5 +81,12 @@ struct DocumentHeaderView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(.bar)
+        .onAppear { assignDefaultStage() }
+        .onChange(of: stages) { _, _ in assignDefaultStage() }
+    }
+
+    private func assignDefaultStage() {
+        guard viewModel.document.stage == nil, let first = stages.first else { return }
+        viewModel.selectStage(first)
     }
 }

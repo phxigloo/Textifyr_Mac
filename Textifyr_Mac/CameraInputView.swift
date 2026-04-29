@@ -8,6 +8,7 @@ import TextifyrServices
 struct CameraInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
 
     @State private var capturedImage: NSImage?
     @State private var capturedCGImage: CGImage?
@@ -50,6 +51,8 @@ struct CameraInputView: View {
         .onChange(of: captureVM.phase) { _, phase in
             if phase == .done { dismiss() }
         }
+        .onAppear  { appState.setCameraInUse(true) }
+        .onDisappear { appState.setCameraInUse(false) }
     }
 
     // MARK: - Live preview
@@ -167,7 +170,7 @@ struct CameraInputView: View {
 
 // MARK: - Live camera preview (NSViewRepresentable)
 
-private struct CameraPreviewView: NSViewRepresentable {
+struct CameraPreviewView: NSViewRepresentable {
     let onCapture: (NSImage) -> Void
 
     func makeNSView(context: Context) -> CameraPreviewNSView {
@@ -178,7 +181,7 @@ private struct CameraPreviewView: NSViewRepresentable {
     func updateNSView(_ nsView: CameraPreviewNSView, context: Context) {}
 }
 
-private class CameraPreviewNSView: NSView {
+class CameraPreviewNSView: NSView {
     var onCapture: ((NSImage) -> Void)?
 
     private var session: AVCaptureSession?

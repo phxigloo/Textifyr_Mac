@@ -15,9 +15,10 @@ struct InputSourcePickerView: View {
 
     private let methods: [CaptureMethod] = [
         .microphone, .audioFile, .videoAudio,
-        .camera, .imageFile,
+        .camera, .photoLibrary, .imageFile,
         .pdf, .webURL,
-        .screenCapture, .rtfEditor
+        .screenCapture, .rtfEditor,
+        .appleIntelligence, .smartVision
     ]
 
     init(document: TextifyrDocument, context: ModelContext) {
@@ -58,7 +59,7 @@ struct InputSourcePickerView: View {
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 16) {
                 ForEach(methods, id: \.self) { method in
-                    SourceMethodButton(method: method) {
+                    SourceMethodButton(method: method, disabled: method == .camera && !appState.canUseCamera) {
                         activeMethod = method
                     }
                 }
@@ -79,6 +80,8 @@ struct InputSourcePickerView: View {
             AudioFileImportView(captureVM: captureVM, captureMethod: method)
         case .imageFile:
             ImageFileImportView(captureVM: captureVM)
+        case .photoLibrary:
+            PhotoLibraryInputView(captureVM: captureVM)
         case .camera:
             CameraInputView(captureVM: captureVM)
         case .pdf:
@@ -89,6 +92,10 @@ struct InputSourcePickerView: View {
             ScreenCaptureInputView(captureVM: captureVM)
         case .rtfEditor:
             RTFEditorInputView(captureVM: captureVM)
+        case .appleIntelligence:
+            AppleIntelligenceInputView(captureVM: captureVM)
+        case .smartVision:
+            SmartVisionInputView(captureVM: captureVM)
         default:
             Text("Coming soon")
                 .frame(width: 480, height: 320)
@@ -100,6 +107,7 @@ struct InputSourcePickerView: View {
 
 private struct SourceMethodButton: View {
     let method: CaptureMethod
+    var disabled: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -107,11 +115,12 @@ private struct SourceMethodButton: View {
             VStack(spacing: 8) {
                 Image(systemName: method.systemImage)
                     .font(.system(size: 28))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(disabled ? Color.secondary : Color.accentColor)
                 Text(method.displayName)
                     .font(.caption)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
+                    .foregroundStyle(disabled ? Color.secondary : Color.primary)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
@@ -119,5 +128,7 @@ private struct SourceMethodButton: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(disabled ? "Camera is already in use in another window" : "")
     }
 }

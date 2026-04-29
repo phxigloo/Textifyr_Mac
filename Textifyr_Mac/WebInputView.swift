@@ -58,7 +58,11 @@ struct WebInputView: View {
     }
 
     private func importURL() {
-        guard let url = URL(string: urlText.trimmingCharacters(in: .whitespaces)) else {
+        var raw = urlText.trimmingCharacters(in: .whitespaces)
+        if !raw.lowercased().hasPrefix("http://") && !raw.lowercased().hasPrefix("https://") {
+            raw = "https://" + raw
+        }
+        guard let url = URL(string: raw) else {
             errorText = "Invalid URL"
             return
         }

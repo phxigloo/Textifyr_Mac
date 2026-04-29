@@ -252,6 +252,8 @@ struct RichTextEditor: NSViewRepresentable {
         tv.isAutomaticLinkDetectionEnabled = true
         tv.textContainerInset       = NSSize(width: 20, height: 20)
         tv.backgroundColor          = .textBackgroundColor
+        tv.textColor                = .labelColor   // adaptive default — overridden per-char by RTF
+        tv.typingAttributes[.foregroundColor] = NSColor.labelColor
         tv.delegate                 = coordinator
         coordinator.textView        = tv
         formatState.textView        = tv
@@ -259,7 +261,30 @@ struct RichTextEditor: NSViewRepresentable {
 
     private func loadContent(into tv: NSTextView, data: Data?) {
         if let data, let attr = NSAttributedString(rtf: data, documentAttributes: nil) {
-            tv.textStorage?.setAttributedString(attr)
+            // RTF serialisation embeds explicit monochromatic colors (black, white, near-grey)
+            // that don't adapt to dark mode. Strip them so NSTextView's adaptive textColor
+            // (.labelColor) applies. Intentional saturated colors (red, blue, etc.) are kept.
+            let mutable = NSMutableAttributedString(attributedString: attr)
+            let fullRange = NSRange(location: 0, length: mutable.length)
+            mutable.enumerateAttribute(.foregroundColor, in: fullRange, options: []) { val, range, _ in
+                guard let nsOrig = val as? NSColor else { return }
+                // Try multiple color spaces; RTF parser may produce device or calibrated RGB.
+                let ns = nsOrig.usingColorSpace(.genericRGB)
+                       ?? nsOrig.usingColorSpace(.sRGB)
+                       ?? nsOrig.usingColorSpace(.deviceRGB)
+                guard let ns else { return }
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+                ns.getRed(&r, green: &g, blue: &b, alpha: nil)
+                // Strip any colour in the monochromatic dark or light zone.
+                // Threshold 0.20 / 0.80 catches labelColor (~0.06 in light, ~0.92 in dark)
+                // while preserving saturated intentional colours (red, blue, green, etc.).
+                let isNearBlack = r < 0.20 && g < 0.20 && b < 0.20
+                let isNearWhite = r > 0.80 && g > 0.80 && b > 0.80
+                if isNearBlack || isNearWhite {
+                    mutable.removeAttribute(.foregroundColor, range: range)
+                }
+            }
+            tv.textStorage?.setAttributedString(mutable)
         } else {
             tv.string = ""
         }
