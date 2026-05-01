@@ -8,9 +8,10 @@ struct DocumentHeaderView: View {
 
     @Query(sort: \WorkStage.sortOrder) private var stages: [WorkStage]
     @FocusState private var titleFocused: Bool
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             TextField("Document title", text: $viewModel.title)
                 .font(.title2.bold())
                 .textFieldStyle(.plain)
@@ -26,6 +27,16 @@ struct DocumentHeaderView: View {
             if let stage = viewModel.document.stage {
                 StageBadgeView(stage: stage)
             }
+
+            Button {
+                openSettings()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Settings")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)

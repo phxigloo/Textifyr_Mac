@@ -34,11 +34,9 @@ struct DocumentEditorView: View {
             }
 
             HSplitView {
-                // Left: source sessions
                 SourceSessionListView(document: viewModel.document, viewModel: viewModel)
                     .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
 
-                // Right: formatted output
                 RTFOutputView(viewModel: viewModel)
                     .frame(minWidth: 320, maxWidth: .infinity)
             }

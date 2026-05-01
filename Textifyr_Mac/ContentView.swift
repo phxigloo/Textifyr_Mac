@@ -38,7 +38,7 @@ private struct MainNavigationView: View {
             }
         }
         .navigationSplitViewStyle(.prominentDetail)
-        .toolbar(removing: .sidebarToggle)
+        .collapseWindowToolbar()
         .alert("Error", isPresented: Binding(
             get: { appState.alertMessage != nil },
             set: { if !$0 { appState.clearAlert() } }

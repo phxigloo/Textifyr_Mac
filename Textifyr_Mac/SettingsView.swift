@@ -42,6 +42,7 @@ private struct GeneralTab: View {
     @AppStorage(AppConstants.hasShownAIPrivacyWarningKey) private var hasShownAIPrivacyWarning = false
     @AppStorage(AppConstants.localProcessingOnlyKey)      private var localProcessingOnly      = false
     @AppStorage(AppConstants.maxDocumentWindowsKey)       private var maxDocumentWindows       = AppConstants.defaultMaxDocumentWindows
+    @State private var showPrivacyPolicy = false
 
     var body: some View {
         Form {
@@ -88,6 +89,12 @@ private struct GeneralTab: View {
                         Label("Not accepted", systemImage: "xmark.circle")
                             .foregroundStyle(.red)
                     }
+                }
+                Button("View Privacy Policy") {
+                    showPrivacyPolicy = true
+                }
+                .sheet(isPresented: $showPrivacyPolicy) {
+                    PrivacyPolicyView()
                 }
                 Button("Reset and Show Disclaimer") {
                     hasAcceptedTerms = false

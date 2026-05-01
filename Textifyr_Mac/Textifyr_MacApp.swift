@@ -27,14 +27,13 @@ struct Textifyr_MacApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .modelContainer(container)
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("New Document") {
-                    NotificationCenter.default.post(name: .newDocument, object: nil)
-                }
-                .keyboardShortcut("n", modifiers: .command)
-            }
+        .commands { AppCommands() }
+
+        Window("About Textifyr", id: "about") {
+            AboutView()
         }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
 
         Settings {
             SettingsView()
@@ -51,4 +50,24 @@ private func prefetchDiarizationModels() async {
 
 extension Notification.Name {
     static let newDocument = Notification.Name("TextifyrNewDocument")
+}
+
+// MARK: - Commands
+
+private struct AppCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About Textifyr") {
+                openWindow(id: "about")
+            }
+        }
+        CommandGroup(replacing: .newItem) {
+            Button("New Document") {
+                NotificationCenter.default.post(name: .newDocument, object: nil)
+            }
+            .keyboardShortcut("n", modifiers: .command)
+        }
+    }
 }

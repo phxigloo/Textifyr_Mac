@@ -3,6 +3,13 @@ import SwiftData
 import TextifyrModels
 import TextifyrViewModels
 
+// Pairs a document with the context snippet that explains why it matched a search.
+private struct FilteredDoc: Identifiable {
+    let document: TextifyrDocument
+    let snippet: String?       // nil when matched by title (title is already visible)
+    var id: UUID { document.id }
+}
+
 struct SidebarView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.modelContext) private var modelContext
@@ -13,9 +20,27 @@ struct SidebarView: View {
     @State private var showDeleteConfirmation = false
     @State private var documentToDelete: TextifyrDocument?
 
-    private var filtered: [TextifyrDocument] {
-        guard !searchText.isEmpty else { return documents }
-        return documents.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
+    private var filteredDocs: [FilteredDoc] {
+        guard !searchText.isEmpty else {
+            return documents.map { FilteredDoc(document: $0, snippet: nil) }
+        }
+        return documents.compactMap { doc in
+            if doc.title.localizedCaseInsensitiveContains(searchText) {
+                return FilteredDoc(document: doc, snippet: nil)
+            }
+            let sources = doc.mergedSourceText
+            if sources.localizedCaseInsensitiveContains(searchText) {
+                return FilteredDoc(document: doc,
+                                   snippet: sidebarSnippet(in: sources, term: searchText, label: "Sources"))
+            }
+            if let rtf = doc.outputRTF,
+               let plain = NSAttributedString(rtf: rtf, documentAttributes: nil)?.string,
+               plain.localizedCaseInsensitiveContains(searchText) {
+                return FilteredDoc(document: doc,
+                                   snippet: sidebarSnippet(in: plain, term: searchText, label: "Output"))
+            }
+            return nil
+        }
     }
 
     private var selectedDocument: TextifyrDocument? {
@@ -25,12 +50,12 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            List(filtered, id: \.id, selection: $selectedID) { doc in
-                SidebarRow(document: doc)
-                    .tag(doc.id)
+            List(filteredDocs, selection: $selectedID) { item in
+                SidebarRow(document: item.document, snippet: item.snippet)
+                    .tag(item.document.id)
                     .contextMenu {
                         Button("Delete", role: .destructive) {
-                            documentToDelete = doc
+                            documentToDelete = item.document
                             showDeleteConfirmation = true
                         }
                     }
@@ -41,12 +66,13 @@ struct SidebarView: View {
 
             Divider()
 
-            // + / - footer (mirrors the Settings pipeline list pattern)
-            HStack(spacing: 2) {
+            // + / - footer
+            HStack(spacing: 12) {
                 Button {
                     createDocument()
                 } label: {
                     Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .semibold))
                 }
                 .buttonStyle(.borderless)
                 .help("New Document (⌘N)")
@@ -58,6 +84,7 @@ struct SidebarView: View {
                     }
                 } label: {
                     Image(systemName: "minus")
+                        .font(.system(size: 15, weight: .semibold))
                 }
                 .buttonStyle(.borderless)
                 .disabled(selectedDocument == nil)
@@ -65,8 +92,8 @@ struct SidebarView: View {
 
                 Spacer()
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
             .background(.bar)
         }
         .onReceive(NotificationCenter.default.publisher(for: .newDocument)) { _ in
@@ -111,45 +138,55 @@ struct SidebarView: View {
 
 private struct SidebarRow: View {
     let document: TextifyrDocument
+    let snippet: String?
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \WorkStage.sortOrder) private var stages: [WorkStage]
 
     var body: some View {
-        HStack {
-            Text(document.title)
-                .font(.body)
-                .lineLimit(1)
+        HStack(alignment: snippet != nil ? .top : .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(document.title)
+                    .font(.body)
+                    .lineLimit(1)
+                if let snippet {
+                    Text(snippet)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Spacer()
             // Stage badge: visual is drawn separately so Menu chrome doesn't affect colors
             if let stage = document.stage {
-                ZStack {
-                    StageBadgeView(stage: stage)
-                    Menu {
-                        ForEach(stages) { s in
-                            Button {
-                                document.stage = s
-                                try? modelContext.save()
-                            } label: {
-                                HStack {
-                                    Text(s.name)
-                                    if document.stage?.id == s.id {
-                                        Image(systemName: "checkmark")
+                StageBadgeView(stage: stage)
+                    .overlay(
+                        Menu {
+                            ForEach(stages) { s in
+                                Button {
+                                    document.stage = s
+                                    try? modelContext.save()
+                                } label: {
+                                    HStack {
+                                        Text(s.name)
+                                        if document.stage?.id == s.id {
+                                            Image(systemName: "checkmark")
+                                        }
                                     }
                                 }
                             }
+                            Divider()
+                            Button("Clear Stage", role: .destructive) {
+                                document.stage = nil
+                                try? modelContext.save()
+                            }
+                        } label: {
+                            Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
-                        Divider()
-                        Button("Clear Stage", role: .destructive) {
-                            document.stage = nil
-                            try? modelContext.save()
-                        }
-                    } label: {
-                        Color.clear.contentShape(Rectangle())
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                }
-                .fixedSize()
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                    )
+                    .fixedSize()
             } else {
                 Menu {
                     ForEach(stages) { s in
@@ -170,6 +207,30 @@ private struct SidebarRow: View {
         }
         .padding(.vertical, 2)
     }
+}
+
+// MARK: - Search snippet helper
+
+/// Extracts a short context fragment around the first occurrence of `term` in `text`.
+/// Returns a labelled string like "Sources: …matched content here…"
+private func sidebarSnippet(in text: String, term: String, label: String, radius: Int = 55) -> String {
+    let ns = text as NSString
+    let matchRange = ns.range(of: term, options: [.caseInsensitive, .diacriticInsensitive])
+    guard matchRange.location != NSNotFound else { return "\(label): …" }
+
+    let start = max(0, matchRange.location - radius)
+    let end   = min(ns.length, matchRange.location + matchRange.length + radius)
+    var fragment = ns.substring(with: NSRange(location: start, length: end - start))
+
+    // Collapse runs of whitespace/newlines so the snippet reads as a single line
+    fragment = fragment
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+
+    let pre  = start > 0         ? "…" : ""
+    let post = end < ns.length   ? "…" : ""
+    return "\(label): \(pre)\(fragment)\(post)"
 }
 
 #Preview("Sidebar with documents") {
