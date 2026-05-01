@@ -196,3 +196,12 @@ struct SessionDetailView: View {
         dismiss()
     }
 }
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let doc = previewDocument(in: c)
+    let session = previewSession(in: c)
+    return SessionDetailView(session: session, document: doc)
+        .modelContainer(c)
+        .frame(width: 700, height: 560)
+}

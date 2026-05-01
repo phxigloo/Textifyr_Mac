@@ -1,5 +1,6 @@
 import SwiftUI
 import TextifyrViewModels
+import SwiftData
 
 struct SpeakerIdentificationView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
@@ -85,4 +86,12 @@ private struct SpeakerRenameRow: View {
                 .textFieldStyle(.roundedBorder)
         }
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return SpeakerIdentificationView(captureVM: captureVM)
+        .modelContainer(c)
+        .frame(width: 480, height: 420)
 }

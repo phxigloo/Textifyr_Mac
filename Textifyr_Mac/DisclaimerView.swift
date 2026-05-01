@@ -136,3 +136,8 @@ private struct TermsSection: View {
         }
     }
 }
+
+#Preview {
+    DisclaimerView()
+        .frame(width: 640, height: 560)
+}

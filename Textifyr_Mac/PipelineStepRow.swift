@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import TextifyrModels
 import TextifyrServices
 import TextifyrViewModels
@@ -203,4 +204,15 @@ private struct ImprovePromptSheet: View {
         }
         .frame(width: 420, height: 340)
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let vm = previewPipelineVM(in: c)
+    let step = vm.steps.first ?? PipelineStep(name: "Format", prompt: "Format this transcript.", sortOrder: 0)
+    return List {
+        PipelineStepRow(viewModel: vm, step: step, isLocked: false)
+    }
+    .modelContainer(c)
+    .frame(width: 480, height: 200)
 }

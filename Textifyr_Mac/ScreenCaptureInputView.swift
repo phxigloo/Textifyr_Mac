@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AppKit
 import TextifyrModels
 import TextifyrViewModels
@@ -360,4 +361,12 @@ struct ScreenCaptureInputView: View {
         }
         isProcessing = false
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return ScreenCaptureInputView(captureVM: captureVM)
+        .modelContainer(c)
+        .frame(width: 560, height: 460)
 }

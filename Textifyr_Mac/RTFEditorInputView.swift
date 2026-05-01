@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AppKit
 import TextifyrModels
 import TextifyrViewModels
@@ -65,4 +66,11 @@ struct RTFEditorInputView: View {
         let plain = attr.string
         captureVM.saveRTFCapture(rtfData: data, plainText: plain)
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return RTFEditorInputView(captureVM: captureVM)
+        .modelContainer(c)
 }

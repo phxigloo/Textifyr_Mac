@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import PhotosUI
 import AppKit
 import TextifyrModels
@@ -199,4 +200,12 @@ struct PhotoLibraryInputView: View {
         }
         isProcessing = false
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return PhotoLibraryInputView(captureVM: captureVM)
+        .modelContainer(c)
+        .frame(width: 560, height: 440)
 }

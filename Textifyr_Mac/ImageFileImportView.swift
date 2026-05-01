@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AppKit
 import UniformTypeIdentifiers
 import TextifyrModels
@@ -217,4 +218,12 @@ struct ImageFileImportView: View {
         }
         isProcessing = false
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return ImageFileImportView(captureVM: captureVM)
+        .modelContainer(c)
+        .frame(width: 560, height: 440)
 }

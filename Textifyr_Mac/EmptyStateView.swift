@@ -17,3 +17,8 @@ struct EmptyStateView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+
+#Preview {
+    EmptyStateView()
+        .frame(width: 600, height: 400)
+}

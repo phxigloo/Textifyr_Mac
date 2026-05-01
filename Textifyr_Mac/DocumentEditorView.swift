@@ -46,3 +46,13 @@ struct DocumentEditorView: View {
         }
     }
 }
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let doc = previewDocument(in: c)
+    let appState = previewAppState(selectedIn: c)
+    return DocumentEditorView(document: doc, context: c.mainContext)
+        .modelContainer(c)
+        .environmentObject(appState)
+        .frame(width: 900, height: 600)
+}

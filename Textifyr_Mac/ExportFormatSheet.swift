@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AppKit
 import UniformTypeIdentifiers
 import TextifyrModels
@@ -212,4 +213,11 @@ private struct ExportRow: View {
         }
         .buttonStyle(.plain)
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let vm = previewDocumentVM(in: c)
+    return ExportFormatSheet(viewModel: vm)
+        .modelContainer(c)
 }

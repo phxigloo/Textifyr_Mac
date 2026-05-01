@@ -2,6 +2,7 @@ import SwiftUI
 import TextifyrModels
 import TextifyrViewModels
 import TextifyrServices
+import SwiftData
 
 struct AppleIntelligenceInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
@@ -141,4 +142,11 @@ struct AppleIntelligenceInputView: View {
         }
         isGenerating = false
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return AppleIntelligenceInputView(captureVM: captureVM)
+        .modelContainer(c)
 }

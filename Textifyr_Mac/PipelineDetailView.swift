@@ -14,6 +14,22 @@ struct PipelineDetailView: View {
 
     private var isBuiltIn: Bool { viewModel.pipeline.isBuiltIn }
 
+    private var scopeExplanation: String {
+        switch viewModel.pipeline.scope {
+        case .source:
+            return "Source pipeline — each step receives one session's transcript. Needs at least 1 step."
+        case .output:
+            return "Output pipeline — each step receives all combined source text. Needs at least 1 step."
+        }
+    }
+
+    private var scopeIcon: String {
+        switch viewModel.pipeline.scope {
+        case .source: return "text.document"
+        case .output: return "doc.on.doc"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header: name + mode
@@ -64,6 +80,12 @@ struct PipelineDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                // Scope explanation
+                Label(scopeExplanation, systemImage: scopeIcon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 2)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -133,4 +155,12 @@ struct PipelineDetailView: View {
         }
         .navigationTitle(viewModel.pipelineName)
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let pipeline = previewOutputPipeline(in: c)
+    return PipelineDetailView(pipeline: pipeline, context: c.mainContext)
+        .modelContainer(c)
+        .frame(width: 500, height: 500)
 }

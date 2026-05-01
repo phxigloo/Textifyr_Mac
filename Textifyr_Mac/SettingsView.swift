@@ -9,7 +9,7 @@ import TextifyrViewModels
 
 struct SettingsView: View {
     private enum Tab: Hashable {
-        case general, textProcessing, stages, windows
+        case general, textProcessing, stages, pipelines
     }
     @State private var selectedTab: Tab = .general
 
@@ -27,20 +27,21 @@ struct SettingsView: View {
                 .tabItem { Label("Stages",          systemImage: "tag.fill") }
                 .tag(Tab.stages)
 
-            WindowsTab()
-                .tabItem { Label("Windows",         systemImage: "macwindow") }
-                .tag(Tab.windows)
+            PipelinesTab()
+                .tabItem { Label("Pipelines",       systemImage: "wand.and.sparkles") }
+                .tag(Tab.pipelines)
         }
-        .frame(minWidth: 520, minHeight: 420)
+        .frame(minWidth: 740, minHeight: 520)
     }
 }
 
-// MARK: - 10.2 General
+// MARK: - General
 
 private struct GeneralTab: View {
-    @AppStorage(AppConstants.hasAcceptedTermsKey)        private var hasAcceptedTerms        = true
+    @AppStorage(AppConstants.hasAcceptedTermsKey)         private var hasAcceptedTerms        = true
     @AppStorage(AppConstants.hasShownAIPrivacyWarningKey) private var hasShownAIPrivacyWarning = false
-    @AppStorage(AppConstants.localProcessingOnlyKey)     private var localProcessingOnly      = false
+    @AppStorage(AppConstants.localProcessingOnlyKey)      private var localProcessingOnly      = false
+    @AppStorage(AppConstants.maxDocumentWindowsKey)       private var maxDocumentWindows       = AppConstants.defaultMaxDocumentWindows
 
     var body: some View {
         Form {
@@ -62,6 +63,18 @@ private struct GeneralTab: View {
             Section("Network") {
                 Toggle("Block web requests", isOn: $localProcessingOnly)
                 Text("When enabled, the Web URL source cannot fetch pages. All other capture methods remain available.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Document Windows") {
+                Stepper(value: $maxDocumentWindows, in: 1...10) {
+                    LabeledContent("Maximum open documents") {
+                        Text("\(maxDocumentWindows)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("Limits how many document windows can be open at once. Existing windows are not closed when you lower this value.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -97,7 +110,7 @@ private struct GeneralTab: View {
     }
 }
 
-// MARK: - 10.3 Text Processing
+// MARK: - Text Processing
 
 private struct CleanupRule: Identifiable {
     let id = UUID()
@@ -118,7 +131,6 @@ private struct TextProcessingTab: View {
 
     var body: some View {
         Form {
-            // Auto-cleanup toggle
             Section("Auto-Cleanup") {
                 Toggle("Apply post-processing on import", isOn: $postProcessingEnabled)
                 Text("Removes filler words, normalises punctuation, and applies find/replace rules when text is captured.")
@@ -126,7 +138,6 @@ private struct TextProcessingTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            // Filler words
             Section("Filler Words") {
                 DisclosureGroup("Built-in words (\(AppConstants.defaultFillerWords.count))") {
                     Text(AppConstants.defaultFillerWords.joined(separator: ", "))
@@ -161,7 +172,6 @@ private struct TextProcessingTab: View {
                 }
             }
 
-            // Find & replace rules
             Section("Find & Replace Rules") {
                 if cleanupRules.isEmpty {
                     Text("No rules — text is left as-is after filler removal.")
@@ -172,14 +182,12 @@ private struct TextProcessingTab: View {
                     HStack(spacing: 8) {
                         Text(rule.find)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .foregroundStyle(.primary)
                         Image(systemName: "arrow.right")
                             .foregroundStyle(.secondary)
                             .font(.caption)
                         Group {
                             if rule.replace.isEmpty {
-                                Text("(remove)")
-                                    .foregroundStyle(.tertiary)
+                                Text("(remove)").foregroundStyle(.tertiary)
                             } else {
                                 Text(rule.replace)
                             }
@@ -189,32 +197,25 @@ private struct TextProcessingTab: View {
                             cleanupRules.removeAll { $0.id == rule.id }
                             saveCleanupRules()
                         } label: {
-                            Image(systemName: "minus.circle.fill")
-                                .foregroundStyle(.red)
+                            Image(systemName: "minus.circle.fill").foregroundStyle(.red)
                         }
                         .buttonStyle(.borderless)
                     }
-                    .font(.body)
                 }
 
                 HStack(spacing: 8) {
-                    TextField("Find…", text: $newFind)
-                        .textFieldStyle(.roundedBorder)
-                    Image(systemName: "arrow.right")
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                    TextField("Replace with…", text: $newReplace)
-                        .textFieldStyle(.roundedBorder)
+                    TextField("Find…", text: $newFind).textFieldStyle(.roundedBorder)
+                    Image(systemName: "arrow.right").foregroundStyle(.secondary).font(.caption)
+                    TextField("Replace with…", text: $newReplace).textFieldStyle(.roundedBorder)
                     Button("Add") { addCleanupRule() }
                         .disabled(newFind.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
 
-            // Default pipeline
-            Section("Default Pipeline") {
+            Section("Default Output Pipeline") {
                 Picker("New document pipeline", selection: $defaultPipelineID) {
                     Text("None").tag("")
-                    ForEach(pipelines) { pipeline in
+                    ForEach(pipelines.filter { $0.scope == .output }) { pipeline in
                         Text(pipeline.name).tag(pipeline.id.uuidString)
                     }
                 }
@@ -231,8 +232,6 @@ private struct TextProcessingTab: View {
         .onAppear { loadSettings() }
     }
 
-    // MARK: - Filler words
-
     private func addFillerWord() {
         let word = newFillerWord.trimmingCharacters(in: .whitespaces).lowercased()
         guard !word.isEmpty, !customFillerWords.contains(word) else { return }
@@ -245,14 +244,11 @@ private struct TextProcessingTab: View {
         UserDefaults.standard.set(customFillerWords, forKey: AppConstants.customFillerWordsKey)
     }
 
-    // MARK: - Cleanup rules
-
     private func addCleanupRule() {
         let find = newFind.trimmingCharacters(in: .whitespaces)
         guard !find.isEmpty else { return }
         cleanupRules.append(CleanupRule(find: find, replace: newReplace))
-        newFind    = ""
-        newReplace = ""
+        newFind = ""; newReplace = ""
         saveCleanupRules()
     }
 
@@ -260,8 +256,6 @@ private struct TextProcessingTab: View {
         let raw = cleanupRules.map { ["find": $0.find, "replace": $0.replace] }
         UserDefaults.standard.set(raw, forKey: AppConstants.cleanupRulesKey)
     }
-
-    // MARK: - Load
 
     private func loadSettings() {
         customFillerWords = UserDefaults.standard.array(forKey: AppConstants.customFillerWordsKey) as? [String] ?? []
@@ -274,7 +268,7 @@ private struct TextProcessingTab: View {
     }
 }
 
-// MARK: - 10.4 Stages
+// MARK: - Stages
 
 private struct StagesTab: View {
     @Query(sort: \WorkStage.sortOrder) private var stages: [WorkStage]
@@ -297,8 +291,7 @@ private struct StagesTab: View {
                             .buttonStyle(.borderless)
                             .font(.caption)
                         Button(role: .destructive) { deleteStage(stage) } label: {
-                            Image(systemName: "trash")
-                                .foregroundStyle(.red)
+                            Image(systemName: "trash").foregroundStyle(.red)
                         }
                         .buttonStyle(.borderless)
                     }
@@ -311,9 +304,7 @@ private struct StagesTab: View {
             Divider()
 
             HStack {
-                Button {
-                    showAddSheet = true
-                } label: {
+                Button { showAddSheet = true } label: {
                     Label("Add Stage", systemImage: "plus")
                 }
                 .buttonStyle(.bordered)
@@ -360,7 +351,7 @@ private struct StageEditorSheet: View {
     @State private var textColor: Color
 
     init(stage: WorkStage?, context: ModelContext) {
-        self.stage   = stage
+        self.stage = stage
         self.context = context
         _name      = State(initialValue: stage?.name ?? "New Stage")
         _bgColor   = State(initialValue: stage?.color ?? .blue)
@@ -370,11 +361,9 @@ private struct StageEditorSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(stage == nil ? "New Stage" : "Edit Stage")
-                    .font(.headline)
+                Text(stage == nil ? "New Stage" : "Edit Stage").font(.headline)
                 Spacer()
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(.borderless)
+                Button("Cancel") { dismiss() }.buttonStyle(.borderless)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -385,11 +374,8 @@ private struct StageEditorSheet: View {
             Form {
                 Section {
                     TextField("Stage name", text: $name)
-
                     ColorPicker("Background colour", selection: $bgColor, supportsOpacity: false)
-
                     ColorPicker("Text colour", selection: $textColor, supportsOpacity: false)
-
                     LabeledContent("Preview") {
                         Text(name.isEmpty ? "Stage" : name)
                             .font(.caption2.bold())
@@ -423,10 +409,9 @@ private struct StageEditorSheet: View {
         let bgHex   = colorToHex(bgColor)
         let textHex = colorToHex(textColor)
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-
         if let stage {
-            stage.name         = trimmed
-            stage.colorHex     = bgHex
+            stage.name = trimmed
+            stage.colorHex = bgHex
             stage.textColorHex = textHex
         } else {
             let count = (try? context.fetch(FetchDescriptor<WorkStage>()))?.count ?? 0
@@ -445,39 +430,154 @@ private struct StageEditorSheet: View {
     }
 }
 
-// MARK: - 10.5 Windows
+// MARK: - Pipelines
 
-private struct WindowsTab: View {
-    @AppStorage(AppConstants.maxDocumentWindowsKey) private var maxDocumentWindows = AppConstants.defaultMaxDocumentWindows
-    @Environment(\.openWindow) private var openWindow
+private struct PipelinesTab: View {
+    @Query(sort: \FormattingPipeline.name) private var allPipelines: [FormattingPipeline]
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var scope: PipelineScope = .output
+    @State private var selectedID: UUID?
+    @State private var showDeleteConfirmation = false
+    @State private var pipelineToDelete: FormattingPipeline?
+
+    private var pipelines: [FormattingPipeline] { allPipelines.filter { $0.scope == scope } }
+    private var selected: FormattingPipeline? { pipelines.first { $0.id == selectedID } }
 
     var body: some View {
-        Form {
-            Section("Document Windows") {
-                Stepper(value: $maxDocumentWindows, in: 1...10) {
-                    LabeledContent("Maximum open documents") {
-                        Text("\(maxDocumentWindows)")
-                            .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            // Scope selector + explanation
+            HStack(spacing: 12) {
+                Picker("", selection: $scope) {
+                    ForEach(PipelineScope.allCases, id: \.self) { s in
+                        Text(s.displayName).tag(s)
                     }
                 }
-                Text("Limits how many document windows can be open at once. Existing windows are not closed when you lower this value.")
+                .pickerStyle(.segmented)
+                .fixedSize()
+                Text(scopeHint)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Spacer()
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.bar)
 
-            Section("Pipeline Editor") {
-                LabeledContent("Manage pipelines") {
-                    Button("Open Pipeline Editor") {
-                        openWindow(id: "pipeline-editor")
+            Divider()
+
+            HStack(spacing: 0) {
+                // Left: list + +/- footer
+                VStack(spacing: 0) {
+                    List(selection: $selectedID) {
+                        ForEach(pipelines) { pipeline in
+                            PipelineListRow(pipeline: pipeline)
+                                .tag(pipeline.id)
+                                .contextMenu {
+                                    Button("Duplicate") { duplicate(pipeline) }
+                                    Divider()
+                                    Button("Delete", role: .destructive) {
+                                        pipelineToDelete = pipeline
+                                        showDeleteConfirmation = true
+                                    }
+                                    .disabled(pipeline.isBuiltIn)
+                                }
+                        }
                     }
-                    .buttonStyle(.bordered)
+                    .listStyle(.sidebar)
+
+                    Divider()
+
+                    HStack(spacing: 2) {
+                        Button { addPipeline() } label: { Image(systemName: "plus") }
+                            .buttonStyle(.borderless)
+                            .help("New pipeline")
+                        Button {
+                            if let p = selected {
+                                pipelineToDelete = p
+                                showDeleteConfirmation = true
+                            }
+                        } label: { Image(systemName: "minus") }
+                            .buttonStyle(.borderless)
+                            .disabled(selected == nil || selected?.isBuiltIn == true)
+                            .help("Delete selected pipeline")
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(.bar)
                 }
-                Text("Create, edit, and organise formatting pipelines. Also accessible via \u{2318}\u{21E7}P.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .frame(width: 210)
+
+                Divider()
+
+                // Right: detail
+                Group {
+                    if let pipeline = selected {
+                        PipelineDetailView(pipeline: pipeline, context: modelContext)
+                            .id(pipeline.id)
+                    } else {
+                        ContentUnavailableView(
+                            "No Pipeline Selected",
+                            systemImage: "wand.and.sparkles",
+                            description: Text("Choose a pipeline or tap + to create one.")
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity)
             }
         }
-        .formStyle(.grouped)
-        .padding()
+        .confirmationDialog("Delete Pipeline", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                if let p = pipelineToDelete { deletePipeline(p) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let name = pipelineToDelete?.name ?? "this pipeline"
+            Text("Delete \"\(name)\"? This cannot be undone.")
+        }
+        .onChange(of: scope) { _, _ in selectedID = nil }
     }
+
+    private var scopeHint: String {
+        switch scope {
+        case .source: return "Runs on an individual session's transcript · needs at least 1 step"
+        case .output: return "Runs on all combined sources · needs at least 1 step"
+        }
+    }
+
+    private func addPipeline() {
+        let p = FormattingPipeline(name: "New Pipeline")
+        p.scope = scope
+        modelContext.insert(p)
+        try? modelContext.save()
+        selectedID = p.id
+    }
+
+    private func deletePipeline(_ pipeline: FormattingPipeline) {
+        if selectedID == pipeline.id { selectedID = nil }
+        modelContext.delete(pipeline)
+        try? modelContext.save()
+    }
+
+    private func duplicate(_ pipeline: FormattingPipeline) {
+        let copy = FormattingPipeline(name: pipeline.name + " Copy", mode: pipeline.mode, isBuiltIn: false)
+        copy.scope = pipeline.scope
+        modelContext.insert(copy)
+        for step in pipeline.sortedSteps {
+            let s = PipelineStep(name: step.name, prompt: step.prompt, sortOrder: step.sortOrder)
+            modelContext.insert(s)
+            s.pipeline = copy
+            copy.steps = (copy.steps ?? []) + [s]
+        }
+        try? modelContext.save()
+        selectedID = copy.id
+    }
+}
+
+#Preview {
+    let c = makePreviewContainer()
+    return SettingsView()
+        .modelContainer(c)
+        .frame(width: 740, height: 520)
 }

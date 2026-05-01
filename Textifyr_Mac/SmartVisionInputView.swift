@@ -7,6 +7,7 @@ import AppKit
 import TextifyrModels
 import TextifyrViewModels
 import TextifyrServices
+import SwiftData
 
 // MARK: - Mode definitions
 
@@ -772,4 +773,13 @@ enum SmartVisionImageProcessor {
     }
 
 
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return SmartVisionInputView(captureVM: captureVM)
+        .modelContainer(c)
+        .environmentObject(AppState())
+        .frame(width: 600, height: 560)
 }

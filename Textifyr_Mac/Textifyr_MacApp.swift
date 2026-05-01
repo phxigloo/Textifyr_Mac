@@ -8,7 +8,6 @@ import TextifyrViewModels
 struct Textifyr_MacApp: App {
     let container: ModelContainer
     @StateObject private var appState = AppState()
-    @Environment(\.openWindow) private var openWindow
 
     init() {
         do {
@@ -26,6 +25,7 @@ struct Textifyr_MacApp: App {
                 .frame(minWidth: 900, minHeight: 600)
                 .task { await prefetchDiarizationModels() }
         }
+        .windowStyle(.hiddenTitleBar)
         .modelContainer(container)
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -34,19 +34,7 @@ struct Textifyr_MacApp: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
             }
-            CommandGroup(after: .windowSize) {
-                Button("Pipeline Editor") {
-                    openWindow(id: "pipeline-editor")
-                }
-                .keyboardShortcut("p", modifiers: [.command, .shift])
-            }
         }
-
-        Window("Pipeline Editor", id: "pipeline-editor") {
-            PipelineEditorView()
-        }
-        .modelContainer(container)
-        .defaultSize(width: 820, height: 580)
 
         Settings {
             SettingsView()

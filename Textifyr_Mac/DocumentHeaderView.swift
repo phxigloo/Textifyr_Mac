@@ -5,11 +5,8 @@ import TextifyrViewModels
 
 struct DocumentHeaderView: View {
     @ObservedObject var viewModel: DocumentEditorViewModel
-    @Environment(\.modelContext) private var modelContext
-    @EnvironmentObject private var appState: AppState
 
     @Query(sort: \WorkStage.sortOrder) private var stages: [WorkStage]
-
     @FocusState private var titleFocused: Bool
 
     var body: some View {
@@ -25,57 +22,9 @@ struct DocumentHeaderView: View {
 
             Spacer()
 
-            // Stage picker
-            Menu {
-                ForEach(stages) { stage in
-                    Button {
-                        viewModel.selectStage(stage)
-                    } label: {
-                        Label(stage.name, systemImage: "circle.fill")
-                    }
-                }
-            } label: {
-                if let stage = viewModel.document.stage {
-                    StageBadgeView(stage: stage)
-                } else {
-                    Label("Stage", systemImage: "tag")
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(.quaternary)
-                        .clipShape(Capsule())
-                }
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-
-            // Pipeline picker
-            PipelinePickerView(viewModel: viewModel)
-
-            // Format button
-            if viewModel.isFormatting {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text(viewModel.formattingStep)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Button("Cancel") {
-                        viewModel.cancelFormatting(appState: appState)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            } else {
-                Button {
-                    Task { await viewModel.runFormatting(appState: appState) }
-                } label: {
-                    Label("Format", systemImage: "sparkles")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(viewModel.document.pipeline == nil)
-                .help("Run AI formatting pipeline")
+            // Display-only stage badge — change stage from the sidebar
+            if let stage = viewModel.document.stage {
+                StageBadgeView(stage: stage)
             }
         }
         .padding(.horizontal, 20)
@@ -89,4 +38,13 @@ struct DocumentHeaderView: View {
         guard viewModel.document.stage == nil, let first = stages.first else { return }
         viewModel.selectStage(first)
     }
+}
+
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let vm = previewDocumentVM(in: c)
+    return DocumentHeaderView(viewModel: vm)
+        .modelContainer(c)
+        .frame(width: 700)
 }

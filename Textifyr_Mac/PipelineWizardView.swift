@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import TextifyrModels
 import TextifyrServices
 import TextifyrViewModels
@@ -143,4 +144,12 @@ private struct TemplateSuggestionRow: View {
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let vm = previewPipelineVM(in: c)
+    return PipelineWizardView(viewModel: vm)
+        .modelContainer(c)
+        .frame(width: 560, height: 460)
 }

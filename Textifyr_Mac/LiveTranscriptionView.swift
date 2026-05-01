@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import TextifyrViewModels
 
 struct LiveTranscriptionView: View {
@@ -110,4 +111,12 @@ struct LiveTranscriptionView: View {
         default:                 return ""
         }
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return LiveTranscriptionView(captureVM: captureVM)
+        .modelContainer(c)
+        .frame(width: 500, height: 420)
 }

@@ -3,13 +3,14 @@ import SwiftData
 import TextifyrModels
 import TextifyrViewModels
 
-/// Inline pipeline selector for the document header.
-/// Shows the selected pipeline name and a dropdown of all pipelines.
-/// Includes a "Manage Pipelines…" link that opens the Pipeline Editor window.
+/// Inline output pipeline selector. Shows the selected pipeline name and a dropdown.
+/// The "Manage Pipelines…" action is surfaced via a closure so callers can present a sheet.
 struct PipelinePickerView: View {
     @ObservedObject var viewModel: DocumentEditorViewModel
-    @Query(sort: \FormattingPipeline.name) private var pipelines: [FormattingPipeline]
-    @Environment(\.openWindow) private var openWindow
+    var onManage: (() -> Void)?
+
+    @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "output" },
+           sort: \FormattingPipeline.name) private var pipelines: [FormattingPipeline]
 
     var body: some View {
         Menu {
@@ -29,7 +30,7 @@ struct PipelinePickerView: View {
             if !pipelines.isEmpty { Divider() }
 
             Button {
-                openWindow(id: "pipeline-editor")
+                onManage?()
             } label: {
                 Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
             }

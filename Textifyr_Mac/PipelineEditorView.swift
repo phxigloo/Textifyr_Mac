@@ -113,7 +113,7 @@ struct PipelineEditorView: View {
 
 // MARK: - List row
 
-private struct PipelineListRow: View {
+struct PipelineListRow: View {
     let pipeline: FormattingPipeline
 
     var body: some View {
@@ -138,4 +138,11 @@ private struct PipelineListRow: View {
         }
         .padding(.vertical, 2)
     }
+}
+
+#Preview {
+    let c = makePreviewContainer()
+    return PipelineEditorView()
+        .modelContainer(c)
+        .frame(width: 720, height: 540)
 }

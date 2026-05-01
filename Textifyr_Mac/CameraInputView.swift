@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AppKit
 import AVFoundation
 import TextifyrModels
@@ -245,4 +246,13 @@ extension CameraPreviewNSView: AVCapturePhotoCaptureDelegate {
               let image = NSImage(data: data) else { return }
         DispatchQueue.main.async { self.onCapture?(image) }
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return CameraInputView(captureVM: captureVM)
+        .modelContainer(c)
+        .environmentObject(AppState())
+        .frame(width: 520, height: 440)
 }

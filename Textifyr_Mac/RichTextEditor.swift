@@ -261,29 +261,35 @@ struct RichTextEditor: NSViewRepresentable {
 
     private func loadContent(into tv: NSTextView, data: Data?) {
         if let data, let attr = NSAttributedString(rtf: data, documentAttributes: nil) {
-            // RTF serialisation embeds explicit monochromatic colors (black, white, near-grey)
-            // that don't adapt to dark mode. Strip them so NSTextView's adaptive textColor
-            // (.labelColor) applies. Intentional saturated colors (red, blue, etc.) are kept.
             let mutable = NSMutableAttributedString(attributedString: attr)
             let fullRange = NSRange(location: 0, length: mutable.length)
+
+            // IMPORTANT: NSLayoutManager renders text with NO foreground attribute as black,
+            // regardless of tv.textColor. Removing near-black attrs leaves those ranges
+            // black too. The correct fix: collect intentional saturated colours first,
+            // replace the entire document with labelColor, then restore intentional colours.
+
+            var intentional: [(NSColor, NSRange)] = []
             mutable.enumerateAttribute(.foregroundColor, in: fullRange, options: []) { val, range, _ in
-                guard let nsOrig = val as? NSColor else { return }
-                // Try multiple color spaces; RTF parser may produce device or calibrated RGB.
-                let ns = nsOrig.usingColorSpace(.genericRGB)
-                       ?? nsOrig.usingColorSpace(.sRGB)
-                       ?? nsOrig.usingColorSpace(.deviceRGB)
-                guard let ns else { return }
+                guard let nsOrig = val as? NSColor,
+                      let ns = nsOrig.usingColorSpace(.genericRGB)
+                              ?? nsOrig.usingColorSpace(.sRGB)
+                              ?? nsOrig.usingColorSpace(.deviceRGB) else { return }
                 var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
                 ns.getRed(&r, green: &g, blue: &b, alpha: nil)
-                // Strip any colour in the monochromatic dark or light zone.
-                // Threshold 0.20 / 0.80 catches labelColor (~0.06 in light, ~0.92 in dark)
-                // while preserving saturated intentional colours (red, blue, green, etc.).
-                let isNearBlack = r < 0.20 && g < 0.20 && b < 0.20
-                let isNearWhite = r > 0.80 && g > 0.80 && b > 0.80
-                if isNearBlack || isNearWhite {
-                    mutable.removeAttribute(.foregroundColor, range: range)
-                }
+                // Threshold 0.20/0.80 catches labelColor-serialised greys in both modes
+                // while preserving saturated intentional colours (red, blue, green…)
+                let mono = (r < 0.20 && g < 0.20 && b < 0.20) || (r > 0.80 && g > 0.80 && b > 0.80)
+                if !mono { intentional.append((nsOrig, range)) }
             }
+
+            // 1. Paint everything with the adaptive label colour
+            mutable.addAttribute(.foregroundColor, value: NSColor.labelColor, range: fullRange)
+            // 2. Restore intentional saturated colours
+            for (color, range) in intentional {
+                mutable.addAttribute(.foregroundColor, value: color, range: range)
+            }
+
             tv.textStorage?.setAttributedString(mutable)
         } else {
             tv.string = ""

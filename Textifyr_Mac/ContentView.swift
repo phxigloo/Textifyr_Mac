@@ -23,10 +23,12 @@ struct ContentView: View {
 private struct MainNavigationView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.modelContext) private var modelContext
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
+                .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 300)
         } detail: {
             if let doc = appState.selectedDocument {
                 DocumentEditorView(document: doc, context: modelContext)
@@ -35,7 +37,8 @@ private struct MainNavigationView: View {
                 EmptyStateView()
             }
         }
-        .navigationSplitViewStyle(.balanced)
+        .navigationSplitViewStyle(.prominentDetail)
+        .toolbar(removing: .sidebarToggle)
         .alert("Error", isPresented: Binding(
             get: { appState.alertMessage != nil },
             set: { if !$0 { appState.clearAlert() } }
@@ -45,4 +48,13 @@ private struct MainNavigationView: View {
             Text(appState.alertMessage ?? "")
         }
     }
+}
+
+#Preview {
+    let c = makePreviewContainer()
+    let appState = previewAppState(selectedIn: c)
+    return ContentView()
+        .modelContainer(c)
+        .environmentObject(appState)
+        .frame(width: 1100, height: 700)
 }

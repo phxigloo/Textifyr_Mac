@@ -9,8 +9,14 @@ struct StageBadgeView: View {
             .font(.caption2).bold()
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(stage.color)
             .foregroundStyle(stage.textColor)
-            .clipShape(Capsule())
+            .background { Capsule().fill(stage.color) }
     }
+}
+
+#Preview("Draft stage") {
+    let _ = makePreviewContainer()
+    let stage = previewStage()
+    return StageBadgeView(stage: stage)
+        .padding()
 }

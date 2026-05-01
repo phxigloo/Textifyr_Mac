@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import UniformTypeIdentifiers
 import TextifyrModels
 import TextifyrViewModels
@@ -166,4 +167,12 @@ struct AudioFileImportView: View {
             return nil
         }
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return AudioFileImportView(captureVM: captureVM, captureMethod: .audioFile)
+        .modelContainer(c)
+        .frame(width: 480, height: 420)
 }

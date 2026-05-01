@@ -30,8 +30,8 @@ struct SourceSessionListView: View {
                 .buttonStyle(.borderless)
                 .help("Add source")
             }
+            .frame(height: 44)
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
             .background(.bar)
 
             Divider()
@@ -105,4 +105,14 @@ private struct SessionRowView: View {
         }
         .padding(.vertical, 2)
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let doc = previewDocument(in: c)
+    let vm = previewDocumentVM(in: c)
+    return SourceSessionListView(document: doc, viewModel: vm)
+        .modelContainer(c)
+        .environmentObject(AppState())
+        .frame(width: 320, height: 500)
 }

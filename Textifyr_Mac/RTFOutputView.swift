@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AppKit
 import TextifyrModels
 import TextifyrServices
@@ -6,8 +7,14 @@ import TextifyrViewModels
 
 struct RTFOutputView: View {
     @ObservedObject var viewModel: DocumentEditorViewModel
+    @EnvironmentObject private var appState: AppState
     @StateObject private var formatState = TextFormatState()
+
+    @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "output" },
+           sort: \FormattingPipeline.name) private var outputPipelines: [FormattingPipeline]
+
     @State private var showExportSheet = false
+    @State private var showPipelineEditor = false
 
     private var document: TextifyrDocument { viewModel.document }
 
@@ -31,15 +38,82 @@ struct RTFOutputView: View {
         .sheet(isPresented: $showExportSheet) {
             ExportFormatSheet(viewModel: viewModel)
         }
+        .sheet(isPresented: $showPipelineEditor) {
+            ScopedPipelineEditorSheet(scope: .output)
+        }
     }
 
     // MARK: - Header
 
     private var headerBar: some View {
-        HStack {
+        HStack(spacing: 8) {
             Text("Output")
                 .font(.headline)
+
             Spacer()
+
+
+            // Pipeline picker
+            Menu {
+                ForEach(outputPipelines) { pipeline in
+                    Button {
+                        viewModel.selectPipeline(pipeline)
+                    } label: {
+                        HStack {
+                            Text(pipeline.name)
+                            if document.pipeline?.id == pipeline.id {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+                if !outputPipelines.isEmpty { Divider() }
+                Button {
+                    showPipelineEditor = true
+                } label: {
+                    Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
+                }
+            } label: {
+                Label(
+                    document.pipeline?.name ?? "Pipeline",
+                    systemImage: "wand.and.sparkles"
+                )
+                .font(.caption)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Select a formatting pipeline")
+
+            // Format / Cancel
+            if viewModel.isFormatting {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    if !viewModel.formattingStep.isEmpty {
+                        Text(viewModel.formattingStep)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .frame(maxWidth: 200)
+                    }
+                    Button("Cancel") {
+                        viewModel.cancelFormatting(appState: appState)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            } else {
+                Button {
+                    Task { await viewModel.runFormatting(appState: appState) }
+                } label: {
+                    Label("Format", systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(document.pipeline == nil ||
+                          document.mergedSourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Run AI formatting pipeline")
+            }
+
             if document.hasOutput && !viewModel.isFormatting {
                 Button {
                     showExportSheet = true
@@ -49,10 +123,19 @@ struct RTFOutputView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Export document")
+
+                Button {
+                    viewModel.clearOutput()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help("Clear formatted output")
             }
         }
+        .frame(height: 44)
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
         .background(.bar)
     }
 
@@ -125,15 +208,11 @@ struct RTFOutputView: View {
                 ProgressView()
                     .progressViewStyle(.circular)
                     .scaleEffect(1.2)
-                VStack(spacing: 4) {
-                    Text("Formatting…")
-                        .font(.headline)
-                    if !viewModel.formattingStep.isEmpty {
-                        Text(viewModel.formattingStep)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
+                if !viewModel.formattingStep.isEmpty {
+                    Text(viewModel.formattingStep)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
             }
             .padding(32)
@@ -151,7 +230,7 @@ struct RTFOutputView: View {
             Text("No formatted output yet")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text("Add sources and run the formatting pipeline.")
+            Text("Select a pipeline and tap Format.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -187,4 +266,14 @@ private struct PictureThumbnailView: View {
             }
         }
     }
+}
+
+#Preview("Empty output") { @MainActor in
+    let c = makePreviewContainer()
+    let appState = previewAppState(selectedIn: c)
+    let vm = previewDocumentVM(in: c)
+    return RTFOutputView(viewModel: vm)
+        .modelContainer(c)
+        .environmentObject(appState)
+        .frame(width: 580, height: 500)
 }

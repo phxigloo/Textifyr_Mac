@@ -132,3 +132,11 @@ private struct SourceMethodButton: View {
         .help(disabled ? "Camera is already in use in another window" : "")
     }
 }
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let doc = previewDocument(in: c)
+    return InputSourcePickerView(document: doc, context: c.mainContext)
+        .modelContainer(c)
+        .frame(width: 480, height: 420)
+}

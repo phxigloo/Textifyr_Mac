@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import AppKit
 import UniformTypeIdentifiers
 import TextifyrModels
@@ -262,4 +263,12 @@ struct PDFInputView: View {
         }
         isExtracting = false
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return PDFInputView(captureVM: captureVM)
+        .modelContainer(c)
+        .frame(width: 560, height: 500)
 }

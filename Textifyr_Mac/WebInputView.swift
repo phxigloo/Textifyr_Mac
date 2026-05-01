@@ -2,6 +2,7 @@ import SwiftUI
 import TextifyrModels
 import TextifyrViewModels
 import TextifyrServices
+import SwiftData
 
 struct WebInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
@@ -78,4 +79,12 @@ struct WebInputView: View {
             isLoading = false
         }
     }
+}
+
+#Preview { @MainActor in
+    let c = makePreviewContainer()
+    let captureVM = previewCaptureVM(in: c)
+    return WebInputView(captureVM: captureVM)
+        .modelContainer(c)
+        .frame(width: 500, height: 360)
 }
