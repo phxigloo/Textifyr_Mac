@@ -75,7 +75,7 @@ struct InputSourcePickerView: View {
     private func inputView(for method: CaptureMethod) -> some View {
         switch method {
         case .microphone:
-            LiveTranscriptionView(captureVM: captureVM)
+            MicrophoneWizardView(captureVM: captureVM)
         case .audioFile, .videoAudio:
             AudioFileImportView(captureVM: captureVM, captureMethod: method)
         case .imageFile:

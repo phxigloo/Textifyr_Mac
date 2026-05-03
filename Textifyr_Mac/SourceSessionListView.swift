@@ -11,6 +11,9 @@ struct SourceSessionListView: View {
     @State private var selectedSession: SourceSession?
     @State private var showingInputPicker = false
 
+    // Microphone sessions open the wizard in edit mode instead of SessionDetailView
+    @State private var editingMicSession: SourceSession? = nil
+
     private var sessions: [SourceSession] {
         (document.sourceSessions ?? []).sorted { $0.sortOrder < $1.sortOrder }
     }
@@ -61,6 +64,13 @@ struct SourceSessionListView: View {
                         }
                 }
                 .listStyle(.sidebar)
+                .onChange(of: selectedSession) { _, session in
+                    guard let session else { return }
+                    if session.captureMethod == .microphone {
+                        selectedSession = nil
+                        editingMicSession = session
+                    }
+                }
             }
         }
         .sheet(isPresented: $showingInputPicker) {
@@ -69,6 +79,27 @@ struct SourceSessionListView: View {
         .sheet(item: $selectedSession) { session in
             SessionDetailView(session: session, document: document)
         }
+        .sheet(item: $editingMicSession) { session in
+            MicrophoneEditSheet(session: session, document: document, context: modelContext)
+        }
+    }
+}
+
+// MARK: - Microphone edit sheet
+
+private struct MicrophoneEditSheet: View {
+    let session: SourceSession
+    let document: TextifyrDocument
+    @StateObject private var captureVM: InputCaptureViewModel
+
+    init(session: SourceSession, document: TextifyrDocument, context: ModelContext) {
+        self.session = session
+        self.document = document
+        _captureVM = StateObject(wrappedValue: InputCaptureViewModel(document: document, context: context))
+    }
+
+    var body: some View {
+        MicrophoneWizardView(captureVM: captureVM, initialSession: session)
     }
 }
 

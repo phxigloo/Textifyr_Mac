@@ -16,6 +16,8 @@ struct PipelineDetailView: View {
 
     private var scopeExplanation: String {
         switch viewModel.pipeline.scope {
+        case .postCapture:
+            return "Post Capture pipeline — runs automatically after text is acquired from a source. Needs at least 1 step."
         case .source:
             return "Source pipeline — each step receives one session's transcript. Needs at least 1 step."
         case .output:
@@ -25,8 +27,9 @@ struct PipelineDetailView: View {
 
     private var scopeIcon: String {
         switch viewModel.pipeline.scope {
-        case .source: return "text.document"
-        case .output: return "doc.on.doc"
+        case .postCapture: return "wand.and.sparkles"
+        case .source:      return "text.document"
+        case .output:      return "doc.on.doc"
         }
     }
 

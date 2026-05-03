@@ -9,106 +9,34 @@ import TextifyrViewModels
 import TextifyrServices
 import SwiftData
 
-// MARK: - Mode definitions
+// MARK: - Picture processing mode
 
-enum SmartVisionMode: String, CaseIterable, Identifiable {
-
-    // ── Text extraction (OCR) ──────────────────────────────────────────────
-    case general
-    case receipt
-    case code
-    case businessCard
-
-    // ── Picture insertion (embed image in RTF) ────────────────────────────
+enum PictureProcessingMode: String, CaseIterable, Identifiable {
+    case none
     case formula
     case chemical
     case handwriting
     case diagram
-    case anyPicture
 
     var id: String { rawValue }
 
-    var isPicture: Bool {
-        switch self {
-        case .formula, .chemical, .handwriting, .diagram, .anyPicture: return true
-        default: return false
-        }
-    }
-
     var displayName: String {
         switch self {
-        case .general:      return "General Text"
-        case .receipt:      return "Receipt / Invoice"
-        case .code:         return "Code Screenshot"
-        case .businessCard: return "Business Card"
-        case .formula:      return "Formula / Equation"
-        case .chemical:     return "Chemical Structure"
-        case .handwriting:  return "Handwriting / Sketch"
-        case .diagram:      return "Diagram / Chart"
-        case .anyPicture:   return "Any Picture"
+        case .none:        return "None"
+        case .formula:     return "Formula / Equation"
+        case .chemical:    return "Chemical Structure"
+        case .handwriting: return "Handwriting / Sketch"
+        case .diagram:     return "Diagram / Chart"
         }
     }
 
-    var icon: String {
-        switch self {
-        case .general:      return "text.viewfinder"
-        case .receipt:      return "receipt"
-        case .code:         return "chevron.left.forwardslash.chevron.right"
-        case .businessCard: return "person.text.rectangle"
-        case .formula:      return "function"
-        case .chemical:     return "atom"
-        case .handwriting:  return "scribble"
-        case .diagram:      return "chart.bar.doc.horizontal"
-        case .anyPicture:   return "photo"
-        }
-    }
-
-    var infoNote: String {
-        switch self {
-        case .general:
-            return "Extracts printed text from images. Works best with clear, well-lit printed text on a plain background."
-        case .receipt:
-            return "Reads prices, dates, and items from receipts. Printed receipts work well; handwritten amounts may be misread."
-        case .code:
-            return "Captures source code from screenshots. Indentation and special characters are preserved where possible."
-        case .businessCard:
-            return "Extracts contact details (name, phone, email, address) from standard printed business cards."
-        case .formula:
-            return "Embeds a photo of the formula directly into the output as a picture. The formula is not converted to text — it is stored as an image."
-        case .chemical:
-            return "Embeds a photo of a chemical structure diagram as a picture in the output. Bond lines and ring structures are preserved exactly as photographed."
-        case .handwriting:
-            return "Embeds a photo of handwritten notes or a sketch as a picture. The handwriting is not converted to typed text."
-        case .diagram:
-            return "Embeds a photo of a diagram, chart, flowchart, or mind map as a picture in the output."
-        case .anyPicture:
-            return "Embeds any image directly into the output as a picture. Use this when you want the image itself, not the text inside it."
-        }
-    }
-
-    /// Preset AI prompt for OCR enhancement; empty for picture modes.
-    var aiPrompt: String {
-        switch self {
-        case .receipt:
-            return "The following text was extracted from a receipt or invoice. Organise it into a clean summary: merchant name, date, individual items with prices, subtotal, tax, and total."
-        case .code:
-            return "The following text was extracted from a screenshot of source code. Clean up any OCR errors (misread characters, broken indentation) and present the code clearly. Preserve the programming language if identifiable."
-        case .businessCard:
-            return "The following text was extracted from a business card. Organise the information into clearly labelled fields: Name, Title, Company, Phone, Email, Website, Address."
-        default:
-            return ""
-        }
-    }
-
-    /// Caption inserted above the embedded image in the RTF output.
     var pictureCaption: String {
         switch self {
-        case .formula:      return "Formula / Equation"
-        case .chemical:     return "Chemical Structure"
-        case .handwriting:  return "Handwriting / Sketch"
-        case .diagram:      return "Diagram / Chart"
-        case .anyPicture:   return "Embedded Picture"
-        default:            return "Picture"
+        case .none:        return "Embedded Picture"
+        case .formula:     return "Formula / Equation"
+        case .chemical:    return "Chemical Structure"
+        case .handwriting: return "Handwriting / Sketch"
+        case .diagram:     return "Diagram / Chart"
         }
     }
 }
@@ -118,11 +46,10 @@ enum SmartVisionMode: String, CaseIterable, Identifiable {
 struct SmartVisionInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var appState: AppState
 
-    @State private var mode: SmartVisionMode = .general
-    @State private var showInfo = false
+    private enum WizardStep { case capture, process, annotate }
+    @State private var wizardStep: WizardStep = .capture
 
     // Capture
     @State private var captureSource: CaptureSourceType? = nil
@@ -131,37 +58,29 @@ struct SmartVisionInputView: View {
     @State private var capturedImage: CGImage? = nil
     @State private var showCropView = false
 
-    // OCR flow
-    @State private var isProcessing = false
-    @State private var isEnhancing = false
-    @State private var ocrText = ""
-    @StateObject private var aiService = SessionAIService()
-
-    // Picture flow
+    // Process
+    @State private var processingMode: PictureProcessingMode = .none
     @State private var useAppColors = true
     @State private var processedImage: CGImage? = nil
+
+    // Annotate
+    @State private var annotationText = ""
+    @State private var showAIPrompt = false
+    @State private var aiPromptText = ""
+    @State private var isGeneratingAI = false
+    @StateObject private var aiService = SessionAIService()
 
     @State private var errorText: String? = nil
 
     enum CaptureSourceType { case camera, photoLibrary, screenCapture, imageFile }
 
-    private var inModeSelect: Bool { capturedImage == nil }
-    private var hasOCRText: Bool { !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            if inModeSelect {
-                modeSelectContent
-            } else if mode.isPicture {
-                pictureReviewContent
-            } else {
-                ocrReviewContent
-            }
+            stepContent
         }
         .frame(width: 600)
-        // Crop sheet
         .sheet(isPresented: $showCropView) {
             if let img = capturedImage {
                 NavigationStack {
@@ -169,25 +88,20 @@ struct SmartVisionInputView: View {
                         image: img,
                         onCrop: { cropped in
                             showCropView = false
-                            if mode.isPicture {
-                                applyPictureProcessing(to: cropped)
-                            } else {
-                                Task { await runOCR(on: cropped) }
-                            }
+                            capturedImage = cropped
+                            applyPictureProcessing(to: cropped)
+                            wizardStep = .process
                         },
                         onCancel: {
                             showCropView = false
                             capturedImage = nil
                         }
                     )
-                    .navigationTitle("Crop — \(mode.displayName)")
+                    .navigationTitle("Crop Image")
                 }
                 .frame(minWidth: 600, minHeight: 500)
             }
         }
-        // Info sheet
-        .sheet(isPresented: $showInfo) { infoSheet }
-        // Camera sheet
         .sheet(isPresented: Binding(
             get: { captureSource == .camera },
             set: { if !$0 { captureSource = nil } }
@@ -200,16 +114,13 @@ struct SmartVisionInputView: View {
                 captureSource = nil
             }
         }
-        // Screen capture
         .onChange(of: captureSource) { _, src in
             if src == .screenCapture { Task { await captureScreen() } }
         }
-        // Photo picker
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task { await loadPhoto(item) }
         }
-        // File importer
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: [.image, .png, .jpeg, .tiff, .heic, .bmp, .gif, .webP],
@@ -229,12 +140,10 @@ struct SmartVisionInputView: View {
 
     private var header: some View {
         HStack {
-            Image(systemName: "sparkles").foregroundStyle(Color.accentColor)
-            Text("Smart Vision").font(.title2).bold()
-            Button { showInfo = true } label: {
-                Image(systemName: "info.circle").foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain).help("About Smart Vision")
+            Image(systemName: "photo.badge.plus").foregroundStyle(Color.accentColor)
+            Text("Insert Image").font(.title2).bold()
+            Spacer()
+            stepIndicator
             Spacer()
             Button("Cancel") { captureVM.reset(); dismiss() }.buttonStyle(.borderless)
         }
@@ -243,309 +152,225 @@ struct SmartVisionInputView: View {
         .padding(.bottom, 12)
     }
 
-    // MARK: - Mode selection
+    private var stepIndicator: some View {
+        HStack(spacing: 0) {
+            ForEach(0..<3) { i in
+                Circle()
+                    .fill(stepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
+                    .frame(width: stepIndex == i ? 10 : 7, height: stepIndex == i ? 10 : 7)
+                    .animation(.easeInOut(duration: 0.2), value: wizardStep)
+                if i < 2 {
+                    Rectangle()
+                        .fill(stepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
+                        .frame(width: 36, height: 2)
+                }
+            }
+        }
+    }
 
-    private var modeSelectContent: some View {
+    private var stepIndex: Int {
+        switch wizardStep {
+        case .capture: return 0
+        case .process: return 1
+        case .annotate: return 2
+        }
+    }
+
+    // MARK: - Step dispatch
+
+    @ViewBuilder
+    private var stepContent: some View {
+        switch wizardStep {
+        case .capture:  captureStep
+        case .process:  processStep
+        case .annotate: annotateStep
+        }
+    }
+
+    // MARK: - Step 1: Capture
+
+    private var captureStep: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Extract text section
-                modeSection(
-                    title: "Extract Text (OCR)",
-                    subtitle: "Recognises and extracts text from the image",
-                    modes: [.general, .receipt, .code, .businessCard]
-                )
-
-                Divider()
-
-                // Insert picture section
-                modeSection(
-                    title: "Insert as Picture",
-                    subtitle: "Embeds the image directly into the output — content is not converted to text",
-                    modes: [.formula, .chemical, .handwriting, .diagram, .anyPicture]
-                )
-
-                // Selected mode note
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: mode.isPicture ? "photo.badge.exclamationmark" : "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(mode.isPicture ? Color.blue : Color.orange)
-                    Text(mode.infoNote)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Step 1 — Capture").font(.headline)
+                    Text("Choose an image source. You will be able to crop after capture.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                .padding(10)
-                .background(
-                    (mode.isPicture ? Color.blue : Color.orange).opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: 8)
-                )
-                .padding(.horizontal, 4)
 
-                Divider()
-
-                // Image source buttons
-                VStack(spacing: 10) {
-                    Text("Choose image source")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
-                        sourceButton("Camera", icon: "camera.fill", disabled: !appState.canUseCamera) {
-                            captureSource = .camera
-                        }
-                        PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                            sourceButtonLabel("Photo Library", icon: "photo.on.rectangle")
-                        }.buttonStyle(.plain)
-
-                        sourceButton("Screen Capture", icon: "rectangle.dashed") {
-                            captureSource = .screenCapture
-                        }
-                        sourceButton("Image File", icon: "photo") {
-                            showFileImporter = true
-                        }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
+                    sourceButton("Camera", icon: "camera.fill", disabled: !appState.canUseCamera) {
+                        captureSource = .camera
                     }
+                    PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+                        sourceButtonLabel("Photo Library", icon: "photo.on.rectangle")
+                    }.buttonStyle(.plain)
+
+                    sourceButton("Screen Capture", icon: "rectangle.dashed") {
+                        captureSource = .screenCapture
+                    }
+                    sourceButton("Image File", icon: "photo") {
+                        showFileImporter = true
+                    }
+                }
+
+                if let error = errorText {
+                    Text(error).font(.caption).foregroundStyle(.red)
                 }
             }
             .padding(20)
         }
     }
 
-    private func modeSection(title: String, subtitle: String, modes: [SmartVisionMode]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+    // MARK: - Step 2: Process
+
+    private var processStep: some View {
+        VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Step 2 — Process").font(.headline)
+                Text("Optionally adapt colours and choose a category label for the image.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110))], spacing: 8) {
-                ForEach(modes) { m in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) { mode = m }
-                    } label: {
-                        VStack(spacing: 6) {
-                            Image(systemName: m.icon)
-                                .font(.system(size: 22))
-                                .foregroundStyle(mode == m ? Color.accentColor : Color.secondary)
-                            Text(m.displayName)
-                                .font(.caption2)
-                                .multilineTextAlignment(.center)
-                                .lineLimit(2)
-                                .foregroundStyle(mode == m ? Color.primary : Color.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+
+            if let img = processedImage {
+                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                    .padding(.horizontal)
+            } else {
+                ProgressView("Processing image…").frame(height: 100)
+            }
+
+            VStack(spacing: 10) {
+                Toggle("Adapt colours to app appearance (grayscale + theme colours)", isOn: $useAppColors)
+                    .font(.caption)
+                    .onChange(of: useAppColors) { _, _ in
+                        if let src = capturedImage { applyPictureProcessing(to: src) }
+                    }
+
+                HStack {
+                    Text("Category:").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $processingMode) {
+                        ForEach(PictureProcessingMode.allCases) { m in
+                            Text(m.displayName).tag(m)
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(
-                            mode == m
-                                ? Color.accentColor.opacity(0.12)
-                                : Color(nsColor: .controlBackgroundColor),
-                            in: RoundedRectangle(cornerRadius: 8)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(mode == m ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
-                        )
                     }
-                    .buttonStyle(.plain)
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 220)
+                    Spacer()
                 }
             }
-        }
-    }
-
-    // MARK: - OCR review
-
-    private var ocrReviewContent: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Label("Extracted Text", systemImage: "text.viewfinder")
-                    .font(.headline).foregroundStyle(.secondary)
-                Spacer()
-                if isProcessing || isEnhancing {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text(isEnhancing ? "AI enhancing…" : "Recognising…")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                if !isProcessing {
-                    Button("Re-crop") { showCropView = true }.buttonStyle(.bordered)
-                    Button("New Image") { resetCapture() }.buttonStyle(.bordered)
-                }
-                if !mode.aiPrompt.isEmpty && hasOCRText && !isEnhancing {
-                    Button("Enhance with AI") { Task { await enhance() } }
-                        .buttonStyle(.borderedProminent).controlSize(.small)
-                }
-            }.padding(.horizontal)
+            .padding(.horizontal)
 
             if let error = errorText {
                 Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
             }
 
-            TextEditor(text: $ocrText)
+            HStack {
+                Button("← Back") {
+                    capturedImage = nil
+                    processedImage = nil
+                    wizardStep = .capture
+                }
+                .buttonStyle(.bordered)
+                Spacer()
+                Button("Next →") { wizardStep = .annotate }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(processedImage == nil)
+            }
+            .padding(.horizontal)
+            .padding(.bottom)
+            .padding(.top, 8)
+        }
+        .padding(.top, 8)
+    }
+
+    // MARK: - Step 3: Annotate
+
+    private var annotateStep: some View {
+        VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Step 3 — Description").font(.headline)
+                Text("Optionally add text that will appear below the image in the output.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+
+            if let img = processedImage {
+                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxHeight: 140)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                    .padding(.horizontal)
+            }
+
+            TextEditor(text: $annotationText)
                 .font(.body)
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                 .padding(.horizontal)
-                .frame(minHeight: 160)
+                .frame(minHeight: 80, maxHeight: 160)
 
-            HStack {
-                Button("Cancel") { captureVM.reset(); dismiss() }.buttonStyle(.bordered)
-                Spacer()
-                Button("Use as Source") {
-                    captureVM.saveTextCapture(ocrText, captureMethod: .smartVision)
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    withAnimation { showAIPrompt.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: showAIPrompt ? "chevron.down" : "chevron.right")
+                            .font(.caption2)
+                        Image(systemName: "wand.and.sparkles")
+                            .font(.caption)
+                        Text("Generate text with AI")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!hasOCRText)
-            }.padding([.horizontal, .bottom])
-        }.padding(.top, 8)
-    }
+                .buttonStyle(.plain)
 
-    // MARK: - Picture review
-
-    private var pictureReviewContent: some View {
-        VStack(spacing: 12) {
-            // Warning banner
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "photo.badge.exclamationmark")
-                    .foregroundStyle(.blue)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("This is a picture, not text")
-                        .font(.subheadline).bold()
-                    Text("The image will be embedded in the RTF output. It cannot be edited as text, searched, or processed by AI. To extract text instead, go back and choose an OCR mode.")
-                        .font(.caption).foregroundStyle(.secondary)
+                if showAIPrompt {
+                    HStack(spacing: 8) {
+                        TextField("Describe what text to generate…", text: $aiPromptText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                        Button("Generate") { Task { await generateAI() } }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeneratingAI)
+                        if isGeneratingAI {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
                 }
             }
-            .padding(12)
-            .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal)
-
-            // App colour toggle
-            Toggle("Adapt colours to app appearance (converts to grayscale + app foreground/background)", isOn: $useAppColors)
-                .font(.caption)
-                .padding(.horizontal)
-                .onChange(of: useAppColors) { _, _ in
-                    if let src = capturedImage { applyPictureProcessing(to: src) }
-                }
-
-            // Image preview
-            if let img = processedImage {
-                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 280)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
-                    .padding(.horizontal)
-            } else {
-                ProgressView("Processing image…").frame(height: 120)
-            }
 
             if let error = errorText {
                 Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
             }
 
             HStack {
-                Button("Re-crop") { showCropView = true }.buttonStyle(.bordered)
-                Button("New Image") { resetCapture() }.buttonStyle(.bordered)
+                Button("← Back") { wizardStep = .process }
+                    .buttonStyle(.bordered)
                 Spacer()
                 Button("Cancel") { captureVM.reset(); dismiss() }.buttonStyle(.bordered)
-                Button("Insert as Picture") { insertPicture() }
+                Button("Insert") { insertPicture() }
                     .buttonStyle(.borderedProminent)
                     .disabled(processedImage == nil)
-            }.padding([.horizontal, .bottom])
-        }.padding(.top, 8)
-    }
-
-    // MARK: - Info sheet
-
-    private var infoSheet: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "sparkles").foregroundStyle(Color.accentColor)
-                Text("About Smart Vision").font(.title3).bold()
-                Spacer()
-                Button("Done") { showInfo = false }.buttonStyle(.borderedProminent)
-            }.padding(20)
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("Smart Vision captures an image from any source and either extracts text using OCR, or embeds the image directly into your output.")
-                        .font(.body)
-
-                    // OCR accuracy warning
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("OCR Accuracy Warning").font(.subheadline).bold()
-                            Text("OCR (text recognition) is not perfect. It works best with clear, well-lit, printed text on a plain background. Blurry or angled images produce more errors. Always review the extracted text before using it.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
-
-                    // Picture warning
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "photo.badge.exclamationmark").foregroundStyle(.blue)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Picture Modes").font(.subheadline).bold()
-                            Text("Picture modes embed the image directly into the RTF output — they do not convert the content to text. The picture looks correct but cannot be searched, edited as text, or processed by AI. This is the recommended approach for formulas, chemical structures, and diagrams where OCR produces unreliable results.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-
-                    Text("Modes").font(.headline)
-                    ForEach(SmartVisionMode.allCases) { m in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: m.icon)
-                                .foregroundStyle(m.isPicture ? Color.blue : Color.accentColor)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 6) {
-                                    Text(m.displayName).font(.subheadline).bold()
-                                    if m.isPicture {
-                                        Text("PICTURE").font(.caption2).bold()
-                                            .padding(.horizontal, 5).padding(.vertical, 2)
-                                            .background(Color.blue.opacity(0.15), in: Capsule())
-                                            .foregroundStyle(.blue)
-                                    } else if !m.aiPrompt.isEmpty {
-                                        Text("AI").font(.caption2).bold()
-                                            .padding(.horizontal, 5).padding(.vertical, 2)
-                                            .background(Color.purple.opacity(0.15), in: Capsule())
-                                            .foregroundStyle(.purple)
-                                    }
-                                }
-                                Text(m.infoNote).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                    }
-
-                    Text("Tips for better results").font(.headline)
-                    VStack(alignment: .leading, spacing: 6) {
-                        tipRow("Hold the camera steady and perpendicular to the subject")
-                        tipRow("Ensure good, even lighting with no harsh shadows")
-                        tipRow("Use Crop to focus on just the area you need")
-                        tipRow("For formulas and structures, photograph as close and straight-on as possible")
-                        tipRow("\"Adapt colours\" converts the image to match light or dark mode — turn it off for colour diagrams")
-                    }
-                }
-                .padding(20)
             }
+            .padding(.horizontal)
+            .padding(.bottom)
+            .padding(.top, 8)
         }
-        .frame(width: 500, height: 580)
-    }
-
-    private func tipRow(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
-            Text(text).font(.caption)
-        }
+        .padding(.top, 8)
     }
 
     // MARK: - Source button helpers
@@ -616,35 +441,6 @@ struct SmartVisionInputView: View {
         showCropView = true
     }
 
-    // MARK: - OCR pipeline
-
-    private func runOCR(on image: CGImage) async {
-        isProcessing = true
-        ocrText = ""
-        do {
-            ocrText = try await VisionTextService.recognizeText(in: image)
-            if ocrText.isEmpty { errorText = "No text detected. Try cropping a clearer region." }
-        } catch {
-            errorText = error.localizedDescription
-        }
-        isProcessing = false
-    }
-
-    private func enhance() async {
-        guard !mode.aiPrompt.isEmpty, hasOCRText else { return }
-        isEnhancing = true
-        do {
-            let prompt = mode.aiPrompt + "\n\n---\n\n" + ocrText
-            let stream = try await aiService.send(prompt)
-            var result = ""
-            for await chunk in stream { result += chunk }
-            if !result.isEmpty { ocrText = result }
-        } catch {
-            errorText = "AI enhancement failed: \(error.localizedDescription)"
-        }
-        isEnhancing = false
-    }
-
     // MARK: - Picture pipeline
 
     private func applyPictureProcessing(to image: CGImage) {
@@ -656,7 +452,6 @@ struct SmartVisionInputView: View {
             }
             return
         }
-        // Resolve NSColor values on the main thread before dispatching to background
         var fgColor = CIColor(red: 0, green: 0, blue: 0)
         var bgColor = CIColor(red: 1, green: 1, blue: 1)
         NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -684,17 +479,24 @@ struct SmartVisionInputView: View {
             errorText = "Could not encode image as PNG."
             return
         }
-        let plain = "[\(mode.pictureCaption) — embedded as picture]"
-        captureVM.saveRTFCapture(rtfData: pngData, plainText: plain)
+        captureVM.savePictureCapture(pngData: pngData, annotation: annotationText)
     }
 
-    private func resetCapture() {
-        capturedImage = nil
-        processedImage = nil
-        ocrText = ""
-        errorText = nil
-        captureSource = nil
-        photoItem = nil
+    // MARK: - AI generation
+
+    private func generateAI() async {
+        let prompt = aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+        isGeneratingAI = true
+        do {
+            let stream = try await aiService.send(prompt)
+            var result = ""
+            for await chunk in stream { result += chunk }
+            if !result.isEmpty { annotationText = result }
+        } catch {
+            errorText = "AI generation failed: \(error.localizedDescription)"
+        }
+        isGeneratingAI = false
     }
 }
 
@@ -721,7 +523,7 @@ private struct SmartVisionCameraSheet: View {
             .frame(minHeight: 340)
         }
         .frame(width: 520)
-        .onAppear   { appState.setCameraInUse(true)  }
+        .onAppear    { appState.setCameraInUse(true)  }
         .onDisappear { appState.setCameraInUse(false) }
     }
 }
@@ -771,8 +573,6 @@ enum SmartVisionImageProcessor {
         ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: newW, height: newH))
         return ctx.makeImage() ?? cgImage
     }
-
-
 }
 
 #Preview { @MainActor in
