@@ -18,6 +18,10 @@ struct SourceSessionListView: View {
         (document.sourceSessions ?? []).sorted { $0.sortOrder < $1.sortOrder }
     }
 
+    private var totalCharCount: Int {
+        sessions.reduce(0) { $0 + $1.rawText.count }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header bar
@@ -71,6 +75,27 @@ struct SourceSessionListView: View {
                         editingMicSession = session
                     }
                 }
+
+                Divider()
+
+                HStack {
+                    Text("Total")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if totalCharCount > AppConstants.aiAdvisoryChars {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .help("Large source — AI processing will take longer than usual.")
+                    }
+                    Spacer()
+                    Text("\(totalCharCount.formatted()) chars")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
             }
         }
         .sheet(isPresented: $showingInputPicker) {
@@ -122,6 +147,11 @@ private struct SessionRowView: View {
                         .foregroundStyle(.orange)
                         .font(.caption2)
                         .help("This session may contain copyrighted material")
+                }
+                if session.rawText.count > 0 {
+                    Text("\(session.rawText.count.formatted()) chars")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
                 }
                 Text(session.createdAt, style: .date)
                     .font(.caption2)

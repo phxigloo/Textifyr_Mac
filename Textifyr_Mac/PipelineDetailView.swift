@@ -17,11 +17,11 @@ struct PipelineDetailView: View {
     private var scopeExplanation: String {
         switch viewModel.pipeline.scope {
         case .postCapture:
-            return "Post Capture pipeline — runs automatically after text is acquired from a source. Needs at least 1 step."
+            return "Auto Cleanup pipeline — runs automatically after text is acquired from a source. Needs at least 1 step."
         case .source:
-            return "Source pipeline — each step receives one session's transcript. Needs at least 1 step."
+            return "Refine Transcript pipeline — each step processes one session's transcript. Needs at least 1 step."
         case .output:
-            return "Output pipeline — each step receives all combined source text. Needs at least 1 step."
+            return "Format Document pipeline — each step processes all combined source text. Needs at least 1 step."
         }
     }
 

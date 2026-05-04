@@ -548,9 +548,9 @@ private struct PipelinesTab: View {
 
     private var scopeHint: String {
         switch scope {
-        case .postCapture: return "Runs automatically after text is acquired — select in source wizards"
-        case .source:      return "Runs on an individual session's transcript · needs at least 1 step"
-        case .output:      return "Runs on all combined sources · needs at least 1 step"
+        case .postCapture: return "Runs automatically after capture — select one in the recording wizard"
+        case .source:      return "Applied manually to refine a single session's transcript · needs at least 1 step"
+        case .output:      return "Applied to all sessions combined when formatting the final document · needs at least 1 step"
         }
     }
 

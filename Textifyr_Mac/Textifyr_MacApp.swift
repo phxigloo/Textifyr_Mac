@@ -35,6 +35,13 @@ struct Textifyr_MacApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
+        Window("Prompt Builder", id: "prompt-builder") {
+            PromptBuilderView()
+        }
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 860, height: 620)
+        .modelContainer(container)
+
         Settings {
             SettingsView()
         }
@@ -68,6 +75,12 @@ private struct AppCommands: Commands {
                 NotificationCenter.default.post(name: .newDocument, object: nil)
             }
             .keyboardShortcut("n", modifiers: .command)
+        }
+        CommandMenu("Tools") {
+            Button("Prompt Builder") {
+                openWindow(id: "prompt-builder")
+            }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
         }
     }
 }

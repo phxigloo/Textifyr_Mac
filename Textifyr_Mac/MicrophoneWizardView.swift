@@ -6,6 +6,10 @@ import TextifyrModels
 import TextifyrViewModels
 import TextifyrServices
 
+// openWindow is injected from the environment; wizard steps use it to open
+// the Prompt Builder without a sheet/dismiss dependency.
+
+
 // MARK: - Dictation support
 
 private final class TextInsertionProxy: ObservableObject {
@@ -173,6 +177,7 @@ struct MicrophoneWizardView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openWindow) private var openWindow
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "postCapture" },
            sort: \FormattingPipeline.name) private var postCapturePipelines: [FormattingPipeline]
@@ -181,6 +186,7 @@ struct MicrophoneWizardView: View {
 
     private enum WizardStep { case acquire, process, polish }
     @State private var wizardStep: WizardStep = .acquire
+    @State private var stepForward = true
 
     // Acquire
     @State private var selectedPostCapturePipelineID: PersistentIdentifier? = nil
@@ -202,6 +208,10 @@ struct MicrophoneWizardView: View {
     // Polish / Final Edit
     @State private var finalText: String = ""
     @State private var errorText: String? = nil
+
+    // Pipeline editor sheets
+    @State private var showingQuickCleanPipelines = false
+    @State private var showingSessionPolishPipelines = false
 
     @StateObject private var processInsertionProxy = TextInsertionProxy()
     @StateObject private var insertionProxy = TextInsertionProxy()
@@ -246,6 +256,12 @@ struct MicrophoneWizardView: View {
             } else {
                 UserDefaults.standard.removeObject(forKey: Self.postCapturePipelineKey)
             }
+        }
+        .sheet(isPresented: $showingQuickCleanPipelines) {
+            ScopedPipelineEditorSheet(scope: .postCapture)
+        }
+        .sheet(isPresented: $showingSessionPolishPipelines) {
+            ScopedPipelineEditorSheet(scope: .source)
         }
     }
 
@@ -295,15 +311,25 @@ struct MicrophoneWizardView: View {
         }
     }
 
+    private var stepTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: stepForward ? .trailing : .leading).combined(with: .opacity),
+            removal:   .move(edge: stepForward ? .leading  : .trailing).combined(with: .opacity)
+        )
+    }
+
     // MARK: - Step dispatch
 
     @ViewBuilder
     private var stepContent: some View {
-        switch wizardStep {
-        case .acquire: acquireStep
-        case .process: processStep
-        case .polish:  polishStep
+        ZStack {
+            switch wizardStep {
+            case .acquire: acquireStep.transition(stepTransition)
+            case .process: processStep.transition(stepTransition)
+            case .polish:  polishStep.transition(stepTransition)
+            }
         }
+        .clipped()
     }
 
     // MARK: - Step 1: Acquire
@@ -330,6 +356,22 @@ struct MicrophoneWizardView: View {
                         .foregroundStyle(captureVM.phase == .recording ? .primary : .secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
 
+                    // Recording limit warning — appears 60 s before auto-stop
+                    if captureVM.phase == .recording {
+                        let remaining = Int(AppConstants.maxLiveRecordingSeconds - captureVM.recordingDuration)
+                        if remaining <= Int(AppConstants.liveRecordingWarnSeconds) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                                Text("Auto-stops in \(max(0, remaining))s — 2-hour limit")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .transition(.opacity)
+                        }
+                    }
+
                     // Settings card — grouped controls
                     VStack(spacing: 0) {
                         Toggle("Identify Speakers", isOn: $captureVM.diarizationEnabled)
@@ -339,7 +381,7 @@ struct MicrophoneWizardView: View {
 
                         if !postCapturePipelines.isEmpty {
                             Divider().padding(.leading, 12)
-                            LabeledContent("Post Capture") {
+                            LabeledContent("Auto Cleanup") {
                                 Picker("", selection: $selectedPostCapturePipelineID) {
                                     Text("None").tag(nil as PersistentIdentifier?)
                                     ForEach(postCapturePipelines) { p in
@@ -352,12 +394,27 @@ struct MicrophoneWizardView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                         }
+                        Divider().padding(.leading, 12)
+                        HStack {
+                            Spacer()
+                            Button {
+                                showingQuickCleanPipelines = true
+                            } label: {
+                                Label("Manage Auto Cleanup Pipelines…", systemImage: "slider.horizontal.3")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                        }
                     }
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
                     // Inline speaker identification
                     if captureVM.phase == .identifySpeakers {
                         speakerIDContent
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
                     // Post-capture pipeline progress
@@ -367,24 +424,47 @@ struct MicrophoneWizardView: View {
                             Text("Running post capture pipeline…")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
+                        .transition(.opacity)
                     }
 
                     // Transcription/diarization progress
                     if [.transcribing, .downloadingModels, .diarizing, .saving].contains(captureVM.phase) {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text(acquireProgressLabel).font(.caption).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                if captureVM.transcriptionFraction == nil {
+                                    ProgressView().controlSize(.small)
+                                }
+                                Text(acquireProgressLabel)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let fraction = captureVM.transcriptionFraction {
+                                ProgressView(value: fraction)
+                                    .progressViewStyle(.linear)
+                                    .animation(.linear(duration: 0.25), value: fraction)
+                            }
+                            if let chunk = captureVM.chunkProgress {
+                                Text("Minutes \(chunk.minuteStart)–\(chunk.minuteEnd) of \(chunk.totalMinutes)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
+                        .transition(.opacity)
                     }
 
                     if let err = postCaptureError {
                         Text(err).font(.caption).foregroundStyle(.red)
+                            .transition(.opacity)
                     }
                     if case .failed(let msg) = captureVM.phase {
                         Text(msg).font(.caption).foregroundStyle(.red)
+                            .transition(.opacity)
                     }
                 }
                 .padding(20)
+                .animation(.spring(response: 0.35, dampingFraction: 0.9), value: captureVM.phase == .identifySpeakers)
+                .animation(.easeInOut(duration: 0.2), value: isRunningPostCapture)
+                .animation(.easeInOut(duration: 0.2), value: postCaptureError)
             }
 
             Divider()
@@ -414,7 +494,7 @@ struct MicrophoneWizardView: View {
 
         case .recording:
             Button("Stop Recording") {
-                Task { await captureVM.stopMicRecording() }
+                captureVM.stopMicRecording()
             }
             .buttonStyle(.borderedProminent)
             .tint(.red)
@@ -477,17 +557,38 @@ struct MicrophoneWizardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
 
+                    // Auto-stop notice
+                    if captureVM.recordingAutoStopped {
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock.badge.exclamationmark.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                            Text("Recording was auto-stopped at the 2-hour limit.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .transition(.opacity)
+                    }
+
                     // Transcript editor — label row with Revert on the trailing side
                     HStack(alignment: .firstTextBaseline) {
                         Text("Transcript")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Button("Revert to Original") { currentText = originalText }
-                            .buttonStyle(.borderless)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .disabled(currentText == originalText)
+                        Text("\(currentText.count.formatted()) chars")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                        Button { currentText = originalText } label: {
+                            Label("Revert to Original", systemImage: "arrow.uturn.backward")
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .foregroundStyle(currentText == originalText
+                            ? AnyShapeStyle(Color.secondary)
+                            : AnyShapeStyle(Color.accentColor))
+                        .disabled(currentText == originalText)
+                        .animation(.easeInOut(duration: 0.15), value: currentText == originalText)
                     }
 
                     DictationAwareTextEditor(text: $currentText, proxy: processInsertionProxy)
@@ -496,11 +597,15 @@ struct MicrophoneWizardView: View {
 
                     dictationControlsForStep(.process)
 
-                    // AI pipeline section
-                    if !sourcePipelines.isEmpty {
-                        Divider()
+                    // Refine Transcript pipeline section — always shown so Manage is always reachable
+                    Divider()
 
-                        HStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        if sourcePipelines.isEmpty {
+                            Text("No Refine Transcript pipelines yet.")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        } else {
                             Picker("Run Pipeline", selection: $selectedSourcePipelineID) {
                                 Text("Choose a pipeline…").tag(nil as PersistentIdentifier?)
                                 ForEach(sourcePipelines) { p in
@@ -520,16 +625,26 @@ struct MicrophoneWizardView: View {
                             }
                         }
 
-                        if !pipelineRuns.isEmpty {
-                            VStack(spacing: 8) {
-                                ForEach($pipelineRuns) { $run in
-                                    PipelineRunBubble(run: $run) {
-                                        currentText = run.result
-                                        run.isTransferred = true
-                                    }
+                        Spacer()
+
+                        Button { showingSessionPolishPipelines = true } label: {
+                            Image(systemName: "slider.horizontal.3")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Manage Refine Transcript pipelines")
+                    }
+
+                    if !pipelineRuns.isEmpty {
+                        VStack(spacing: 8) {
+                            ForEach($pipelineRuns) { $run in
+                                PipelineRunBubble(run: $run) {
+                                    currentText = run.result
+                                    run.isTransferred = true
                                 }
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
                         }
+                        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: pipelineRuns.count)
                     }
 
                     if let err = errorText {
@@ -550,7 +665,8 @@ struct MicrophoneWizardView: View {
                 Button("Continue") {
                     stopDictationIfActive()
                     finalText = currentText
-                    wizardStep = .polish
+                    stepForward = true
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .polish }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(currentText.isEmpty)
@@ -567,9 +683,15 @@ struct MicrophoneWizardView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
 
-                    Text("Final Edit")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Final Edit")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(finalText.count.formatted()) chars")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
 
                     DictationAwareTextEditor(text: $finalText, proxy: insertionProxy)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -588,7 +710,11 @@ struct MicrophoneWizardView: View {
 
             HStack {
                 Button("Cancel") { cancel() }.buttonStyle(.bordered)
-                Button("Back") { stopDictationIfActive(); wizardStep = .process }.buttonStyle(.bordered)
+                Button("Back") {
+                    stopDictationIfActive()
+                    stepForward = false
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .process }
+                }.buttonStyle(.bordered)
                 Spacer()
                 Button("Accept") { accept() }
                     .buttonStyle(.borderedProminent)
@@ -629,6 +755,7 @@ struct MicrophoneWizardView: View {
                 .help("Dictate text and insert it at the cursor position")
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: dictation.isActive)
     }
 
     // MARK: - Dictation
@@ -653,7 +780,11 @@ struct MicrophoneWizardView: View {
 
     private func handlePhaseChange(_ phase: CapturePhase) {
         guard phase == .done else { return }
-        guard let session = captureVM.lastCommittedSession else { wizardStep = .process; return }
+        guard let session = captureVM.lastCommittedSession else {
+            stepForward = true
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .process }
+            return
+        }
         capturedSession = session
         originalText = session.rawText
         currentText = session.rawText
@@ -661,7 +792,8 @@ struct MicrophoneWizardView: View {
         if let pipeline = postCapturePipelines.first(where: { $0.id == selectedPostCapturePipelineID }) {
             runPostCapturePipeline(pipeline)
         } else {
-            wizardStep = .process
+            stepForward = true
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .process }
         }
     }
 
@@ -676,12 +808,15 @@ struct MicrophoneWizardView: View {
                 if !Task.isCancelled { currentText = result }
             } catch {
                 if !Task.isCancelled {
-                    postCaptureError = "Post capture failed: \(error.localizedDescription)"
+                    postCaptureError = "Auto Cleanup failed: \(error.localizedDescription)"
                 }
             }
             isRunningPostCapture = false
             postCaptureTask = nil
-            if !Task.isCancelled { wizardStep = .process }
+            if !Task.isCancelled {
+                stepForward = true
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .process }
+            }
         }
     }
 
@@ -727,7 +862,8 @@ struct MicrophoneWizardView: View {
         pipelineRuns = []
         errorText = nil
         captureVM.reset()
-        wizardStep = .acquire
+        stepForward = false
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .acquire }
     }
 
     private func cancel() {

@@ -8,6 +8,7 @@ struct PipelineStepRow: View {
     @ObservedObject var viewModel: PipelineEditorViewModel
     let step: PipelineStep
     let isLocked: Bool
+    @Environment(\.openWindow) private var openWindow
 
     @State private var name: String
     @State private var prompt: String
@@ -83,6 +84,15 @@ struct PipelineStepRow: View {
                         .font(.caption2)
                         .foregroundStyle(prompt.count > AppConstants.maxPromptCharacters ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
                     Spacer()
+                    Button {
+                        openWindow(id: "prompt-builder")
+                    } label: {
+                        Label("Prompt Builder", systemImage: "text.bubble")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Pipelines are made of one or more prompts. Use the Prompt Builder to write and test individual prompts before adding them here.")
+
                     if isImprovingThis {
                         HStack(spacing: 4) {
                             ProgressView().controlSize(.small)

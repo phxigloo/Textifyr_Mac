@@ -122,9 +122,9 @@ struct ScopedPipelineEditorSheet: View {
 
     private var scopeHint: String {
         switch scope {
-        case .postCapture: return "Runs automatically after text is acquired from a source"
-        case .source:      return "Runs on an individual session's transcript"
-        case .output:      return "Runs on all combined source sessions"
+        case .postCapture: return "Runs automatically after text is acquired — no manual trigger needed"
+        case .source:      return "Manually applied to refine a single session's transcript while editing"
+        case .output:      return "Applied to all sessions combined when formatting the final document"
         }
     }
 
