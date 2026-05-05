@@ -245,10 +245,11 @@ struct CaptureReviewStages: View {
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "source" },
            sort: \FormattingPipeline.name) private var sourcePipelines: [FormattingPipeline]
 
+    @EnvironmentObject private var appState: AppState
+
     private enum Step { case process, polish }
     @State private var step: Step = .process
     @State private var stepForward = true
-    @State private var showPipelineEditor = false
 
     @State private var currentText: String
     @State private var finalText: String
@@ -292,9 +293,6 @@ struct CaptureReviewStages: View {
             }
         }
         .clipped()
-        .sheet(isPresented: $showPipelineEditor) {
-            PipelineEditorWindowView()
-        }
     }
 
     private var stepTransition: AnyTransition {
@@ -383,7 +381,7 @@ struct CaptureReviewStages: View {
 
                         Spacer()
 
-                        Button { showPipelineEditor = true } label: {
+                        Button { appState.inspectorVisible = true } label: {
                             Image(systemName: "slider.horizontal.3")
                         }
                         .buttonStyle(.borderless)

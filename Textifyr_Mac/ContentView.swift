@@ -47,14 +47,11 @@ private struct MainNavigationView: View {
         } message: {
             Text(appState.alertMessage ?? "")
         }
-        .sheet(isPresented: $appState.showPipelineEditor) {
-            PipelineEditorWindowView()
-        }
         .sheet(isPresented: $appState.showPromptBuilder) {
             PromptBuilderView()
         }
         .onReceive(NotificationCenter.default.publisher(for: .openPipelineEditorSheet)) { _ in
-            appState.showPipelineEditor = true
+            appState.inspectorVisible = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .openPromptBuilderSheet)) { _ in
             appState.showPromptBuilder = true

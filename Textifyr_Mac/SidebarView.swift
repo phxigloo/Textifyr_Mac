@@ -139,8 +139,6 @@ struct SidebarView: View {
 private struct SidebarRow: View {
     let document: TextifyrDocument
     let snippet: String?
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: \WorkStage.sortOrder) private var stages: [WorkStage]
 
     var body: some View {
         HStack(alignment: snippet != nil ? .top : .center) {
@@ -157,52 +155,9 @@ private struct SidebarRow: View {
                 }
             }
             Spacer()
-            // Stage badge: visual is drawn separately so Menu chrome doesn't affect colors
             if let stage = document.stage {
                 StageBadgeView(stage: stage)
-                    .overlay(
-                        Menu {
-                            ForEach(stages) { s in
-                                Button {
-                                    document.stage = s
-                                    try? modelContext.save()
-                                } label: {
-                                    HStack {
-                                        Text(s.name)
-                                        if document.stage?.id == s.id {
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
-                                }
-                            }
-                            Divider()
-                            Button("Clear Stage", role: .destructive) {
-                                document.stage = nil
-                                try? modelContext.save()
-                            }
-                        } label: {
-                            Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                    )
                     .fixedSize()
-            } else {
-                Menu {
-                    ForEach(stages) { s in
-                        Button {
-                            document.stage = s
-                            try? modelContext.save()
-                        } label: { Text(s.name) }
-                    }
-                } label: {
-                    Image(systemName: "tag")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
             }
         }
         .padding(.vertical, 2)

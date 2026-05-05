@@ -46,6 +46,8 @@ enum PictureProcessingMode: String, CaseIterable, Identifiable {
 struct SmartVisionInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : closeWizard() }
     @EnvironmentObject private var appState: AppState
 
     private enum WizardStep { case capture, process, annotate }
@@ -80,7 +82,7 @@ struct SmartVisionInputView: View {
             Divider()
             stepContent
         }
-        .frame(width: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $showCropView) {
             if let img = capturedImage {
                 NavigationStack {
@@ -132,7 +134,7 @@ struct SmartVisionInputView: View {
             Button("OK") { errorText = nil }
         } message: { Text(errorText ?? "") }
         .onChange(of: captureVM.phase) { _, phase in
-            if phase == .done { dismiss() }
+            if phase == .done { closeWizard() }
         }
     }
 
@@ -145,7 +147,7 @@ struct SmartVisionInputView: View {
             Spacer()
             stepIndicator
             Spacer()
-            Button("Cancel") { captureVM.reset(); dismiss() }.buttonStyle(.borderless)
+            Button("Cancel") { captureVM.reset(); closeWizard() }.buttonStyle(.borderless)
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
@@ -361,7 +363,7 @@ struct SmartVisionInputView: View {
                 Button("← Back") { wizardStep = .process }
                     .buttonStyle(.bordered)
                 Spacer()
-                Button("Cancel") { captureVM.reset(); dismiss() }.buttonStyle(.bordered)
+                Button("Cancel") { captureVM.reset(); closeWizard() }.buttonStyle(.bordered)
                 Button("Insert") { insertPicture() }
                     .buttonStyle(.borderedProminent)
                     .disabled(processedImage == nil)

@@ -65,7 +65,7 @@ struct RTFOutputView: View {
                 }
                 if !outputPipelines.isEmpty { Divider() }
                 Button {
-                    appState.showPipelineEditor = true
+                    appState.inspectorVisible = true
                 } label: {
                     Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
                 }

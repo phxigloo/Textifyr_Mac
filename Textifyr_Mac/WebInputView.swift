@@ -7,6 +7,8 @@ import SwiftData
 struct WebInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : closeWizard() }
 
     @State private var urlText = ""
     @State private var isLoading = false
@@ -40,7 +42,7 @@ struct WebInputView: View {
             HStack(spacing: 16) {
                 Button("Cancel") {
                     captureVM.reset()
-                    dismiss()
+                    closeWizard()
                 }
                 .buttonStyle(.bordered)
 
@@ -52,9 +54,9 @@ struct WebInputView: View {
             }
             .padding(.bottom, 28)
         }
-        .frame(width: 480)
+        .frame(maxWidth: .infinity)
         .onChange(of: captureVM.phase) { _, phase in
-            if phase == .done { dismiss() }
+            if phase == .done { closeWizard() }
         }
     }
 

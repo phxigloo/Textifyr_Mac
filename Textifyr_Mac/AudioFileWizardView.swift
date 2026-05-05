@@ -10,7 +10,11 @@ struct AudioFileWizardView: View {
     let captureMethod: CaptureMethod
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
+    @EnvironmentObject private var appState: AppState
     @Environment(\.modelContext) private var modelContext
+
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : dismiss() }
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "postCapture" },
            sort: \FormattingPipeline.name) private var postCapturePipelines: [FormattingPipeline]
@@ -30,7 +34,6 @@ struct AudioFileWizardView: View {
     @State private var isRunningPostCapture = false
     @State private var postCaptureTask: Task<Void, Never>? = nil
     @State private var postCaptureProgress: DocumentFormattingService.Progress? = nil
-    @State private var showPipelineEditor = false
 
     // Review state (passed to CaptureReviewStages)
     @State private var capturedSession: SourceSession? = nil
@@ -46,7 +49,7 @@ struct AudioFileWizardView: View {
             Divider()
             stepContent
         }
-        .frame(width: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { restorePostCapturePipeline() }
         .onChange(of: captureVM.phase) { _, phase in handlePhaseChange(phase) }
         .onChange(of: postCapturePipelines) { _, pipelines in
@@ -61,9 +64,6 @@ struct AudioFileWizardView: View {
             } else {
                 UserDefaults.standard.removeObject(forKey: Self.postCapturePipelineKey)
             }
-        }
-        .sheet(isPresented: $showPipelineEditor) {
-            PipelineEditorWindowView()
         }
     }
 
@@ -131,7 +131,7 @@ struct AudioFileWizardView: View {
                     onAccept: { finalText in
                         capturedSession?.rawText = finalText
                         try? modelContext.save()
-                        dismiss()
+                        closeWizard()
                     }
                 )
                 .transition(stepTransition)
@@ -187,7 +187,7 @@ struct AudioFileWizardView: View {
                             HStack {
                                 Spacer()
                                 Button {
-                                    showPipelineEditor = true
+                                    appState.inspectorVisible = true
                                 } label: {
                                     Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
                                         .font(.caption)

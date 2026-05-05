@@ -9,6 +9,8 @@ import TextifyrServices
 struct PhotoLibraryInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : closeWizard() }
 
     @State private var selectedItem: PhotosPickerItem? = nil
     @State private var currentImage: CGImage? = nil
@@ -32,7 +34,7 @@ struct PhotoLibraryInputView: View {
                 reviewContent
             }
         }
-        .frame(width: 560)
+        .frame(maxWidth: .infinity)
         .sheet(isPresented: $showingCropView) {
             if let image = currentImage {
                 NavigationStack {
@@ -53,7 +55,7 @@ struct PhotoLibraryInputView: View {
             Button("OK") { errorText = nil }
         } message: { Text(errorText ?? "") }
         .onChange(of: captureVM.phase) { _, phase in
-            if phase == .done { dismiss() }
+            if phase == .done { closeWizard() }
         }
         .onChange(of: selectedItem) { _, item in
             guard let item else { return }
@@ -85,7 +87,7 @@ struct PhotoLibraryInputView: View {
             }
             .buttonStyle(.borderedProminent)
 
-            Button("Cancel") { captureVM.reset(); dismiss() }
+            Button("Cancel") { captureVM.reset(); closeWizard() }
                 .buttonStyle(.bordered)
                 .padding(.bottom, 28)
         }
@@ -152,7 +154,7 @@ struct PhotoLibraryInputView: View {
             if let error = errorText { errorLabel(error).padding(.horizontal) }
 
             HStack {
-                Button("Cancel") { captureVM.reset(); dismiss() }
+                Button("Cancel") { captureVM.reset(); closeWizard() }
                     .buttonStyle(.bordered)
                 Spacer()
                 Button("Use Text") {

@@ -9,6 +9,8 @@ import TextifyrServices
 struct PDFInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : closeWizard() }
 
     @State private var selectedURL: URL?
     @State private var selectedFileName: String?
@@ -71,7 +73,7 @@ struct PDFInputView: View {
             controlsBar
                 .padding([.horizontal, .bottom])
         }
-        .frame(minWidth: 560, minHeight: 500)
+        .frame(maxWidth: .infinity, minHeight: 480)
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.pdf], allowsMultipleSelection: false) { result in
             handleFileSelection(result)
         }
@@ -92,7 +94,7 @@ struct PDFInputView: View {
             }
         }
         .onChange(of: captureVM.phase) { _, phase in
-            if phase == .done { dismiss() }
+            if phase == .done { closeWizard() }
         }
     }
 
@@ -173,7 +175,7 @@ struct PDFInputView: View {
 
             Spacer()
 
-            Button("Cancel") { captureVM.reset(); dismiss() }
+            Button("Cancel") { captureVM.reset(); closeWizard() }
                 .buttonStyle(.bordered)
 
             if isExtracting {

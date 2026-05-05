@@ -9,6 +9,8 @@ import TextifyrServices
 struct CameraInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : closeWizard() }
     @EnvironmentObject private var appState: AppState
 
     @State private var capturedImage: NSImage?
@@ -32,7 +34,7 @@ struct CameraInputView: View {
                 livePreviewContent
             }
         }
-        .frame(minWidth: 520)
+        .frame(maxWidth: .infinity)
         .sheet(isPresented: $showingCropView) {
             if let cg = capturedCGImage {
                 NavigationStack {
@@ -50,7 +52,7 @@ struct CameraInputView: View {
             }
         }
         .onChange(of: captureVM.phase) { _, phase in
-            if phase == .done { dismiss() }
+            if phase == .done { closeWizard() }
         }
         .onAppear  { appState.setCameraInUse(true) }
         .onDisappear { appState.setCameraInUse(false) }
@@ -70,7 +72,7 @@ struct CameraInputView: View {
             Text(error).font(.caption).foregroundStyle(.red)
         }
 
-        Button("Cancel") { captureVM.reset(); dismiss() }
+        Button("Cancel") { captureVM.reset(); closeWizard() }
             .buttonStyle(.bordered).padding(.bottom, 28)
     }
 
@@ -95,7 +97,7 @@ struct CameraInputView: View {
             Text(error).font(.caption).foregroundStyle(.red)
         }
 
-        Button("Cancel") { captureVM.reset(); dismiss() }
+        Button("Cancel") { captureVM.reset(); closeWizard() }
             .buttonStyle(.bordered).padding(.bottom, 28)
     }
 
@@ -137,7 +139,7 @@ struct CameraInputView: View {
             }
 
             HStack {
-                Button("Cancel") { captureVM.reset(); dismiss() }.buttonStyle(.bordered)
+                Button("Cancel") { captureVM.reset(); closeWizard() }.buttonStyle(.bordered)
                 Spacer()
                 Button("Use Text") {
                     captureVM.saveTextCapture(recognizedText, captureMethod: .camera)

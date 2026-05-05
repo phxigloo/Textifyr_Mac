@@ -3,11 +3,11 @@ import SwiftData
 import TextifyrModels
 import TextifyrViewModels
 
-/// Sheet presented when the user taps "+" in SourceSessionListView.
-/// Creates a single InputCaptureViewModel shared across all input views.
+/// Shown inline in SourcesTabView (no sheet). Creates a single InputCaptureViewModel
+/// shared across all input views and injects `wizardDismiss` into the hierarchy.
 struct InputSourcePickerView: View {
     let document: TextifyrDocument
-    @Environment(\.dismiss) private var dismiss
+    let onDismiss: () -> Void
     @EnvironmentObject private var appState: AppState
 
     @StateObject private var captureVM: InputCaptureViewModel
@@ -21,8 +21,9 @@ struct InputSourcePickerView: View {
         .appleIntelligence, .smartVision
     ]
 
-    init(document: TextifyrDocument, context: ModelContext) {
-        self.document = document
+    init(document: TextifyrDocument, context: ModelContext, onDismiss: @escaping () -> Void) {
+        self.document  = document
+        self.onDismiss = onDismiss
         _captureVM = StateObject(wrappedValue: InputCaptureViewModel(
             document: document,
             context: context
@@ -37,6 +38,7 @@ struct InputSourcePickerView: View {
                 pickerGrid
             }
         }
+        .environment(\.wizardDismiss, onDismiss)
         .task { captureVM.appState = appState }
     }
 
@@ -47,9 +49,6 @@ struct InputSourcePickerView: View {
             HStack {
                 Text("Add Source")
                     .font(.title2).bold()
-                Spacer()
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(.borderless)
             }
             .padding(.horizontal, 24)
             .padding(.top, 24)
@@ -65,8 +64,21 @@ struct InputSourcePickerView: View {
                 }
             }
             .padding(24)
+
+            Spacer()
+
+            Divider()
+
+            HStack {
+                Button("Cancel") { onDismiss() }
+                    .buttonStyle(.bordered)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(.bar)
         }
-        .frame(width: 480)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Input view routing
@@ -97,8 +109,12 @@ struct InputSourcePickerView: View {
         case .smartVision:
             SmartVisionInputView(captureVM: captureVM)
         default:
-            Text("Coming soon")
-                .frame(width: 480, height: 320)
+            VStack {
+                Text("Coming soon")
+                    .foregroundStyle(.secondary)
+                Button("Cancel") { onDismiss() }.buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -136,7 +152,8 @@ private struct SourceMethodButton: View {
 #Preview { @MainActor in
     let c = makePreviewContainer()
     let doc = previewDocument(in: c)
-    return InputSourcePickerView(document: doc, context: c.mainContext)
+    return InputSourcePickerView(document: doc, context: c.mainContext, onDismiss: {})
         .modelContainer(c)
-        .frame(width: 480, height: 420)
+        .environmentObject(AppState())
+        .frame(width: 560, height: 460)
 }

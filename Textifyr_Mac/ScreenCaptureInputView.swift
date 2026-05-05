@@ -8,6 +8,8 @@ import TextifyrServices
 struct ScreenCaptureInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : closeWizard() }
 
     @State private var capturedDisplays: [(name: String, image: CGImage)] = []
     @State private var selectedImage: CGImage?
@@ -40,7 +42,7 @@ struct ScreenCaptureInputView: View {
                 promptContent
             }
         }
-        .frame(minWidth: 560)
+        .frame(maxWidth: .infinity)
         .sheet(isPresented: $showPrepareSheet) {
             prepareSheet
         }
@@ -74,7 +76,7 @@ struct ScreenCaptureInputView: View {
             }
         }
         .onChange(of: captureVM.phase) { _, phase in
-            if phase == .done { dismiss() }
+            if phase == .done { closeWizard() }
         }
     }
 
@@ -105,7 +107,7 @@ struct ScreenCaptureInputView: View {
                 .buttonStyle(.borderedProminent)
             }
 
-            Button("Cancel") { captureVM.reset(); dismiss() }
+            Button("Cancel") { captureVM.reset(); closeWizard() }
                 .buttonStyle(.bordered).padding(.bottom, 28)
         }
         .padding(.horizontal, 32)
@@ -237,7 +239,7 @@ struct ScreenCaptureInputView: View {
             }
 
             HStack {
-                Button("Cancel") { captureVM.reset(); dismiss() }.buttonStyle(.bordered)
+                Button("Cancel") { captureVM.reset(); closeWizard() }.buttonStyle(.bordered)
                 Spacer()
                 Button("Use Text") {
                     captureVM.saveTextCapture(recognizedText, captureMethod: .screenCapture)

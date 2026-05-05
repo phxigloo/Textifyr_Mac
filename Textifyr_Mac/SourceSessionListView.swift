@@ -7,11 +7,10 @@ import TextifyrViewModels
 struct SourceSessionListView: View {
     let document: TextifyrDocument
     @ObservedObject var viewModel: DocumentEditorViewModel
+    var onAddSource:   () -> Void = {}
+    var onEditSession: (SourceSession) -> Void = { _ in }
 
     @Environment(\.modelContext) private var modelContext
-    @State private var selectedSession: SourceSession?
-    @State private var showingInputPicker = false
-    @State private var editingSession: SourceSession? = nil
 
     private var sessions: [SourceSession] {
         (document.sourceSessions ?? []).sorted { $0.sortOrder < $1.sortOrder }
@@ -29,7 +28,7 @@ struct SourceSessionListView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    showingInputPicker = true
+                    onAddSource()
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -50,28 +49,25 @@ struct SourceSessionListView: View {
                     Text("No sources yet")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Button("Add Source") { showingInputPicker = true }
+                    Button("Add Source") { onAddSource() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(sessions, id: \.id, selection: $selectedSession) { session in
+                List(sessions, id: \.id) { session in
                     SessionRowView(session: session)
-                        .tag(session)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onEditSession(session) }
                         .contextMenu {
+                            Button("Edit") { onEditSession(session) }
+                            Divider()
                             Button("Delete", role: .destructive) {
-                                if selectedSession?.id == session.id { selectedSession = nil }
                                 viewModel.deleteSession(session)
                             }
                         }
                 }
                 .listStyle(.sidebar)
-                .onChange(of: selectedSession) { _, session in
-                    guard let session else { return }
-                    selectedSession = nil
-                    editingSession = session
-                }
 
                 Divider()
 
@@ -95,70 +91,6 @@ struct SourceSessionListView: View {
                 .background(.bar)
             }
         }
-        .sheet(isPresented: $showingInputPicker) {
-            InputSourcePickerView(document: document, context: modelContext)
-        }
-        .sheet(item: $editingSession) { session in
-            SessionEditSheet(session: session)
-        }
-    }
-}
-
-// MARK: - Session edit sheet
-
-private struct SessionEditSheet: View {
-    let session: SourceSession
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
-    @State private var reviewStepIndex = 1
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: session.captureMethod.systemImage)
-                    .foregroundStyle(.tint)
-                Text("Edit Session")
-                    .font(.title2).bold()
-                Spacer()
-                stepIndicator
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
-
-            Divider()
-
-            CaptureReviewStages(
-                originalText: session.rawText,
-                initialText: session.rawText,
-                isEditMode: true,
-                reviewStepIndex: $reviewStepIndex,
-                onCancel: { dismiss() },
-                onAccept: { finalText in
-                    session.rawText = finalText
-                    try? modelContext.save()
-                    dismiss()
-                }
-            )
-        }
-        .frame(width: 600)
-    }
-
-    private var stepIndicator: some View {
-        // Step 1 is already complete (session was previously acquired); show filled.
-        HStack(spacing: 0) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(reviewStepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: reviewStepIndex == i ? 10 : 7, height: reviewStepIndex == i ? 10 : 7)
-                if i < 2 {
-                    Rectangle()
-                        .fill(reviewStepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 32, height: 2)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: reviewStepIndex)
     }
 }
 
@@ -202,6 +134,65 @@ private struct SessionRowView: View {
     }
 }
 
+// MARK: - Session edit (inline, no sheet)
+
+struct SessionEditView: View {
+    let session: SourceSession
+    let context: ModelContext
+    let onDismiss: () -> Void
+
+    @State private var reviewStepIndex = 1
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: session.captureMethod.systemImage)
+                    .foregroundStyle(.tint)
+                Text("Edit Session")
+                    .font(.title2).bold()
+                Spacer()
+                stepIndicator
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
+
+            Divider()
+
+            CaptureReviewStages(
+                originalText: session.rawText,
+                initialText: session.rawText,
+                isEditMode: true,
+                reviewStepIndex: $reviewStepIndex,
+                onCancel: { onDismiss() },
+                onAccept: { finalText in
+                    session.rawText = finalText
+                    try? context.save()
+                    onDismiss()
+                }
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .environment(\.wizardDismiss, onDismiss)
+    }
+
+    private var stepIndicator: some View {
+        HStack(spacing: 0) {
+            ForEach(0..<3) { i in
+                Circle()
+                    .fill(reviewStepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
+                    .frame(width: reviewStepIndex == i ? 10 : 7, height: reviewStepIndex == i ? 10 : 7)
+                if i < 2 {
+                    Rectangle()
+                        .fill(reviewStepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
+                        .frame(width: 32, height: 2)
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: reviewStepIndex)
+    }
+}
+
 #Preview { @MainActor in
     let c = makePreviewContainer()
     let doc = previewDocument(in: c)
@@ -209,5 +200,5 @@ private struct SessionRowView: View {
     return SourceSessionListView(document: doc, viewModel: vm)
         .modelContainer(c)
         .environmentObject(AppState())
-        .frame(width: 320, height: 500)
+        .frame(width: 400, height: 500)
 }

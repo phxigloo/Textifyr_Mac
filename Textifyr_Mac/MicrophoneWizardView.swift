@@ -11,7 +11,10 @@ struct MicrophoneWizardView: View {
     private let initialSession: SourceSession?
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
     @Environment(\.modelContext) private var modelContext
+
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : dismiss() }
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "postCapture" },
            sort: \FormattingPipeline.name) private var postCapturePipelines: [FormattingPipeline]
@@ -27,7 +30,7 @@ struct MicrophoneWizardView: View {
     @State private var postCaptureTask: Task<Void, Never>? = nil
     @State private var postCaptureError: String? = nil
     @State private var postCaptureProgress: DocumentFormattingService.Progress? = nil
-    @State private var showPipelineEditor = false
+    @EnvironmentObject private var appState: AppState
 
     // Session & text (passed to CaptureReviewStages)
     @State private var capturedSession: SourceSession? = nil
@@ -48,7 +51,7 @@ struct MicrophoneWizardView: View {
             Divider()
             stepContent
         }
-        .frame(width: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             restorePostCapturePipeline()
             if let session = initialSession {
@@ -72,9 +75,6 @@ struct MicrophoneWizardView: View {
             } else {
                 UserDefaults.standard.removeObject(forKey: Self.postCapturePipelineKey)
             }
-        }
-        .sheet(isPresented: $showPipelineEditor) {
-            PipelineEditorWindowView()
         }
     }
 
@@ -143,7 +143,7 @@ struct MicrophoneWizardView: View {
                     onAccept: { finalText in
                         capturedSession?.rawText = finalText
                         try? modelContext.save()
-                        dismiss()
+                        closeWizard()
                     }
                 )
                 .transition(stepTransition)
@@ -218,7 +218,7 @@ struct MicrophoneWizardView: View {
                         HStack {
                             Spacer()
                             Button {
-                                showPipelineEditor = true
+                                appState.inspectorVisible = true
                             } label: {
                                 Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
                                     .font(.caption)

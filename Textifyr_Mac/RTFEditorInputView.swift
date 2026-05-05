@@ -7,6 +7,8 @@ import TextifyrViewModels
 struct RTFEditorInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : closeWizard() }
 
     @StateObject private var formatState = TextFormatState()
     @State private var rtfData: Data? = nil
@@ -24,7 +26,7 @@ struct RTFEditorInputView: View {
                 Text("Text Editor")
                     .font(.title2).bold()
                 Spacer()
-                Button("Cancel") { captureVM.reset(); dismiss() }
+                Button("Cancel") { captureVM.reset(); closeWizard() }
                     .buttonStyle(.borderless)
             }
             .padding(.horizontal, 20)
@@ -54,9 +56,9 @@ struct RTFEditorInputView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
-        .frame(width: 560, height: 420)
+        .frame(maxWidth: .infinity)
         .onChange(of: captureVM.phase) { _, phase in
-            if phase == .done { dismiss() }
+            if phase == .done { closeWizard() }
         }
     }
 

@@ -9,6 +9,8 @@ import TextifyrServices
 struct ImageFileImportView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.wizardDismiss) private var wizardDismiss
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : closeWizard() }
 
     @State private var loadedImages: [CGImage] = []
     @State private var recognizedText = ""
@@ -35,7 +37,7 @@ struct ImageFileImportView: View {
                 reviewContent
             }
         }
-        .frame(width: 560)
+        .frame(maxWidth: .infinity)
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: Self.imageTypes,
@@ -66,7 +68,7 @@ struct ImageFileImportView: View {
             Button("OK") { errorText = nil }
         } message: { Text(errorText ?? "") }
         .onChange(of: captureVM.phase) { _, phase in
-            if phase == .done { dismiss() }
+            if phase == .done { closeWizard() }
         }
     }
 
@@ -92,7 +94,7 @@ struct ImageFileImportView: View {
             Button("Choose Image…") { showFileImporter = true }
                 .buttonStyle(.borderedProminent)
 
-            Button("Cancel") { captureVM.reset(); dismiss() }
+            Button("Cancel") { captureVM.reset(); closeWizard() }
                 .buttonStyle(.bordered)
                 .padding(.bottom, 28)
         }
@@ -162,7 +164,7 @@ struct ImageFileImportView: View {
             if let error = errorText { errorLabel(error).padding(.horizontal) }
 
             HStack {
-                Button("Cancel") { captureVM.reset(); dismiss() }
+                Button("Cancel") { captureVM.reset(); closeWizard() }
                     .buttonStyle(.bordered)
                 Spacer()
                 Button("Use Text") {

@@ -450,7 +450,7 @@ private struct PipelinesLinkTab: View {
             Text("Pipeline Editor")
                 .font(.title2.bold())
 
-            Text("Create and manage formatting pipelines in the dedicated Pipeline Editor window.")
+            Text("Create and manage formatting pipelines in the inspector panel alongside your document.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -459,7 +459,7 @@ private struct PipelinesLinkTab: View {
             Button {
                 NotificationCenter.default.post(name: .openPipelineEditorSheet, object: nil)
             } label: {
-                Label("Open Pipeline Editor", systemImage: "arrow.up.right.square")
+                Label("Open Pipeline Inspector", systemImage: "sidebar.right")
             }
             .buttonStyle(.borderedProminent)
 
