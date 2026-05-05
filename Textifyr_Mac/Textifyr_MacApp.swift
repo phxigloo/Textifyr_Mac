@@ -35,20 +35,6 @@ struct Textifyr_MacApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
-        Window("Prompt Builder", id: "prompt-builder") {
-            PromptBuilderView()
-        }
-        .windowResizability(.contentMinSize)
-        .defaultSize(width: 860, height: 620)
-        .modelContainer(container)
-
-        Window("Pipeline Editor", id: "pipeline-editor") {
-            PipelineEditorWindowView()
-        }
-        .windowResizability(.contentMinSize)
-        .defaultSize(width: 880, height: 580)
-        .modelContainer(container)
-
         Settings {
             SettingsView()
         }
@@ -63,7 +49,9 @@ private func prefetchDiarizationModels() async {
 }
 
 extension Notification.Name {
-    static let newDocument = Notification.Name("TextifyrNewDocument")
+    static let newDocument             = Notification.Name("TextifyrNewDocument")
+    static let openPipelineEditorSheet = Notification.Name("TextifyrOpenPipelineEditor")
+    static let openPromptBuilderSheet  = Notification.Name("TextifyrOpenPromptBuilder")
 }
 
 // MARK: - Commands
@@ -85,12 +73,12 @@ private struct AppCommands: Commands {
         }
         CommandMenu("Tools") {
             Button("Prompt Builder") {
-                openWindow(id: "prompt-builder")
+                NotificationCenter.default.post(name: .openPromptBuilderSheet, object: nil)
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
 
             Button("Pipeline Editor") {
-                openWindow(id: "pipeline-editor")
+                NotificationCenter.default.post(name: .openPipelineEditorSheet, object: nil)
             }
             .keyboardShortcut("e", modifiers: [.command, .shift])
         }

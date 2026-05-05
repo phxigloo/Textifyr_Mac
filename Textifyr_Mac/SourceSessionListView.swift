@@ -11,9 +11,7 @@ struct SourceSessionListView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var selectedSession: SourceSession?
     @State private var showingInputPicker = false
-
-    // Microphone sessions open the wizard in edit mode instead of SessionDetailView
-    @State private var editingMicSession: SourceSession? = nil
+    @State private var editingSession: SourceSession? = nil
 
     private var sessions: [SourceSession] {
         (document.sourceSessions ?? []).sorted { $0.sortOrder < $1.sortOrder }
@@ -71,10 +69,8 @@ struct SourceSessionListView: View {
                 .listStyle(.sidebar)
                 .onChange(of: selectedSession) { _, session in
                     guard let session else { return }
-                    if session.captureMethod == .microphone {
-                        selectedSession = nil
-                        editingMicSession = session
-                    }
+                    selectedSession = nil
+                    editingSession = session
                 }
 
                 Divider()
@@ -102,30 +98,67 @@ struct SourceSessionListView: View {
         .sheet(isPresented: $showingInputPicker) {
             InputSourcePickerView(document: document, context: modelContext)
         }
-        .sheet(item: $selectedSession) { session in
-            SessionDetailView(session: session, document: document)
-        }
-        .sheet(item: $editingMicSession) { session in
-            MicrophoneEditSheet(session: session, document: document, context: modelContext)
+        .sheet(item: $editingSession) { session in
+            SessionEditSheet(session: session)
         }
     }
 }
 
-// MARK: - Microphone edit sheet
+// MARK: - Session edit sheet
 
-private struct MicrophoneEditSheet: View {
+private struct SessionEditSheet: View {
     let session: SourceSession
-    let document: TextifyrDocument
-    @StateObject private var captureVM: InputCaptureViewModel
-
-    init(session: SourceSession, document: TextifyrDocument, context: ModelContext) {
-        self.session = session
-        self.document = document
-        _captureVM = StateObject(wrappedValue: InputCaptureViewModel(document: document, context: context))
-    }
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @State private var reviewStepIndex = 1
 
     var body: some View {
-        MicrophoneWizardView(captureVM: captureVM, initialSession: session)
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: session.captureMethod.systemImage)
+                    .foregroundStyle(.tint)
+                Text("Edit Session")
+                    .font(.title2).bold()
+                Spacer()
+                stepIndicator
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
+
+            Divider()
+
+            CaptureReviewStages(
+                originalText: session.rawText,
+                initialText: session.rawText,
+                isEditMode: true,
+                reviewStepIndex: $reviewStepIndex,
+                onCancel: { dismiss() },
+                onAccept: { finalText in
+                    session.rawText = finalText
+                    try? modelContext.save()
+                    dismiss()
+                }
+            )
+        }
+        .frame(width: 600)
+    }
+
+    private var stepIndicator: some View {
+        // Step 1 is already complete (session was previously acquired); show filled.
+        HStack(spacing: 0) {
+            ForEach(0..<3) { i in
+                Circle()
+                    .fill(reviewStepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
+                    .frame(width: reviewStepIndex == i ? 10 : 7, height: reviewStepIndex == i ? 10 : 7)
+                if i < 2 {
+                    Rectangle()
+                        .fill(reviewStepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
+                        .frame(width: 32, height: 2)
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: reviewStepIndex)
     }
 }
 

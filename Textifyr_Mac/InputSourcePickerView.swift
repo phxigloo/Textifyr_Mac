@@ -77,7 +77,7 @@ struct InputSourcePickerView: View {
         case .microphone:
             MicrophoneWizardView(captureVM: captureVM)
         case .audioFile, .videoAudio:
-            AudioFileImportView(captureVM: captureVM, captureMethod: method)
+            AudioFileWizardView(captureVM: captureVM, captureMethod: method)
         case .imageFile:
             ImageFileImportView(captureVM: captureVM)
         case .photoLibrary:

@@ -1,14 +1,13 @@
 import SwiftUI
 import SwiftData
-import AppKit
-import Combine
+import UniformTypeIdentifiers
 import TextifyrModels
 import TextifyrViewModels
 import TextifyrServices
 
-struct MicrophoneWizardView: View {
-    @ObservedObject private var captureVM: InputCaptureViewModel
-    private let initialSession: SourceSession?
+struct AudioFileWizardView: View {
+    @ObservedObject var captureVM: InputCaptureViewModel
+    let captureMethod: CaptureMethod
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -16,31 +15,30 @@ struct MicrophoneWizardView: View {
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "postCapture" },
            sort: \FormattingPipeline.name) private var postCapturePipelines: [FormattingPipeline]
 
-    private enum WizardStep { case acquire, review }
-    @State private var wizardStep: WizardStep = .acquire
+    private enum WizardStep { case settings, review }
+    @State private var wizardStep: WizardStep = .settings
     @State private var stepForward = true
     @State private var reviewStepIndex = 1  // 1 = process, 2 = polish
 
-    // Acquire
+    // Settings
+    @State private var useTimeRange = false
+    @State private var startTimeText = "0:00"
+    @State private var endTimeText = ""
     @State private var selectedPostCapturePipelineID: PersistentIdentifier? = nil
+    @State private var showFileImporter = false
+    @State private var postCaptureError: String? = nil
     @State private var isRunningPostCapture = false
     @State private var postCaptureTask: Task<Void, Never>? = nil
-    @State private var postCaptureError: String? = nil
     @State private var postCaptureProgress: DocumentFormattingService.Progress? = nil
     @State private var showPipelineEditor = false
 
-    // Session & text (passed to CaptureReviewStages)
+    // Review state (passed to CaptureReviewStages)
     @State private var capturedSession: SourceSession? = nil
     @State private var originalText: String = ""
     @State private var initialText: String = ""
 
-    private var isEditMode: Bool { initialSession != nil }
+    private static let audioTypes: [UTType] = [.audio, .movie, .mpeg4Movie, .quickTimeMovie]
     private static let postCapturePipelineKey = "defaultPostCapturePipelineName"
-
-    init(captureVM: InputCaptureViewModel, initialSession: SourceSession? = nil) {
-        self._captureVM = ObservedObject(wrappedValue: captureVM)
-        self.initialSession = initialSession
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,16 +47,7 @@ struct MicrophoneWizardView: View {
             stepContent
         }
         .frame(width: 600)
-        .onAppear {
-            restorePostCapturePipeline()
-            if let session = initialSession {
-                capturedSession = session
-                originalText = session.rawText
-                initialText = session.rawText
-                reviewStepIndex = 1
-                wizardStep = .review
-            }
-        }
+        .onAppear { restorePostCapturePipeline() }
         .onChange(of: captureVM.phase) { _, phase in handlePhaseChange(phase) }
         .onChange(of: postCapturePipelines) { _, pipelines in
             guard selectedPostCapturePipelineID == nil,
@@ -87,9 +76,9 @@ struct MicrophoneWizardView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: isEditMode ? "pencil.and.list.clipboard" : "mic.fill")
+            Image(systemName: captureMethod.systemImage)
                 .foregroundStyle(.tint)
-            Text(isEditMode ? "Edit Recording" : "New Recording")
+            Text(captureMethod == .videoAudio ? "Import Video" : "Import Audio File")
                 .font(.title2).bold()
             Spacer()
             stepIndicator
@@ -100,7 +89,7 @@ struct MicrophoneWizardView: View {
     }
 
     private var stepIndicator: some View {
-        let current = wizardStep == .acquire ? 0 : reviewStepIndex
+        let current = wizardStep == .settings ? 0 : reviewStepIndex
         return HStack(spacing: 0) {
             ForEach(0..<3) { i in
                 Circle()
@@ -129,16 +118,15 @@ struct MicrophoneWizardView: View {
     private var stepContent: some View {
         ZStack {
             switch wizardStep {
-            case .acquire:
-                acquireStep.transition(stepTransition)
+            case .settings:
+                settingsStep.transition(stepTransition)
             case .review:
                 CaptureReviewStages(
                     originalText: originalText,
                     initialText: initialText,
-                    isEditMode: isEditMode,
-                    showAutoStoppedBanner: captureVM.recordingAutoStopped,
+                    isEditMode: false,
                     reviewStepIndex: $reviewStepIndex,
-                    onBack: isEditMode ? nil : { backFromReview() },
+                    onBack: { backFromReview() },
                     onCancel: { cancel() },
                     onAccept: { finalText in
                         capturedSession?.rawText = finalText
@@ -152,45 +140,12 @@ struct MicrophoneWizardView: View {
         .clipped()
     }
 
-    // MARK: - Step 1: Acquire
+    // MARK: - Step 1: Settings
 
-    private var acquireStep: some View {
+    private var settingsStep: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-
-                    // Level meter
-                    GeometryReader { geo in
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.accentColor)
-                            .frame(width: geo.size.width * CGFloat(captureVM.audioLevel))
-                            .animation(.linear(duration: 0.1), value: captureVM.audioLevel)
-                    }
-                    .frame(height: 8)
-                    .background(Color.accentColor.opacity(0.2))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                    // Duration counter
-                    Text(formattedDuration)
-                        .font(.system(.title, design: .monospaced))
-                        .foregroundStyle(captureVM.phase == .recording ? .primary : .secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-
-                    // Recording limit warning
-                    if captureVM.phase == .recording {
-                        let remaining = Int(AppConstants.maxLiveRecordingSeconds - captureVM.recordingDuration)
-                        if remaining <= Int(AppConstants.liveRecordingWarnSeconds) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
-                                Text("Auto-stops in \(max(0, remaining))s — 2-hour limit")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .transition(.opacity)
-                        }
-                    }
 
                     // Settings card
                     VStack(spacing: 0) {
@@ -198,6 +153,20 @@ struct MicrophoneWizardView: View {
                             .disabled(captureVM.phase != .idle)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
+
+                        Divider().padding(.leading, 12)
+
+                        Toggle("Specify time range", isOn: $useTimeRange)
+                            .disabled(captureVM.phase != .idle)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+
+                        if useTimeRange {
+                            Divider().padding(.leading, 12)
+                            timeRangeFields
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                        }
 
                         if !postCapturePipelines.isEmpty {
                             Divider().padding(.leading, 12)
@@ -213,31 +182,60 @@ struct MicrophoneWizardView: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
-                        }
-                        Divider().padding(.leading, 12)
-                        HStack {
-                            Spacer()
-                            Button {
-                                showPipelineEditor = true
-                            } label: {
-                                Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
-                                    .font(.caption)
+
+                            Divider().padding(.leading, 12)
+                            HStack {
+                                Spacer()
+                                Button {
+                                    showPipelineEditor = true
+                                } label: {
+                                    Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
                             }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
                         }
                     }
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
-                    // Inline speaker identification
-                    if captureVM.phase == .identifySpeakers {
-                        speakerIDContent
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    // Supported formats
+                    VStack(spacing: 2) {
+                        Text("Audio: MP3 · M4A · WAV · AIFF · FLAC · AAC · CAF")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        if captureMethod == .videoAudio {
+                            Text("Video: MP4 · M4V · MOV (QuickTime) · AVI · MKV")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                    // Transcription progress
+                    if [.transcribing, .downloadingModels, .diarizing, .saving].contains(captureVM.phase) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                if captureVM.transcriptionFraction == nil {
+                                    ProgressView().controlSize(.small)
+                                }
+                                Text(progressLabel)
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            if let fraction = captureVM.transcriptionFraction {
+                                ProgressView(value: fraction)
+                                    .progressViewStyle(.linear)
+                                    .animation(.linear(duration: 0.25), value: fraction)
+                            }
+                            if let chunk = captureVM.chunkProgress {
+                                Text("Minutes \(chunk.minuteStart)–\(chunk.minuteEnd) of \(chunk.totalMinutes)")
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .transition(.opacity)
                     }
 
-                    // Post-capture pipeline progress
+                    // Auto-cleanup progress
                     if let p = postCaptureProgress {
                         PipelineProgressView(progress: p).transition(.opacity)
                     } else if isRunningPostCapture {
@@ -248,38 +246,17 @@ struct MicrophoneWizardView: View {
                         .transition(.opacity)
                     }
 
-                    // Transcription/diarization progress
-                    if [.transcribing, .downloadingModels, .diarizing, .saving].contains(captureVM.phase) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 8) {
-                                if captureVM.transcriptionFraction == nil {
-                                    ProgressView().controlSize(.small)
-                                }
-                                Text(acquireProgressLabel)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let fraction = captureVM.transcriptionFraction {
-                                ProgressView(value: fraction)
-                                    .progressViewStyle(.linear)
-                                    .animation(.linear(duration: 0.25), value: fraction)
-                            }
-                            if let chunk = captureVM.chunkProgress {
-                                Text("Minutes \(chunk.minuteStart)–\(chunk.minuteEnd) of \(chunk.totalMinutes)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                        }
-                        .transition(.opacity)
-                    }
-
                     if let err = postCaptureError {
-                        Text(err).font(.caption).foregroundStyle(.red)
-                            .transition(.opacity)
+                        Text(err).font(.caption).foregroundStyle(.red).transition(.opacity)
                     }
                     if case .failed(let msg) = captureVM.phase {
-                        Text(msg).font(.caption).foregroundStyle(.red)
-                            .transition(.opacity)
+                        Text(msg).font(.caption).foregroundStyle(.red).transition(.opacity)
+                    }
+
+                    // Inline speaker identification
+                    if captureVM.phase == .identifySpeakers {
+                        speakerIDContent
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
                 .padding(20)
@@ -296,33 +273,31 @@ struct MicrophoneWizardView: View {
                     Button("Skip") { captureVM.skipSpeakerRename() }.buttonStyle(.bordered)
                 }
                 Spacer()
-                acquireActionButton
+                settingsActionButton
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: Self.audioTypes,
+            allowsMultipleSelection: false
+        ) { result in
+            guard let url = try? result.get().first else { return }
+            let range = useTimeRange ? parsedRange() : nil
+            Task { await captureVM.processAudioFile(url, range: range) }
+        }
     }
 
     @ViewBuilder
-    private var acquireActionButton: some View {
+    private var settingsActionButton: some View {
         switch captureVM.phase {
         case .idle:
-            Button("Start Recording") {
-                Task { await captureVM.startMicRecording() }
-            }
-            .buttonStyle(.borderedProminent)
-
-        case .recording:
-            Button("Stop Recording") {
-                captureVM.stopMicRecording()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-
+            Button("Choose File…") { showFileImporter = true }
+                .buttonStyle(.borderedProminent)
         case .identifySpeakers:
             Button("Confirm Speakers") { captureVM.confirmSpeakers() }
                 .buttonStyle(.borderedProminent)
-
         default:
             Button("Processing…") {}
                 .buttonStyle(.borderedProminent)
@@ -368,6 +343,23 @@ struct MicrophoneWizardView: View {
         }
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var timeRangeFields: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Start (M:SS)").font(.caption).foregroundStyle(.secondary)
+                TextField("0:00", text: $startTimeText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("End (M:SS)").font(.caption).foregroundStyle(.secondary)
+                TextField("end", text: $endTimeText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+            }
+        }
     }
 
     // MARK: - Phase handling
@@ -429,13 +421,13 @@ struct MicrophoneWizardView: View {
         initialText = ""
         captureVM.reset()
         stepForward = false
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .acquire }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .settings }
     }
 
     private func cancel() {
         postCaptureTask?.cancel()
         postCaptureTask = nil
-        if !isEditMode, let session = capturedSession {
+        if let session = capturedSession {
             modelContext.delete(session)
             try? modelContext.save()
             capturedSession = nil
@@ -446,18 +438,40 @@ struct MicrophoneWizardView: View {
 
     // MARK: - Helpers
 
-    private var formattedDuration: String {
-        let t = Int(captureVM.recordingDuration)
-        return String(format: "%d:%02d", t / 60, t % 60)
-    }
-
-    private var acquireProgressLabel: String {
+    private var progressLabel: String {
         switch captureVM.phase {
-        case .transcribing:      return "Transcribing…"
+        case .transcribing:
+            if let p = captureVM.chunkProgress {
+                return "Transcribing \(p.totalMinutes)-min file…"
+            }
+            return "Transcribing…"
         case .downloadingModels: return "Downloading speaker models (first use only)…"
         case .diarizing:         return "Identifying speakers…"
         case .saving:            return "Saving…"
         default:                 return ""
+        }
+    }
+
+    private func parsedRange() -> ClosedRange<TimeInterval>? {
+        let start = parseTime(startTimeText) ?? 0
+        guard let end = parseTime(endTimeText), end > start else { return nil }
+        return start...end
+    }
+
+    private func parseTime(_ text: String) -> TimeInterval? {
+        let parts = text.trimmingCharacters(in: .whitespaces).split(separator: ":")
+        switch parts.count {
+        case 1:
+            guard let s = Double(parts[0]) else { return nil }
+            return s
+        case 2:
+            guard let m = Double(parts[0]), let s = Double(parts[1]) else { return nil }
+            return m * 60 + s
+        case 3:
+            guard let h = Double(parts[0]), let m = Double(parts[1]), let s = Double(parts[2]) else { return nil }
+            return h * 3600 + m * 60 + s
+        default:
+            return nil
         }
     }
 }
@@ -465,7 +479,7 @@ struct MicrophoneWizardView: View {
 #Preview { @MainActor in
     let c = makePreviewContainer()
     let captureVM = previewCaptureVM(in: c)
-    return MicrophoneWizardView(captureVM: captureVM)
+    return AudioFileWizardView(captureVM: captureVM, captureMethod: .audioFile)
         .modelContainer(c)
         .frame(width: 600, height: 560)
 }

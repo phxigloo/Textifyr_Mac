@@ -8,11 +8,10 @@ struct PipelineStepRow: View {
     @ObservedObject var viewModel: PipelineEditorViewModel
     let step: PipelineStep
     let isLocked: Bool
-    @Environment(\.openWindow) private var openWindow
-
     @State private var name: String
     @State private var prompt: String
-    @State private var showImproveSheet = false
+    @State private var showImproveSheet  = false
+    @State private var showPromptBuilder = false
     @State private var feedbackText = ""
 
     private var isImprovingThis: Bool {
@@ -85,7 +84,7 @@ struct PipelineStepRow: View {
                         .foregroundStyle(prompt.count > AppConstants.maxPromptCharacters ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
                     Spacer()
                     Button {
-                        openWindow(id: "prompt-builder")
+                        showPromptBuilder = true
                     } label: {
                         Label("Prompt Builder", systemImage: "text.bubble")
                             .font(.caption)
@@ -121,6 +120,9 @@ struct PipelineStepRow: View {
         .onChange(of: step.prompt) { _, newValue in
             // Sync back if AI improvement changed the step in the view model
             if newValue != prompt { prompt = newValue }
+        }
+        .sheet(isPresented: $showPromptBuilder) {
+            PromptBuilderView()
         }
         .sheet(isPresented: $showImproveSheet) {
             ImprovePromptSheet(

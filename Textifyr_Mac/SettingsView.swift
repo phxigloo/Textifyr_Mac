@@ -440,7 +440,6 @@ private struct StageEditorSheet: View {
 // MARK: - Pipelines (link to dedicated window)
 
 private struct PipelinesLinkTab: View {
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 16) {
@@ -458,7 +457,7 @@ private struct PipelinesLinkTab: View {
                 .frame(maxWidth: 380)
 
             Button {
-                openWindow(id: "pipeline-editor")
+                NotificationCenter.default.post(name: .openPipelineEditorSheet, object: nil)
             } label: {
                 Label("Open Pipeline Editor", systemImage: "arrow.up.right.square")
             }
