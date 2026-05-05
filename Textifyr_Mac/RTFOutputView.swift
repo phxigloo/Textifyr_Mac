@@ -14,7 +14,7 @@ struct RTFOutputView: View {
            sort: \FormattingPipeline.name) private var outputPipelines: [FormattingPipeline]
 
     @State private var showExportSheet = false
-    @State private var showPipelineEditor = false
+    @Environment(\.openWindow) private var openWindow
 
     private var document: TextifyrDocument { viewModel.document }
 
@@ -37,9 +37,6 @@ struct RTFOutputView: View {
         }
         .sheet(isPresented: $showExportSheet) {
             ExportFormatSheet(viewModel: viewModel)
-        }
-        .sheet(isPresented: $showPipelineEditor) {
-            ScopedPipelineEditorSheet(scope: .output)
         }
     }
 
@@ -69,7 +66,7 @@ struct RTFOutputView: View {
                 }
                 if !outputPipelines.isEmpty { Divider() }
                 Button {
-                    showPipelineEditor = true
+                    openWindow(id: "pipeline-editor")
                 } label: {
                     Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
                 }

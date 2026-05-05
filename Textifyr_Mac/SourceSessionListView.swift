@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import TextifyrModels
+import TextifyrServices
 import TextifyrViewModels
 
 struct SourceSessionListView: View {

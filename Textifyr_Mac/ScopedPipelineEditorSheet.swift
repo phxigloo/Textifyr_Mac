@@ -3,8 +3,9 @@ import SwiftData
 import TextifyrModels
 import TextifyrViewModels
 
-/// Sheet-based pipeline editor pre-filtered to one scope (Source or Output).
-/// Opened from the Source header or Output header "Manage Pipelines" action.
+/// Sheet-based pipeline editor pre-filtered to one scope.
+/// Kept for backwards compatibility but no longer opened from main UI paths —
+/// use the Pipeline Editor window (Tools → Pipeline Editor) instead.
 struct ScopedPipelineEditorSheet: View {
     let scope: PipelineScope
     @Environment(\.modelContext) private var modelContext
@@ -15,9 +16,9 @@ struct ScopedPipelineEditorSheet: View {
     @State private var selectedID: UUID?
     @State private var showDeleteConfirmation = false
     @State private var pipelineToDelete: FormattingPipeline?
+    @State private var activeVM: PipelineEditorViewModel?
 
     private var pipelines: [FormattingPipeline] { allPipelines.filter { $0.scope == scope } }
-    private var selected: FormattingPipeline? { pipelines.first { $0.id == selectedID } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,9 +32,12 @@ struct ScopedPipelineEditorSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                Button("Done") {
+                    if let vm = activeVM, vm.isDirty { vm.commitSave() }
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -44,7 +48,17 @@ struct ScopedPipelineEditorSheet: View {
             HStack(spacing: 0) {
                 // Left: pipeline list + +/- footer
                 VStack(spacing: 0) {
-                    List(selection: $selectedID) {
+                    List(selection: Binding(
+                        get: { selectedID },
+                        set: { newID in
+                            selectedID = newID
+                            if let id = newID, let p = pipelines.first(where: { $0.id == id }) {
+                                activeVM = PipelineEditorViewModel(pipeline: p, context: modelContext)
+                            } else {
+                                activeVM = nil
+                            }
+                        }
+                    )) {
                         ForEach(pipelines) { pipeline in
                             PipelineListRow(pipeline: pipeline)
                                 .tag(pipeline.id)
@@ -63,23 +77,25 @@ struct ScopedPipelineEditorSheet: View {
 
                     Divider()
 
-                    HStack(spacing: 2) {
+                    HStack(spacing: 4) {
                         Button { addPipeline() } label: {
                             Image(systemName: "plus")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                         .help("New pipeline")
 
                         Button {
-                            if let p = selected {
+                            if let p = pipelines.first(where: { $0.id == selectedID }) {
                                 pipelineToDelete = p
                                 showDeleteConfirmation = true
                             }
                         } label: {
                             Image(systemName: "minus")
                         }
-                        .buttonStyle(.borderless)
-                        .disabled(selected == nil || selected?.isBuiltIn == true)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(selectedID == nil || pipelines.first(where: { $0.id == selectedID })?.isBuiltIn == true)
                         .help("Delete selected pipeline")
 
                         Spacer()
@@ -94,9 +110,9 @@ struct ScopedPipelineEditorSheet: View {
 
                 // Right: detail
                 Group {
-                    if let pipeline = selected {
-                        PipelineDetailView(pipeline: pipeline, context: modelContext)
-                            .id(pipeline.id)
+                    if let vm = activeVM {
+                        PipelineDetailView(viewModel: vm)
+                            .id(vm.pipeline.id)
                     } else {
                         ContentUnavailableView(
                             "No Pipeline Selected",
@@ -134,10 +150,14 @@ struct ScopedPipelineEditorSheet: View {
         modelContext.insert(p)
         try? modelContext.save()
         selectedID = p.id
+        activeVM = PipelineEditorViewModel(pipeline: p, context: modelContext)
     }
 
     private func deletePipeline(_ pipeline: FormattingPipeline) {
-        if selectedID == pipeline.id { selectedID = nil }
+        if selectedID == pipeline.id {
+            selectedID = nil
+            activeVM = nil
+        }
         modelContext.delete(pipeline)
         try? modelContext.save()
     }
@@ -154,6 +174,7 @@ struct ScopedPipelineEditorSheet: View {
         }
         try? modelContext.save()
         selectedID = copy.id
+        activeVM = PipelineEditorViewModel(pipeline: copy, context: modelContext)
     }
 }
 

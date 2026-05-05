@@ -11,6 +11,7 @@ struct PipelineEditorView: View {
     @State private var selectedID: UUID?
     @State private var showDeleteConfirmation = false
     @State private var pipelineToDelete: FormattingPipeline?
+    @State private var activeVM: PipelineEditorViewModel?
 
     private var selected: FormattingPipeline? {
         pipelines.first { $0.id == selectedID }
@@ -18,40 +19,67 @@ struct PipelineEditorView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selectedID) {
-                ForEach(pipelines) { pipeline in
-                    PipelineListRow(pipeline: pipeline)
-                        .tag(pipeline.id)
-                        .contextMenu {
-                            Button("Duplicate") { duplicate(pipeline) }
-                            Divider()
-                            Button("Delete", role: .destructive) {
-                                pipelineToDelete = pipeline
-                                showDeleteConfirmation = true
-                            }
-                            .disabled(pipeline.isBuiltIn)
+            VStack(spacing: 0) {
+                List(selection: Binding(
+                    get: { selectedID },
+                    set: { newID in
+                        selectedID = newID
+                        if let id = newID, let p = pipelines.first(where: { $0.id == id }) {
+                            activeVM = PipelineEditorViewModel(pipeline: p, context: modelContext)
+                        } else {
+                            activeVM = nil
                         }
+                    }
+                )) {
+                    ForEach(pipelines) { pipeline in
+                        PipelineListRow(pipeline: pipeline)
+                            .tag(pipeline.id)
+                            .contextMenu {
+                                Button("Duplicate") { duplicate(pipeline) }
+                                Divider()
+                                Button("Delete", role: .destructive) {
+                                    pipelineToDelete = pipeline
+                                    showDeleteConfirmation = true
+                                }
+                                .disabled(pipeline.isBuiltIn)
+                            }
+                    }
                 }
-            }
-            .navigationTitle("Pipelines")
-            .toolbar {
-                ToolbarItemGroup(placement: .automatic) {
+                .navigationTitle("Pipelines")
+
+                Divider()
+
+                HStack(spacing: 4) {
                     Button { addPipeline() } label: {
                         Image(systemName: "plus")
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .help("New pipeline")
 
-                    Button { deleteSelected() } label: {
-                        Image(systemName: "trash")
+                    Button {
+                        if let p = selected {
+                            pipelineToDelete = p
+                            showDeleteConfirmation = true
+                        }
+                    } label: {
+                        Image(systemName: "minus")
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .disabled(selected == nil || selected?.isBuiltIn == true)
                     .help("Delete selected pipeline")
+
+                    Spacer()
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(.bar)
             }
         } detail: {
-            if let pipeline = selected {
-                PipelineDetailView(pipeline: pipeline, context: modelContext)
-                    .id(pipeline.id)
+            if let vm = activeVM {
+                PipelineDetailView(viewModel: vm)
+                    .id(vm.pipeline.id)
             } else {
                 ContentUnavailableView(
                     "No Pipeline Selected",
@@ -83,22 +111,21 @@ struct PipelineEditorView: View {
         modelContext.insert(pipeline)
         try? modelContext.save()
         selectedID = pipeline.id
-    }
-
-    private func deleteSelected() {
-        guard let pipeline = selected, !pipeline.isBuiltIn else { return }
-        pipelineToDelete = pipeline
-        showDeleteConfirmation = true
+        activeVM = PipelineEditorViewModel(pipeline: pipeline, context: modelContext)
     }
 
     private func deletePipeline(_ pipeline: FormattingPipeline) {
-        if selectedID == pipeline.id { selectedID = nil }
+        if selectedID == pipeline.id {
+            selectedID = nil
+            activeVM = nil
+        }
         modelContext.delete(pipeline)
         try? modelContext.save()
     }
 
     private func duplicate(_ pipeline: FormattingPipeline) {
         let copy = FormattingPipeline(name: pipeline.name + " Copy", mode: pipeline.mode, isBuiltIn: false)
+        copy.scope = pipeline.scope
         modelContext.insert(copy)
         for step in pipeline.sortedSteps {
             let stepCopy = PipelineStep(name: step.name, prompt: step.prompt, sortOrder: step.sortOrder)
@@ -108,6 +135,7 @@ struct PipelineEditorView: View {
         }
         try? modelContext.save()
         selectedID = copy.id
+        activeVM = PipelineEditorViewModel(pipeline: copy, context: modelContext)
     }
 }
 
@@ -121,6 +149,7 @@ struct PipelineListRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(pipeline.name)
                     .font(.body)
+                    .strikethrough(pipeline.isHidden, color: .secondary)
                 Text("\(pipeline.sortedSteps.count) step\(pipeline.sortedSteps.count == 1 ? "" : "s") · \(pipeline.mode.displayName)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -137,6 +166,7 @@ struct PipelineListRow: View {
             }
         }
         .padding(.vertical, 2)
+        .opacity(pipeline.isHidden ? 0.5 : 1)
     }
 }
 

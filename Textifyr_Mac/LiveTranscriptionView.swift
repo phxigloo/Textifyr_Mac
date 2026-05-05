@@ -63,7 +63,7 @@ struct LiveTranscriptionView: View {
 
                 if captureVM.phase == .recording {
                     Button("Stop Recording") {
-                        Task { await captureVM.stopMicRecording() }
+                        captureVM.stopMicRecording()
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.red)

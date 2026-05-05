@@ -42,6 +42,13 @@ struct Textifyr_MacApp: App {
         .defaultSize(width: 860, height: 620)
         .modelContainer(container)
 
+        Window("Pipeline Editor", id: "pipeline-editor") {
+            PipelineEditorWindowView()
+        }
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 880, height: 580)
+        .modelContainer(container)
+
         Settings {
             SettingsView()
         }
@@ -81,6 +88,11 @@ private struct AppCommands: Commands {
                 openWindow(id: "prompt-builder")
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
+
+            Button("Pipeline Editor") {
+                openWindow(id: "pipeline-editor")
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
         }
     }
 }

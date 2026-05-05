@@ -40,7 +40,7 @@ func seedPreviewData(in ctx: ModelContext) {
     stages.forEach { ctx.insert($0) }
 
     // Output pipeline (with two steps)
-    let outPipeline = FormattingPipeline(name: "Meeting Minutes", mode: .serial)
+    let outPipeline = FormattingPipeline(name: "Meeting Minutes", mode: .sequential)
     outPipeline.scopeRawValue = "output"
     ctx.insert(outPipeline)
     let outStep1 = PipelineStep(name: "Format",     prompt: "Format this transcript as meeting minutes with action items.", sortOrder: 0)
@@ -52,7 +52,7 @@ func seedPreviewData(in ctx: ModelContext) {
     outPipeline.steps = [outStep1, outStep2]
 
     // Source pipeline
-    let srcPipeline = FormattingPipeline(name: "Key Points", mode: .serial)
+    let srcPipeline = FormattingPipeline(name: "Key Points", mode: .sequential)
     srcPipeline.scopeRawValue = "source"
     ctx.insert(srcPipeline)
     let srcStep = PipelineStep(name: "Summarise", prompt: "List the 5 most important points from this transcript.", sortOrder: 0)

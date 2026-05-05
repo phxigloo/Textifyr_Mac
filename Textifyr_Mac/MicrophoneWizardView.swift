@@ -209,10 +209,6 @@ struct MicrophoneWizardView: View {
     @State private var finalText: String = ""
     @State private var errorText: String? = nil
 
-    // Pipeline editor sheets
-    @State private var showingQuickCleanPipelines = false
-    @State private var showingSessionPolishPipelines = false
-
     @StateObject private var processInsertionProxy = TextInsertionProxy()
     @StateObject private var insertionProxy = TextInsertionProxy()
     @StateObject private var dictation = DictationHolder()
@@ -256,12 +252,6 @@ struct MicrophoneWizardView: View {
             } else {
                 UserDefaults.standard.removeObject(forKey: Self.postCapturePipelineKey)
             }
-        }
-        .sheet(isPresented: $showingQuickCleanPipelines) {
-            ScopedPipelineEditorSheet(scope: .postCapture)
-        }
-        .sheet(isPresented: $showingSessionPolishPipelines) {
-            ScopedPipelineEditorSheet(scope: .source)
         }
     }
 
@@ -398,9 +388,9 @@ struct MicrophoneWizardView: View {
                         HStack {
                             Spacer()
                             Button {
-                                showingQuickCleanPipelines = true
+                                openWindow(id: "pipeline-editor")
                             } label: {
-                                Label("Manage Auto Cleanup Pipelines…", systemImage: "slider.horizontal.3")
+                                Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
                                     .font(.caption)
                             }
                             .buttonStyle(.borderless)
@@ -627,11 +617,11 @@ struct MicrophoneWizardView: View {
 
                         Spacer()
 
-                        Button { showingSessionPolishPipelines = true } label: {
+                        Button { openWindow(id: "pipeline-editor") } label: {
                             Image(systemName: "slider.horizontal.3")
                         }
                         .buttonStyle(.borderless)
-                        .help("Manage Refine Transcript pipelines")
+                        .help("Manage pipelines")
                     }
 
                     if !pipelineRuns.isEmpty {

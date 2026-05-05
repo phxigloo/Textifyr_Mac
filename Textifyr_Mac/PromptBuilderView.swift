@@ -695,7 +695,7 @@ private struct SaveToPipelineSheet: View {
         case .newPipeline:
             let pipeline = FormattingPipeline(
                 name: newPipelineName.trimmingCharacters(in: .whitespaces),
-                mode: .serial,
+                mode: .sequential,
                 isBuiltIn: false
             )
             pipeline.scope = scope
