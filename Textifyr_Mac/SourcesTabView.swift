@@ -23,7 +23,7 @@ struct SourcesTabView: View {
                     onDismiss: { showingAddSource = false }
                 )
                 .transition(.opacity)
-            } else if let session = editingSession {
+            } else if let session = editingSession, session.captureMethod != .smartVision {
                 SessionEditView(
                     session: session,
                     context: modelContext,
@@ -41,5 +41,8 @@ struct SourcesTabView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: editingSession) { _, session in
+            if session?.captureMethod == .smartVision { editingSession = nil }
+        }
     }
 }

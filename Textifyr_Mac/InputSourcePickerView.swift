@@ -56,16 +56,16 @@ struct InputSourcePickerView: View {
 
             Divider()
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 16) {
-                ForEach(methods, id: \.self) { method in
-                    SourceMethodButton(method: method, disabled: method == .camera && !appState.canUseCamera) {
-                        activeMethod = method
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 16) {
+                    ForEach(methods, id: \.self) { method in
+                        SourceMethodButton(method: method, disabled: method == .camera && !appState.canUseCamera) {
+                            activeMethod = method
+                        }
                     }
                 }
+                .padding(24)
             }
-            .padding(24)
-
-            Spacer()
 
             Divider()
 

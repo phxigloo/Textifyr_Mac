@@ -47,7 +47,7 @@ struct SmartVisionInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.wizardDismiss) private var wizardDismiss
-    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : closeWizard() }
+    private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : dismiss() }
     @EnvironmentObject private var appState: AppState
 
     private enum WizardStep { case capture, process, annotate }
@@ -192,35 +192,47 @@ struct SmartVisionInputView: View {
     // MARK: - Step 1: Capture
 
     private var captureStep: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Step 1 — Capture").font(.headline)
-                    Text("Choose an image source. You will be able to crop after capture.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
-                    sourceButton("Camera", icon: "camera.fill", disabled: !appState.canUseCamera) {
-                        captureSource = .camera
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Step 1 — Capture").font(.headline)
+                        Text("Choose an image source. You will be able to crop after capture.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                    PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                        sourceButtonLabel("Photo Library", icon: "photo.on.rectangle")
-                    }.buttonStyle(.plain)
 
-                    sourceButton("Screen Capture", icon: "rectangle.dashed") {
-                        captureSource = .screenCapture
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
+                        sourceButton("Camera", icon: "camera.fill", disabled: !appState.canUseCamera) {
+                            captureSource = .camera
+                        }
+                        PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+                            sourceButtonLabel("Photo Library", icon: "photo.on.rectangle")
+                        }.buttonStyle(.plain)
+
+                        sourceButton("Screen Capture", icon: "rectangle.dashed") {
+                            captureSource = .screenCapture
+                        }
+                        sourceButton("Image File", icon: "photo") {
+                            showFileImporter = true
+                        }
                     }
-                    sourceButton("Image File", icon: "photo") {
-                        showFileImporter = true
+
+                    if let error = errorText {
+                        Text(error).font(.caption).foregroundStyle(.red)
                     }
                 }
-
-                if let error = errorText {
-                    Text(error).font(.caption).foregroundStyle(.red)
-                }
+                .padding(20)
             }
-            .padding(20)
+
+            Divider()
+
+            HStack {
+                Button("Cancel") { captureVM.reset(); closeWizard() }
+                    .buttonStyle(.bordered)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
     }
 
@@ -274,14 +286,16 @@ struct SmartVisionInputView: View {
             }
 
             HStack {
-                Button("← Back") {
+                Button("Cancel") { captureVM.reset(); closeWizard() }
+                    .buttonStyle(.bordered)
+                Button("Back") {
                     capturedImage = nil
                     processedImage = nil
                     wizardStep = .capture
                 }
                 .buttonStyle(.bordered)
                 Spacer()
-                Button("Next →") { wizardStep = .annotate }
+                Button("Continue") { wizardStep = .annotate }
                     .buttonStyle(.borderedProminent)
                     .disabled(processedImage == nil)
             }
@@ -360,10 +374,11 @@ struct SmartVisionInputView: View {
             }
 
             HStack {
-                Button("← Back") { wizardStep = .process }
+                Button("Cancel") { captureVM.reset(); closeWizard() }
+                    .buttonStyle(.bordered)
+                Button("Back") { wizardStep = .process }
                     .buttonStyle(.bordered)
                 Spacer()
-                Button("Cancel") { captureVM.reset(); closeWizard() }.buttonStyle(.bordered)
                 Button("Insert") { insertPicture() }
                     .buttonStyle(.borderedProminent)
                     .disabled(processedImage == nil)

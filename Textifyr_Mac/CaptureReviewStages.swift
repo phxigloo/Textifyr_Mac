@@ -213,11 +213,19 @@ struct PipelineProgressView: View {
                         .lineLimit(1)
                 }
             }
-            ProgressView(value: Double(progress.chunkIndex), total: Double(progress.chunkCount))
-                .progressViewStyle(.linear)
-                .animation(.linear(duration: 0.2), value: progress.chunkIndex)
+            if progress.chunkIndex == 0 {
+                ProgressView()
+                    .progressViewStyle(.linear)
+            } else {
+                ProgressView(value: Double(progress.chunkIndex), total: Double(progress.chunkCount))
+                    .progressViewStyle(.linear)
+                    .animation(.linear(duration: 0.2), value: progress.chunkIndex)
+            }
             if progress.chunkCount > 1 {
-                Text("Part \(min(progress.chunkIndex + 1, progress.chunkCount)) of \(progress.chunkCount)")
+                let partLabel = progress.chunkIndex == 0
+                    ? "Processing part 1 of \(progress.chunkCount)…"
+                    : "Part \(min(progress.chunkIndex + 1, progress.chunkCount)) of \(progress.chunkCount)"
+                Text(partLabel)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

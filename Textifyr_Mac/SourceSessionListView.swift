@@ -59,6 +59,13 @@ struct SourceSessionListView: View {
                     SessionRowView(session: session)
                         .contentShape(Rectangle())
                         .onTapGesture { onEditSession(session) }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                viewModel.deleteSession(session)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                         .contextMenu {
                             Button("Edit") { onEditSession(session) }
                             Divider()

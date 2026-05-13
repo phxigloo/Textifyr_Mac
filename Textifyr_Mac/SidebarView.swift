@@ -53,6 +53,14 @@ struct SidebarView: View {
             List(filteredDocs, selection: $selectedID) { item in
                 SidebarRow(document: item.document, snippet: item.snippet)
                     .tag(item.document.id)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            documentToDelete = item.document
+                            showDeleteConfirmation = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                     .contextMenu {
                         Button("Delete", role: .destructive) {
                             documentToDelete = item.document

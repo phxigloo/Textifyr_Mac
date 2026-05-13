@@ -47,7 +47,7 @@ struct CroppableImageView: View {
                 Button {
                     if let cropped = cropImage() { onCrop(cropped) }
                 } label: {
-                    Label("Crop & Recognise", systemImage: "crop")
+                    Label("Crop", systemImage: "crop")
                 }
                 .buttonStyle(.borderedProminent)
             }

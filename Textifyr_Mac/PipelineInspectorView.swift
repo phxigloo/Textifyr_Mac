@@ -75,6 +75,7 @@ struct PipelineInspectorView: View {
             }
         }
         .pickerStyle(.segmented)
+        .labelsHidden()
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .onChange(of: selectedScope) { _, _ in
