@@ -55,5 +55,20 @@ struct SourcesTabView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: appState.pendingSourceMethod) { _, method in
+            guard let method else { return }
+            appState.pendingSourceMethod = nil
+            withAnimation { showingAddSource = true }
+            // The picker grid will open; InputSourcePickerView reads activeMethod
+            // from the environment. We post a notification so it can auto-select.
+            NotificationCenter.default.post(
+                name: .triggerSourceMethod,
+                object: method.displayName
+            )
+        }
     }
+}
+
+extension Notification.Name {
+    static let triggerSourceMethod = Notification.Name("TextifyrTriggerSourceMethod")
 }

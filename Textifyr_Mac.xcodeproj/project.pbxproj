@@ -434,9 +434,11 @@
 				INFOPLIST_FILE = "Textifyr-Mac-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Textifyr uses the camera to convert photos to text";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Textifyr needs to use the device Microphone";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Textifyr needs to use the device Speech Recognition System";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Textifyr uses the microphone to transcribe your speech to text.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Textifyr accesses your photo library to extract text from photos using OCR.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Textifyr uses speech recognition to convert spoken audio to text.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -484,9 +486,11 @@
 				INFOPLIST_FILE = "Textifyr-Mac-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "";
 				INFOPLIST_KEY_LSApplicationCategoryType = "";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Textifyr uses the camera to convert photos to text";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Textifyr needs to use the device Microphone";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Textifyr needs to use the device Speech Recognition System";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Textifyr uses the microphone to transcribe your speech to text.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Textifyr accesses your photo library to extract text from photos using OCR.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Textifyr uses speech recognition to convert spoken audio to text.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

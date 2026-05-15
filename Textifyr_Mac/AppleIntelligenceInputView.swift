@@ -8,6 +8,7 @@ struct AppleIntelligenceInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.wizardDismiss) private var wizardDismiss
+    @EnvironmentObject private var appState: AppState
     private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : dismiss() }
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "postCapture" },
@@ -38,59 +39,66 @@ struct AppleIntelligenceInputView: View {
         !generatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    @State private var stepForward = true
+
+    private var stepTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: stepForward ? .trailing : .leading).combined(with: .opacity),
+            removal:   .move(edge: stepForward ? .leading  : .trailing).combined(with: .opacity)
+        )
+    }
+
     var body: some View {
-        Group {
-            if wizardStep == .review {
-                reviewPanel
-            } else {
-                acquireView
+        VStack(spacing: 0) {
+            wizardHeader
+            Divider()
+            ZStack {
+                if wizardStep == .review {
+                    CaptureReviewStages(
+                        originalText: capturedText,
+                        initialText: capturedText,
+                        isEditMode: false,
+                        reviewStepIndex: $reviewStepIndex,
+                        onBack: {
+                            postCaptureTask?.cancel()
+                            reviewStepIndex = 1
+                            stepForward = false
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .acquire }
+                        },
+                        onCancel: {
+                            postCaptureTask?.cancel()
+                            captureVM.reset()
+                            closeWizard()
+                        },
+                        onAccept: { finalText in
+                            captureVM.saveTextCapture(finalText, captureMethod: .appleIntelligence)
+                        }
+                    )
+                    .transition(stepTransition)
+                } else {
+                    acquireView
+                        .transition(stepTransition)
+                }
             }
+            .clipped()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { promptFocused = true }
         .onChange(of: captureVM.phase) { _, phase in
             if phase == .done { closeWizard() }
         }
     }
 
-    // MARK: - Review panel (steps 2 & 3)
-
-    private var reviewPanel: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "wand.and.sparkles")
-                    .foregroundStyle(.tint)
-                Text("Apple Intelligence")
-                    .font(.title2).bold()
-                Spacer()
-                stepDotsIndicator
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
-
-            Divider()
-
-            CaptureReviewStages(
-                originalText: capturedText,
-                initialText: capturedText,
-                isEditMode: false,
-                reviewStepIndex: $reviewStepIndex,
-                onBack: {
-                    postCaptureTask?.cancel()
-                    reviewStepIndex = 1
-                    wizardStep = .acquire
-                },
-                onCancel: {
-                    postCaptureTask?.cancel()
-                    captureVM.reset()
-                    closeWizard()
-                },
-                onAccept: { finalText in
-                    captureVM.saveTextCapture(finalText, captureMethod: .appleIntelligence)
-                }
-            )
+    private var wizardHeader: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wand.and.sparkles").foregroundStyle(.tint)
+            Text("AI Writer").font(.title2).bold()
+            Spacer()
+            stepDotsIndicator
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
     }
 
     private var stepDotsIndicator: some View {
@@ -113,21 +121,6 @@ struct AppleIntelligenceInputView: View {
 
     private var acquireView: some View {
         VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "wand.and.sparkles")
-                    .foregroundStyle(Color.accentColor)
-                Text("Apple Intelligence")
-                    .font(.title2).bold()
-                Spacer()
-                Button("Cancel") { captureVM.reset(); closeWizard() }
-                    .buttonStyle(.borderless)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
-            .padding(.bottom, 12)
-
-            Divider()
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -165,19 +158,15 @@ struct AppleIntelligenceInputView: View {
 
                     if hasText || isGenerating {
                         Divider()
-
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("Generated Text")
-                                    .font(.headline)
+                                Text("Generated Text").font(.headline)
                                 Spacer()
                                 if hasText {
                                     Button("Clear") { generatedText = "" }
-                                        .buttonStyle(.bordered)
-                                        .font(.caption)
+                                        .buttonStyle(.bordered).font(.caption)
                                 }
                             }
-
                             TextEditor(text: $generatedText)
                                 .font(.body)
                                 .frame(minHeight: 120)
@@ -195,12 +184,12 @@ struct AppleIntelligenceInputView: View {
             Divider()
 
             HStack {
+                Button("Cancel") { captureVM.reset(); closeWizard() }
+                    .buttonStyle(.bordered)
                 Spacer()
-                Button("Continue") {
-                    proceedToReview(text: generatedText)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!hasText || isRunningPostCapture)
+                Button("Continue") { proceedToReview(text: generatedText) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!hasText || isRunningPostCapture)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -211,45 +200,53 @@ struct AppleIntelligenceInputView: View {
     // MARK: - Pipeline picker card
 
     @ViewBuilder private var pipelinePickerCard: some View {
-        if !postCapturePipelines.isEmpty {
-            VStack(spacing: 0) {
-                LabeledContent("After Capture") {
-                    Picker("", selection: $selectedPostCapturePipelineID) {
-                        Text("None").tag(nil as PersistentIdentifier?)
-                        ForEach(postCapturePipelines) { p in
-                            Text(p.name).tag(p.id as PersistentIdentifier?)
-                        }
+        VStack(spacing: 0) {
+            LabeledContent("After Capture") {
+                Picker("", selection: $selectedPostCapturePipelineID) {
+                    Text("None").tag(nil as PersistentIdentifier?)
+                    ForEach(postCapturePipelines) { p in
+                        Text(p.name).tag(p.id as PersistentIdentifier?)
                     }
-                    .pickerStyle(.menu)
-                    .disabled(isRunningPostCapture)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-
-                if let p = postCaptureProgress {
-                    Divider().padding(.leading, 12)
-                    PipelineProgressView(progress: p)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                } else if isRunningPostCapture {
-                    Divider().padding(.leading, 12)
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Starting…").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-
-                if let err = postCaptureError {
-                    Divider().padding(.leading, 12)
-                    Text(err).font(.caption).foregroundStyle(.red)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                }
+                .pickerStyle(.menu)
+                .disabled(isRunningPostCapture || postCapturePipelines.isEmpty)
             }
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            if let p = postCaptureProgress {
+                Divider().padding(.leading, 12)
+                PipelineProgressView(progress: p)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+            } else if isRunningPostCapture {
+                Divider().padding(.leading, 12)
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Starting…").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+
+            if let err = postCaptureError {
+                Divider().padding(.leading, 12)
+                Text(err).font(.caption).foregroundStyle(.red)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+
+            Divider().padding(.leading, 12)
+            HStack {
+                Spacer()
+                Button {
+                    appState.inspectorDefaultScope = .postCapture
+                    appState.inspectorVisible = true
+                } label: {
+                    Label("Manage Actions…", systemImage: "slider.horizontal.3").font(.caption)
+                }
+                .buttonStyle(.borderless).foregroundStyle(.secondary)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
         }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - proceedToReview

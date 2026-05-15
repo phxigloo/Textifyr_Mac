@@ -14,11 +14,10 @@ struct InputSourcePickerView: View {
     @State private var activeMethod: CaptureMethod?
 
     private let methods: [CaptureMethod] = [
-        .microphone, .audioFile, .videoAudio,
-        .camera, .photoLibrary, .imageFile,
-        .pdf, .webURL,
-        .screenCapture, .rtfEditor,
-        .appleIntelligence, .smartVision
+        .appleIntelligence, .screenCapture, .microphone,
+        .audioFile, .videoAudio, .camera,
+        .photoLibrary, .imageFile, .rtfEditor,
+        .pdf, .webURL, .smartVision
     ]
 
     init(document: TextifyrDocument, context: ModelContext, onDismiss: @escaping () -> Void) {
@@ -40,6 +39,12 @@ struct InputSourcePickerView: View {
         }
         .environment(\.wizardDismiss, onDismiss)
         .task { captureVM.appState = appState }
+        .onReceive(NotificationCenter.default.publisher(for: .triggerSourceMethod)) { note in
+            guard let name = note.object as? String,
+                  let method = methods.first(where: { $0.displayName == name })
+            else { return }
+            activeMethod = method
+        }
     }
 
     // MARK: - Picker grid

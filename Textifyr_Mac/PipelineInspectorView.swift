@@ -247,7 +247,6 @@ private struct InspectorStepsView: View {
                         .textFieldStyle(.plain)
                         .focused($nameFieldFocused)
                         .onSubmit { vm.saveName() }
-                        .onChange(of: vm.pipelineName) { _, _ in vm.saveName() }
                 } else {
                     Text(vm.pipeline.name)
                         .font(.subheadline.bold())
@@ -258,6 +257,10 @@ private struct InspectorStepsView: View {
                     Button { vm.addStep() } label: { Image(systemName: "plus") }
                         .buttonStyle(.borderless)
                         .help("Add step")
+                    Button("Save") { vm.commitSave() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .help("Save changes")
                 }
             }
             .padding(.horizontal, 12)

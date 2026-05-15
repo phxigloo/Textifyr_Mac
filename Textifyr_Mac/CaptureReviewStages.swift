@@ -187,13 +187,29 @@ struct PipelineRunBubble: View {
                 }
             }
 
-            Text(run.result)
-                .font(.caption)
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(6)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            Group {
+                let lineCount = run.result.components(separatedBy: "\n").count
+                if lineCount > 25 {
+                    ScrollView {
+                        Text(run.result)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(6)
+                    }
+                    .frame(maxHeight: 420)
+                } else {
+                    Text(run.result)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(6)
+                }
+            }
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .padding(10)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
@@ -277,6 +293,7 @@ struct CaptureReviewStages: View {
     @State private var errorText: String? = nil
     @State private var freeformPromptText = ""
     @State private var isRunningFreeform = false
+    @State private var runningFreeformTask: Task<Void, Never>? = nil
 
     @StateObject private var processInsertionProxy = TextInsertionProxy()
     @StateObject private var insertionProxy = TextInsertionProxy()
@@ -367,80 +384,135 @@ struct CaptureReviewStages: View {
 
                     Divider()
 
-                    HStack(spacing: 8) {
-                        if sourcePipelines.isEmpty {
-                            Text("No Before Combining actions yet.")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        } else {
-                            Picker("Run Action", selection: $selectedSourcePipelineID) {
-                                Text("Choose an action…").tag(nil as PersistentIdentifier?)
-                                ForEach(sourcePipelines) { p in
-                                    Text(p.name).tag(p.id as PersistentIdentifier?)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: 240)
-                            .labelsHidden()
-
-                            Button("Run") { runSourcePipeline() }
-                                .buttonStyle(.bordered)
-                                .disabled(selectedSourcePipelineID == nil || isRunningPipeline || currentText.isEmpty)
-
-                            if let p = pipelineProgress {
-                                PipelineProgressView(progress: p).transition(.opacity)
-                            } else if isRunningPipeline {
-                                HStack(spacing: 6) {
-                                    ProgressView().controlSize(.small)
-                                    Text("Starting…").font(.caption).foregroundStyle(.secondary)
-                                }.transition(.opacity)
-                            }
-                        }
-
-                        Spacer()
-
-                        Button {
-                            appState.inspectorDefaultScope = .source
-                            appState.inspectorVisible = true
-                        } label: {
-                            Image(systemName: "slider.horizontal.3")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Manage actions")
-                    }
-
-                    // Refine with AI (chaining prompt input)
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "text.bubble.badge.plus")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("Refine with AI")
+                    // AI actions card
+                    VStack(spacing: 0) {
+                        // Card header
+                        HStack {
+                            Text("AI Actions")
                                 .font(.caption.bold())
                                 .foregroundStyle(.secondary)
                             Spacer()
-                            Text("Chains — each prompt builds on the last")
+                            Button {
+                                appState.inspectorDefaultScope = .source
+                                appState.inspectorVisible = true
+                            } label: {
+                                Image(systemName: "slider.horizontal.3")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Manage Before Combining actions")
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color(nsColor: .controlBackgroundColor))
+
+                        Divider()
+
+                        // Run preset action row
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Run Preset Action")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
-                        }
+                                .textCase(.uppercase)
 
-                        HStack(alignment: .top, spacing: 8) {
-                            TextField("Type an instruction…", text: $freeformPromptText, axis: .vertical)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.caption)
-                                .lineLimit(1...3)
-                                .disabled(isRunningFreeform)
-                            if isRunningFreeform {
-                                ProgressView().controlSize(.small).padding(.top, 6)
+                            if sourcePipelines.isEmpty {
+                                Text("No Before Combining actions yet — tap ⠿ to add one.")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
                             } else {
-                                Button("Send") { Task { await runFreeformPrompt() } }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .padding(.top, 3)
-                                    .disabled(freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || currentText.isEmpty)
+                                HStack(spacing: 8) {
+                                    Picker("", selection: $selectedSourcePipelineID) {
+                                        Text("Choose an action…").tag(nil as PersistentIdentifier?)
+                                        ForEach(sourcePipelines) { p in
+                                            Text(p.name).tag(p.id as PersistentIdentifier?)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .labelsHidden()
+                                    .frame(maxWidth: .infinity)
+
+                                    if isRunningPipeline {
+                                        if let p = pipelineProgress {
+                                            PipelineProgressView(progress: p).transition(.opacity)
+                                        } else {
+                                            ProgressView().controlSize(.small)
+                                        }
+                                        Button("Cancel") {
+                                            runningPipelineTask?.cancel()
+                                            runningPipelineTask = nil
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    } else {
+                                        Button("Run") { runSourcePipeline() }
+                                            .buttonStyle(.borderedProminent)
+                                            .controlSize(.small)
+                                            .disabled(selectedSourcePipelineID == nil || currentText.isEmpty)
+                                    }
+                                }
                             }
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+
+                        HStack {
+                            VStack { Divider() }
+                            Text("or")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize()
+                            VStack { Divider() }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+
+                        // Refine with AI row
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Refine with AI")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .textCase(.uppercase)
+                                Spacer()
+                                Text("Each prompt builds on the last")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+
+                            HStack(alignment: .top, spacing: 8) {
+                                TextField("Type an instruction…", text: $freeformPromptText, axis: .vertical)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.callout)
+                                    .lineLimit(2...4)
+                                    .disabled(isRunningFreeform)
+
+                                VStack(spacing: 4) {
+                                    if isRunningFreeform {
+                                        ProgressView().controlSize(.small)
+                                        Button("Cancel") {
+                                            runningFreeformTask?.cancel()
+                                            runningFreeformTask = nil
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                    } else {
+                                        Button("Send") {
+                                            runningFreeformTask = Task { await runFreeformPrompt() }
+                                        }
+                                        .buttonStyle(.borderedProminent)
+                                        .controlSize(.small)
+                                        .disabled(freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || currentText.isEmpty)
+                                    }
+                                }
+                                .padding(.top, 2)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
                     }
+                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
 
                     if !pipelineRuns.isEmpty {
                         VStack(spacing: 8) {
@@ -648,7 +720,6 @@ struct CaptureReviewStages: View {
         guard !prompt.isEmpty, !currentText.isEmpty else { return }
         isRunningFreeform = true
         errorText = nil
-        // Chain from the last "Refine with AI" result; fall back to the transcript
         let chainInput = pipelineRuns.last(where: { $0.pipelineName == "Refine with AI" })?.result ?? currentText
         do {
             let aiService = SessionAIService()
@@ -660,9 +731,12 @@ struct CaptureReviewStages: View {
                 pipelineRuns.append(PipelineRun(pipelineName: "Refine with AI", result: result))
                 freeformPromptText = ""
             }
+        } catch is CancellationError {
+            // user cancelled — no error shown
         } catch {
             errorText = "AI prompt failed: \(error.localizedDescription)"
         }
         isRunningFreeform = false
+        runningFreeformTask = nil
     }
 }

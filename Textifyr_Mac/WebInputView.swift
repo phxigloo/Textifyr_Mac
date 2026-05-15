@@ -8,6 +8,7 @@ struct WebInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.wizardDismiss) private var wizardDismiss
+    @EnvironmentObject private var appState: AppState
     private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : dismiss() }
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "postCapture" },
@@ -29,33 +30,20 @@ struct WebInputView: View {
     @State private var warningText: String? = nil
     @State private var showCharLimitAlert = false
 
-    var body: some View {
-        Group {
-            if wizardStep == .review {
-                reviewPanel
-            } else {
-                acquireView
-            }
-        }
-        .alert("Character Limit Reached", isPresented: $showCharLimitAlert) {
-            Button("OK") {}
-        } message: {
-            Text("The extracted text exceeds \(AppConstants.maxImportCharacters.formatted()) characters and has been truncated.")
-        }
-        .onChange(of: captureVM.phase) { _, phase in
-            if phase == .done { closeWizard() }
-        }
+    @State private var stepForward = true
+
+    private var stepTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: stepForward ? .trailing : .leading).combined(with: .opacity),
+            removal:   .move(edge: stepForward ? .leading  : .trailing).combined(with: .opacity)
+        )
     }
 
-    // MARK: - Review panel (steps 2 & 3)
-
-    private var reviewPanel: some View {
+    var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "globe")
-                    .foregroundStyle(.tint)
-                Text("Import Web Page")
-                    .font(.title2).bold()
+                Image(systemName: "globe").foregroundStyle(.tint)
+                Text("Import Web Page").font(.title2).bold()
                 Spacer()
                 stepDotsIndicator
             }
@@ -65,27 +53,44 @@ struct WebInputView: View {
 
             Divider()
 
-            CaptureReviewStages(
-                originalText: capturedText,
-                initialText: capturedText,
-                isEditMode: false,
-                reviewStepIndex: $reviewStepIndex,
-                onBack: {
-                    postCaptureTask?.cancel()
-                    reviewStepIndex = 1
-                    wizardStep = .acquire
-                },
-                onCancel: {
-                    postCaptureTask?.cancel()
-                    captureVM.reset()
-                    closeWizard()
-                },
-                onAccept: { finalText in
-                    captureVM.saveTextCapture(finalText, captureMethod: .webURL)
+            ZStack {
+                if wizardStep == .review {
+                    CaptureReviewStages(
+                        originalText: capturedText,
+                        initialText: capturedText,
+                        isEditMode: false,
+                        reviewStepIndex: $reviewStepIndex,
+                        onBack: {
+                            postCaptureTask?.cancel()
+                            reviewStepIndex = 1
+                            stepForward = false
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .acquire }
+                        },
+                        onCancel: {
+                            postCaptureTask?.cancel()
+                            captureVM.reset()
+                            closeWizard()
+                        },
+                        onAccept: { finalText in
+                            captureVM.saveTextCapture(finalText, captureMethod: .webURL)
+                        }
+                    )
+                    .transition(stepTransition)
+                } else {
+                    acquireView.transition(stepTransition)
                 }
-            )
+            }
+            .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .alert("Character Limit Reached", isPresented: $showCharLimitAlert) {
+            Button("OK") {}
+        } message: {
+            Text("The extracted text exceeds \(AppConstants.maxImportCharacters.formatted()) characters and has been truncated.")
+        }
+        .onChange(of: captureVM.phase) { _, phase in
+            if phase == .done { closeWizard() }
+        }
     }
 
     private var stepDotsIndicator: some View {
@@ -107,51 +112,53 @@ struct WebInputView: View {
     // MARK: - Acquire view
 
     private var acquireView: some View {
-        VStack(spacing: 20) {
-            Text("Import Web Page")
-                .font(.title2).bold()
-                .padding(.top, 24)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(spacing: 0) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "globe")
+                                .font(.title2)
+                                .foregroundStyle(Color.accentColor)
+                            TextField("https://…", text: $urlText)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { importURL() }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                    }
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
-            Image(systemName: "globe")
-                .font(.system(size: 48))
-                .foregroundStyle(Color.accentColor)
+                    if let warning = warningText {
+                        Text(warning).font(.caption).foregroundStyle(.orange)
+                    }
+                    if let error = errorText {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
+                    if isLoading {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Extracting text…").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
 
-            TextField("https://…", text: $urlText)
-                .textFieldStyle(.roundedBorder)
-                .padding(.horizontal, 24)
-                .onSubmit { importURL() }
-
-            if let warning = warningText {
-                Text(warning).font(.caption).foregroundStyle(.orange)
-            }
-            if let error = errorText {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
-
-            if isLoading {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Extracting text…").font(.caption).foregroundStyle(.secondary)
+                    pipelinePickerCard
                 }
+                .padding(20)
             }
 
-            pipelinePickerCard
-                .padding(.horizontal, 24)
+            Divider()
 
-            HStack(spacing: 16) {
-                Button("Cancel") {
-                    captureVM.reset()
-                    closeWizard()
-                }
-                .buttonStyle(.bordered)
-
-                Button("Import") {
-                    importURL()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(urlText.trimmingCharacters(in: .whitespaces).isEmpty || isLoading || isRunningPostCapture)
+            HStack {
+                Button("Cancel") { captureVM.reset(); closeWizard() }
+                    .buttonStyle(.bordered)
+                Spacer()
+                Button("Import") { importURL() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(urlText.trimmingCharacters(in: .whitespaces).isEmpty || isLoading || isRunningPostCapture)
             }
-            .padding(.bottom, 28)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
         .frame(maxWidth: .infinity)
     }
@@ -159,45 +166,52 @@ struct WebInputView: View {
     // MARK: - Pipeline picker card
 
     @ViewBuilder private var pipelinePickerCard: some View {
-        if !postCapturePipelines.isEmpty {
-            VStack(spacing: 0) {
-                LabeledContent("After Capture") {
-                    Picker("", selection: $selectedPostCapturePipelineID) {
-                        Text("None").tag(nil as PersistentIdentifier?)
-                        ForEach(postCapturePipelines) { p in
-                            Text(p.name).tag(p.id as PersistentIdentifier?)
-                        }
+        VStack(spacing: 0) {
+            LabeledContent("After Capture") {
+                Picker("", selection: $selectedPostCapturePipelineID) {
+                    Text("None").tag(nil as PersistentIdentifier?)
+                    ForEach(postCapturePipelines) { p in
+                        Text(p.name).tag(p.id as PersistentIdentifier?)
                     }
-                    .pickerStyle(.menu)
-                    .disabled(isRunningPostCapture)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-
-                if let p = postCaptureProgress {
-                    Divider().padding(.leading, 12)
-                    PipelineProgressView(progress: p)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                } else if isRunningPostCapture {
-                    Divider().padding(.leading, 12)
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Starting…").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-
-                if let err = postCaptureError {
-                    Divider().padding(.leading, 12)
-                    Text(err).font(.caption).foregroundStyle(.red)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                }
+                .pickerStyle(.menu)
+                .disabled(isRunningPostCapture || postCapturePipelines.isEmpty)
             }
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12).padding(.vertical, 10)
+
+            if let p = postCaptureProgress {
+                Divider().padding(.leading, 12)
+                PipelineProgressView(progress: p)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+            } else if isRunningPostCapture {
+                Divider().padding(.leading, 12)
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Starting…").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+
+            if let err = postCaptureError {
+                Divider().padding(.leading, 12)
+                Text(err).font(.caption).foregroundStyle(.red)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+
+            Divider().padding(.leading, 12)
+            HStack {
+                Spacer()
+                Button {
+                    appState.inspectorDefaultScope = .postCapture
+                    appState.inspectorVisible = true
+                } label: {
+                    Label("Manage Actions…", systemImage: "slider.horizontal.3").font(.caption)
+                }
+                .buttonStyle(.borderless).foregroundStyle(.secondary)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
         }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - proceedToReview
@@ -224,12 +238,14 @@ struct WebInputView: View {
                 postCaptureTask = nil
                 if !Task.isCancelled {
                     reviewStepIndex = 1
-                    wizardStep = .review
+                    stepForward = true
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .review }
                 }
             }
         } else {
             reviewStepIndex = 1
-            wizardStep = .review
+            stepForward = true
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .review }
         }
     }
 

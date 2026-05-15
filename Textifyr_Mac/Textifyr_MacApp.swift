@@ -27,7 +27,7 @@ struct Textifyr_MacApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .modelContainer(container)
-        .commands { AppCommands() }
+        .commands { AppCommands(appState: appState) }
 
         Window("About Textifyr", id: "about") {
             AboutView()
@@ -64,6 +64,7 @@ extension Notification.Name {
 
 private struct AppCommands: Commands {
     @Environment(\.openWindow) private var openWindow
+    let appState: AppState
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
@@ -76,6 +77,32 @@ private struct AppCommands: Commands {
                 NotificationCenter.default.post(name: .newDocument, object: nil)
             }
             .keyboardShortcut("n", modifiers: .command)
+        }
+        CommandMenu("Sources") {
+            Button("AI Writer")        { appState.pendingSourceMethod = .appleIntelligence }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+            Button("Screen Capture")   { appState.pendingSourceMethod = .screenCapture }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+            Button("Microphone")       { appState.pendingSourceMethod = .microphone }
+                .keyboardShortcut("m", modifiers: [.command, .option])
+            Button("Audio File")       { appState.pendingSourceMethod = .audioFile }
+                .keyboardShortcut("a", modifiers: [.command, .option])
+            Button("Video Audio")      { appState.pendingSourceMethod = .videoAudio }
+                .keyboardShortcut("v", modifiers: [.command, .option])
+            Button("Camera")           { appState.pendingSourceMethod = .camera }
+                .keyboardShortcut("c", modifiers: [.command, .option])
+            Button("Photo Library")    { appState.pendingSourceMethod = .photoLibrary }
+                .keyboardShortcut("p", modifiers: [.command, .option])
+            Button("Image (OCR)")      { appState.pendingSourceMethod = .imageFile }
+                .keyboardShortcut("o", modifiers: [.command, .option])
+            Button("Text Editor")      { appState.pendingSourceMethod = .rtfEditor }
+                .keyboardShortcut("t", modifiers: [.command, .option])
+            Button("PDF")              { appState.pendingSourceMethod = .pdf }
+                .keyboardShortcut("d", modifiers: [.command, .option])
+            Button("Web URL")          { appState.pendingSourceMethod = .webURL }
+                .keyboardShortcut("w", modifiers: [.command, .option])
+            Button("Embed Image")      { appState.pendingSourceMethod = .smartVision }
+                .keyboardShortcut("e", modifiers: [.command, .option])
         }
         CommandMenu("Tools") {
             Button("Prompt Builder") {

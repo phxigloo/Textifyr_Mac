@@ -59,6 +59,8 @@ struct SmartVisionInputView: View {
     @State private var showFileImporter = false
     @State private var capturedImage: CGImage? = nil
     @State private var showCropView = false
+    @State private var capturedDisplays: [(name: String, image: CGImage)] = []
+    @State private var showDisplayPicker = false
 
     // Process
     @State private var processingMode: PictureProcessingMode = .none
@@ -129,6 +131,9 @@ struct SmartVisionInputView: View {
             allowsMultipleSelection: false
         ) { result in
             if let url = try? result.get().first { Task { await loadImageFile(url) } }
+        }
+        .sheet(isPresented: $showDisplayPicker) {
+            displayPickerSheet
         }
         .alert("Error", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("OK") { errorText = nil }
@@ -421,13 +426,69 @@ struct SmartVisionInputView: View {
 
     // MARK: - Capture actions
 
+    // MARK: - Display picker sheet
+
+    private var displayPickerSheet: some View {
+        VStack(spacing: 0) {
+            Text("Select Display")
+                .font(.headline)
+                .padding()
+            Divider()
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(capturedDisplays.indices, id: \.self) { i in
+                        let display = capturedDisplays[i]
+                        Button {
+                            showDisplayPicker = false
+                            capturedDisplays = []
+                            capturedImage = display.image
+                            showCropView = true
+                        } label: {
+                            VStack(spacing: 8) {
+                                Image(nsImage: NSImage(cgImage: display.image,
+                                      size: NSSize(width: display.image.width, height: display.image.height)))
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 200, height: 120)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .overlay(RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color.accentColor, lineWidth: 2))
+                                Text(display.name)
+                                    .font(.caption)
+                                    .foregroundStyle(.primary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(20)
+            }
+            Divider()
+            HStack {
+                Button("Cancel") {
+                    showDisplayPicker = false
+                    capturedDisplays = []
+                    captureSource = nil
+                }
+                .buttonStyle(.bordered)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+        .frame(minWidth: 480, minHeight: 220)
+    }
+
     private func captureScreen() async {
         do {
             let results = try await ScreenCaptureService.captureAllDisplays()
             captureSource = nil
-            if let first = results.first {
+            if results.count == 1, let first = results.first {
                 capturedImage = first.image
                 showCropView = true
+            } else if results.count > 1 {
+                capturedDisplays = results
+                showDisplayPicker = true
             }
         } catch {
             captureSource = nil
@@ -820,6 +881,8 @@ private struct SmartVisionCameraSheet: View {
     let onCapture: (CGImage) -> Void
     let onCancel: () -> Void
     @EnvironmentObject private var appState: AppState
+    @StateObject private var captureTrigger = CameraCaptureTrigger()
+    @State private var isCapturing = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -829,12 +892,32 @@ private struct SmartVisionCameraSheet: View {
                 Button("Cancel", action: onCancel).buttonStyle(.borderless)
             }.padding(20)
             Divider()
-            CameraPreviewView { image in
-                if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                    onCapture(cg)
+            CameraPreviewView(
+                captureTrigger: captureTrigger,
+                onCapture: { image in
+                    isCapturing = false
+                    if let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                        onCapture(cg)
+                    }
+                },
+                onViewCreated: { _ in }
+            )
+            .frame(minHeight: 340)
+            Divider()
+            HStack {
+                Spacer()
+                if isCapturing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Capture") {
+                        isCapturing = true
+                        captureTrigger.capture()
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
-            .frame(minHeight: 340)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
         }
         .frame(width: 520)
         .onAppear    { appState.setCameraInUse(true)  }

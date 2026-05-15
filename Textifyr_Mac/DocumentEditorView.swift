@@ -83,6 +83,9 @@ struct DocumentEditorView: View {
 
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) {
+                    if !appState.inspectorVisible {
+                        appState.inspectorDefaultScope = selectedTab == .output ? .output : .source
+                    }
                     appState.inspectorVisible.toggle()
                 }
             } label: {

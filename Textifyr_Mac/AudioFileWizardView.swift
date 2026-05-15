@@ -435,7 +435,7 @@ struct AudioFileWizardView: View {
             capturedSession = nil
         }
         captureVM.reset()
-        dismiss()
+        closeWizard()
     }
 
     // MARK: - Helpers

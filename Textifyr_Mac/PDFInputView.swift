@@ -10,6 +10,7 @@ struct PDFInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.wizardDismiss) private var wizardDismiss
+    @EnvironmentObject private var appState: AppState
     private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : dismiss() }
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "postCapture" },
@@ -41,13 +42,14 @@ struct PDFInputView: View {
     @State private var showCharLimitAlert = false
 
     var body: some View {
-        Group {
+        ZStack {
             if wizardStep == .review {
-                reviewPanel
+                reviewPanel.transition(stepTransition)
             } else {
-                acquireView
+                acquireView.transition(stepTransition)
             }
         }
+        .clipped()
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.pdf], allowsMultipleSelection: false) { result in
             handleFileSelection(result)
         }
@@ -134,57 +136,71 @@ struct PDFInputView: View {
         .animation(.easeInOut(duration: 0.2), value: reviewStepIndex)
     }
 
+    @State private var stepForward = true
+
+    private var stepTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: stepForward ? .trailing : .leading).combined(with: .opacity),
+            removal:   .move(edge: stepForward ? .leading  : .trailing).combined(with: .opacity)
+        )
+    }
+
     // MARK: - Acquire view
 
     private var acquireView: some View {
-        VStack(spacing: 16) {
-            Text("Import PDF")
-                .font(.title2).bold()
-                .padding(.top, 24)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    fileSelectionArea
 
-            fileSelectionArea
-                .padding(.horizontal)
+                    if let total = totalPages, total > 1 {
+                        pageRangeSelector(total: total)
+                    }
 
-            if let total = totalPages, total > 1 {
-                pageRangeSelector(total: total)
-                    .padding(.horizontal)
-            }
+                    if isExtracting {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Extracting text…").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .transition(.opacity)
+                    }
 
-            if isExtracting {
-                ProgressView("Extracting text…").padding(.horizontal)
+                    if !extractedText.isEmpty || selectedURL != nil {
+                        ZStack(alignment: .topLeading) {
+                            TextEditor(text: $extractedText)
+                                .font(.body)
+                                .frame(minHeight: 160)
+                                .scrollContentBackground(.hidden)
+                                .padding(4)
+
+                            if extractedText.isEmpty && !isExtracting {
+                                Text("Text will appear here after extraction.")
+                                    .foregroundStyle(.secondary).font(.body)
+                                    .padding(.horizontal, 8).padding(.vertical, 12)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    }
+
+                    if let warning = warningText {
+                        Text(warning).font(.caption).foregroundStyle(.orange)
+                    }
+                    if let error = errorText {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
+
+                    pipelinePickerCard
+                }
+                .padding(20)
+                .animation(.easeInOut(duration: 0.2), value: isExtracting)
             }
 
             Divider()
 
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $extractedText)
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .padding(4)
-
-                if extractedText.isEmpty && !isExtracting {
-                    Text("Select a PDF, then use Extract Text to pull out selectable text, or set From and To to the same page number and use Crop Page to draw a region and recognise text from a photo or scan.")
-                        .foregroundStyle(.secondary).font(.body)
-                        .padding(.horizontal, 8).padding(.vertical, 12)
-                        .allowsHitTesting(false)
-                }
-            }
-            .frame(maxHeight: .infinity)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .padding(.horizontal)
-
-            if let warning = warningText {
-                Text(warning).font(.caption).foregroundStyle(.orange).padding(.horizontal)
-            }
-            if let error = errorText {
-                Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
-            }
-
-            pipelinePickerCard
-                .padding(.horizontal)
-
             controlsBar
-                .padding([.horizontal, .bottom])
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
         }
         .frame(maxWidth: .infinity, minHeight: 480)
     }
@@ -252,7 +268,10 @@ struct PDFInputView: View {
     // MARK: - Controls
 
     @ViewBuilder private var controlsBar: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
+            Button("Cancel") { captureVM.reset(); closeWizard() }
+                .buttonStyle(.bordered)
+
             if selectedURL != nil && !isExtracting {
                 Button("Crop Page") { cropAndShowPage() }
                     .buttonStyle(.bordered)
@@ -266,68 +285,73 @@ struct PDFInputView: View {
 
             Spacer()
 
-            Button("Cancel") { captureVM.reset(); closeWizard() }
-                .buttonStyle(.bordered)
-
             if isExtracting {
-                Button("Stop") { isExtracting = false }
-                    .buttonStyle(.bordered)
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Button("Stop") { isExtracting = false }
+                        .buttonStyle(.bordered)
+                }
+            } else if selectedURL == nil {
+                Button("Choose PDF…") { showFilePicker = true }
+                    .buttonStyle(.borderedProminent)
             } else {
-                Button("Extract Text") { Task { await extractText() } }
-                    .buttonStyle(.bordered)
-                    .disabled(selectedURL == nil || !isPageRangeValid)
+                Button("Continue") { proceedToReview(text: extractedText) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isRunningPostCapture || extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-
-            Button("Continue") {
-                proceedToReview(text: extractedText)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isExtracting || isRunningPostCapture || extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 
     // MARK: - Pipeline picker card
 
     @ViewBuilder private var pipelinePickerCard: some View {
-        if !postCapturePipelines.isEmpty {
-            VStack(spacing: 0) {
-                LabeledContent("After Capture") {
-                    Picker("", selection: $selectedPostCapturePipelineID) {
-                        Text("None").tag(nil as PersistentIdentifier?)
-                        ForEach(postCapturePipelines) { p in
-                            Text(p.name).tag(p.id as PersistentIdentifier?)
-                        }
+        VStack(spacing: 0) {
+            LabeledContent("After Capture") {
+                Picker("", selection: $selectedPostCapturePipelineID) {
+                    Text("None").tag(nil as PersistentIdentifier?)
+                    ForEach(postCapturePipelines) { p in
+                        Text(p.name).tag(p.id as PersistentIdentifier?)
                     }
-                    .pickerStyle(.menu)
-                    .disabled(isRunningPostCapture)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-
-                if let p = postCaptureProgress {
-                    Divider().padding(.leading, 12)
-                    PipelineProgressView(progress: p)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                } else if isRunningPostCapture {
-                    Divider().padding(.leading, 12)
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Starting…").font(.caption).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-
-                if let err = postCaptureError {
-                    Divider().padding(.leading, 12)
-                    Text(err).font(.caption).foregroundStyle(.red)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                }
+                .pickerStyle(.menu)
+                .disabled(isRunningPostCapture || postCapturePipelines.isEmpty)
             }
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            if let p = postCaptureProgress {
+                Divider().padding(.leading, 12)
+                PipelineProgressView(progress: p)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+            } else if isRunningPostCapture {
+                Divider().padding(.leading, 12)
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Starting…").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+
+            if let err = postCaptureError {
+                Divider().padding(.leading, 12)
+                Text(err).font(.caption).foregroundStyle(.red)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+
+            Divider().padding(.leading, 12)
+            HStack {
+                Spacer()
+                Button {
+                    appState.inspectorDefaultScope = .postCapture
+                    appState.inspectorVisible = true
+                } label: {
+                    Label("Manage Actions…", systemImage: "slider.horizontal.3").font(.caption)
+                }
+                .buttonStyle(.borderless).foregroundStyle(.secondary)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
         }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - proceedToReview
@@ -354,12 +378,14 @@ struct PDFInputView: View {
                 postCaptureTask = nil
                 if !Task.isCancelled {
                     reviewStepIndex = 1
-                    wizardStep = .review
+                    stepForward = true
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .review }
                 }
             }
         } else {
             reviewStepIndex = 1
-            wizardStep = .review
+            stepForward = true
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .review }
         }
     }
 
@@ -372,6 +398,7 @@ struct PDFInputView: View {
             selectedURL = url
             selectedFileName = url.lastPathComponent
             errorText = nil
+            extractedText = ""
 
             if let pages = PDFTextService.pageCount(for: url) {
                 totalPages = pages
@@ -383,6 +410,8 @@ struct PDFInputView: View {
                     warningText = nil
                 }
             }
+            // Auto-extract and auto-proceed to step 2
+            Task { await extractText(); if !extractedText.isEmpty { proceedToReview(text: extractedText) } }
 
         case .failure(let error):
             errorText = error.localizedDescription
