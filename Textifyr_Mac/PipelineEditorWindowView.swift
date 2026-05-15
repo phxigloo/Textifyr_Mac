@@ -77,13 +77,13 @@ struct PipelineEditorWindowView: View {
             detailColumn
         }
         .frame(minWidth: 780, minHeight: 520)
-        .confirmationDialog("Delete Pipeline", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+        .confirmationDialog("Delete Action", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
                 if let p = pipelineToDelete { performDelete(p) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            let name = pipelineToDelete?.name ?? "this pipeline"
+            let name = pipelineToDelete?.name ?? "this action"
             Text("Delete \"\(name)\"? This cannot be undone.")
         }
         .confirmationDialog(
@@ -105,7 +105,7 @@ struct PipelineEditorWindowView: View {
                 pendingPipelineID = nil
             }
         } message: {
-            let name = windowState.activeVM?.pipeline.name ?? "this pipeline"
+            let name = windowState.activeVM?.pipeline.name ?? "this action"
             Text("Save changes to \"\(name)\" before switching?")
         }
         .onChange(of: selectedScope) { _, _ in
@@ -136,7 +136,7 @@ struct PipelineEditorWindowView: View {
             Label(scope.displayName, systemImage: scopeIcon(scope))
                 .tag(scope)
         }
-        .navigationTitle("Pipelines")
+        .navigationTitle("AI Actions")
         .listStyle(.sidebar)
     }
 
@@ -189,7 +189,7 @@ struct PipelineEditorWindowView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .help("New pipeline")
+                    .help("New action")
 
                     Button {
                         if let p = selectedPipeline {
@@ -202,7 +202,7 @@ struct PipelineEditorWindowView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(selectedPipeline == nil || selectedPipeline?.isBuiltIn == true)
-                    .help("Delete selected pipeline")
+                    .help("Delete selected action")
 
                     Spacer()
                 }
@@ -211,7 +211,7 @@ struct PipelineEditorWindowView: View {
 
                 if hasHiddenInScope {
                     Divider()
-                    Toggle("Show hidden pipelines", isOn: $showHidden)
+                    Toggle("Show hidden actions", isOn: $showHidden)
                         .font(.caption)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -232,9 +232,9 @@ struct PipelineEditorWindowView: View {
                 .id(vm.pipeline.id)
         } else {
             ContentUnavailableView(
-                "No Pipeline Selected",
+                "No Action Selected",
                 systemImage: "wand.and.sparkles",
-                description: Text("Choose a pipeline from the list, or tap + to create one.")
+                description: Text("Choose an action from the list, or tap + to create one.")
             )
         }
     }
@@ -281,7 +281,7 @@ struct PipelineEditorWindowView: View {
     // MARK: - CRUD
 
     private func addPipeline() {
-        let p = FormattingPipeline(name: "New Pipeline")
+        let p = FormattingPipeline(name: "New Action")
         p.scope = selectedScope
         modelContext.insert(p)
         try? modelContext.save()
@@ -335,8 +335,8 @@ struct PipelineEditorWindowView: View {
     private func scopeHint(_ scope: PipelineScope) -> String {
         switch scope {
         case .postCapture: return "Runs automatically after text is captured from any source."
-        case .source:      return "Applied manually to refine a single session's transcript."
-        case .output:      return "Applied to all sessions combined when formatting the final document."
+        case .source:      return "Applied manually to a single source before it is combined with others."
+        case .output:      return "Applied to all sources combined to produce the final document."
         }
     }
 }

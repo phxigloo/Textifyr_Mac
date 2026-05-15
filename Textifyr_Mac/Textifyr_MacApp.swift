@@ -35,6 +35,12 @@ struct Textifyr_MacApp: App {
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
+        Window("Textifyr Help", id: "help") {
+            HelpWindowView()
+        }
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 820, height: 600)
+
         Settings {
             SettingsView()
         }
@@ -77,10 +83,16 @@ private struct AppCommands: Commands {
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
 
-            Button("Pipeline Editor") {
+            Button("Action Editor") {
                 NotificationCenter.default.post(name: .openPipelineEditorSheet, object: nil)
             }
             .keyboardShortcut("e", modifiers: [.command, .shift])
+        }
+        CommandGroup(replacing: .help) {
+            Button("Textifyr Help") {
+                openWindow(id: "help")
+            }
+            .keyboardShortcut("?", modifiers: .command)
         }
     }
 }

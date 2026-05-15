@@ -14,8 +14,17 @@ struct RTFOutputView: View {
            sort: \FormattingPipeline.name) private var outputPipelines: [FormattingPipeline]
 
     @State private var showExportSheet = false
+    @State private var formatBannerDismissed = false
 
     private var document: TextifyrDocument { viewModel.document }
+
+    private var showFormatBanner: Bool {
+        !document.hasOutput
+        && document.pipeline != nil
+        && !document.mergedSourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        && !formatBannerDismissed
+        && !viewModel.isFormatting
+    }
 
     private var pictureSessions: [SourceSession] {
         (document.sourceSessions ?? [])
@@ -27,6 +36,10 @@ struct RTFOutputView: View {
         VStack(spacing: 0) {
             headerBar
             Divider()
+            if showFormatBanner {
+                formatNudgeBanner
+                Divider()
+            }
             ZStack {
                 contentArea
                 if viewModel.isFormatting {
@@ -37,6 +50,37 @@ struct RTFOutputView: View {
         .sheet(isPresented: $showExportSheet) {
             ExportFormatSheet(viewModel: viewModel)
         }
+    }
+
+    // MARK: - Format nudge banner
+
+    private var formatNudgeBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles")
+                .font(.caption)
+                .foregroundStyle(Color.accentColor)
+            Text("Sources are ready — tap Format to generate the output.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Format") {
+                Task { await viewModel.runFormatting(appState: appState) }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            Button {
+                withAnimation { formatBannerDismissed = true }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.07))
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     // MARK: - Header
@@ -65,20 +109,21 @@ struct RTFOutputView: View {
                 }
                 if !outputPipelines.isEmpty { Divider() }
                 Button {
+                    appState.inspectorDefaultScope = .output
                     appState.inspectorVisible = true
                 } label: {
-                    Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
+                    Label("Manage Actions…", systemImage: "slider.horizontal.3")
                 }
             } label: {
                 Label(
-                    document.pipeline?.name ?? "Pipeline",
+                    document.pipeline?.name ?? "Action",
                     systemImage: "wand.and.sparkles"
                 )
                 .font(.caption)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .help("Select a formatting pipeline")
+            .help("Select a Final Document action")
 
             // Format / Cancel
             if viewModel.isFormatting {
@@ -107,7 +152,7 @@ struct RTFOutputView: View {
                 .controlSize(.small)
                 .disabled(document.pipeline == nil ||
                           document.mergedSourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .help("Run AI formatting pipeline")
+                .help("Run Final Document action")
             }
 
             if document.hasOutput && !viewModel.isFormatting {
@@ -226,7 +271,7 @@ struct RTFOutputView: View {
             Text("No formatted output yet")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text("Select a pipeline and tap Format.")
+            Text("Select an action and tap Format.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)

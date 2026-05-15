@@ -170,7 +170,7 @@ struct AudioFileWizardView: View {
 
                         if !postCapturePipelines.isEmpty {
                             Divider().padding(.leading, 12)
-                            LabeledContent("Auto Cleanup") {
+                            LabeledContent("After Capture") {
                                 Picker("", selection: $selectedPostCapturePipelineID) {
                                     Text("None").tag(nil as PersistentIdentifier?)
                                     ForEach(postCapturePipelines) { p in
@@ -187,9 +187,10 @@ struct AudioFileWizardView: View {
                             HStack {
                                 Spacer()
                                 Button {
+                                    appState.inspectorDefaultScope = .postCapture
                                     appState.inspectorVisible = true
                                 } label: {
-                                    Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
+                                    Label("Manage Actions…", systemImage: "slider.horizontal.3")
                                         .font(.caption)
                                 }
                                 .buttonStyle(.borderless)
@@ -382,6 +383,7 @@ struct AudioFileWizardView: View {
     }
 
     private func runPostCapturePipeline(_ pipeline: FormattingPipeline) {
+        pipeline.usageCount += 1
         isRunningPostCapture = true
         postCaptureError = nil
         let textToProcess = initialText
@@ -393,7 +395,7 @@ struct AudioFileWizardView: View {
                 if !Task.isCancelled { initialText = result }
             } catch {
                 if !Task.isCancelled {
-                    postCaptureError = "Auto Cleanup failed: \(error.localizedDescription)"
+                    postCaptureError = "After Capture failed: \(error.localizedDescription)"
                 }
             }
             isRunningPostCapture = false

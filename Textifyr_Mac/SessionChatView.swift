@@ -11,7 +11,6 @@ struct SessionChatView: View {
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "source" },
            sort: \FormattingPipeline.name) private var sourcePipelines: [FormattingPipeline]
 
-    @State private var selectedPipeline: FormattingPipeline?
     @State private var showReplaceConfirmation = false
 
     private var pipelinePrompts: [(name: String, prompt: String)] {
@@ -50,10 +49,10 @@ struct SessionChatView: View {
                             .id(msg.id)
                         }
 
-                        // Pipeline result bubble
+                        // Action result bubble
                         if viewModel.isRunningPipeline {
                             ThinkingIndicator(label: viewModel.pipelineStep.isEmpty
-                                ? "Pipeline running…"
+                                ? "Running action…"
                                 : viewModel.pipelineStep)
                                 .id("pipeline-running")
                         } else if let output = viewModel.pipelineOutput {
@@ -112,6 +111,17 @@ struct SessionChatView: View {
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
+                    viewModel.undoTranscript()
+                } label: {
+                    Label("Undo Replace", systemImage: "arrow.uturn.backward")
+                }
+                .help(viewModel.transcriptHistoryDepth == 0
+                    ? "No transcript versions to restore"
+                    : "Restore previous transcript (\(viewModel.transcriptHistoryDepth) version\(viewModel.transcriptHistoryDepth == 1 ? "" : "s") available)")
+                .disabled(viewModel.transcriptHistoryDepth == 0)
+            }
+            ToolbarItem(placement: .automatic) {
+                Button {
                     viewModel.clearHistory()
                 } label: {
                     Label("New Conversation", systemImage: "square.and.pencil")
@@ -132,54 +142,60 @@ struct SessionChatView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The original transcript will be permanently replaced with the pipeline output. This cannot be undone.")
-        }
-        .onAppear {
-            if selectedPipeline == nil { selectedPipeline = sourcePipelines.first }
-        }
-        .onChange(of: sourcePipelines.count) { _, _ in
-            if selectedPipeline == nil { selectedPipeline = sourcePipelines.first }
+            Text("The transcript will be replaced with the action result. You can undo this with the ↩ button.")
         }
     }
 
-    // MARK: - Pipeline bar
+    // MARK: - Action bar (top-3 by usage, then More…)
 
     private var pipelineBar: some View {
-        HStack(spacing: 10) {
+        let sorted = sourcePipelines.sorted { $0.usageCount > $1.usageCount }
+        let top    = Array(sorted.prefix(3))
+        let rest   = sorted.count > 3 ? Array(sorted.dropFirst(3)) : []
+
+        return HStack(spacing: 8) {
             Image(systemName: "wand.and.sparkles")
                 .foregroundStyle(.secondary)
                 .font(.caption)
 
-            Picker("", selection: $selectedPipeline) {
-                Text("Select Pipeline").tag(Optional<FormattingPipeline>.none)
-                ForEach(sourcePipelines) { p in
-                    Text(p.name).tag(Optional(p))
-                }
-            }
-            .labelsHidden()
-            .fixedSize()
-
             if viewModel.isRunningPipeline {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    if !viewModel.pipelineStep.isEmpty {
-                        Text(viewModel.pipelineStep)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Button("Cancel") { viewModel.cancelPipeline() }
-                        .buttonStyle(.borderless)
+                ProgressView().controlSize(.small)
+                if !viewModel.pipelineStep.isEmpty {
+                    Text(viewModel.pipelineStep)
                         .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
+                Button("Cancel") { viewModel.cancelPipeline() }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
             } else {
-                Button("Run") {
-                    guard let p = selectedPipeline else { return }
-                    Task { await viewModel.runPipeline(p) }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(top) { p in
+                            Button(p.name) {
+                                Task { await viewModel.runPipeline(p) }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(viewModel.session.rawText.isEmpty)
+                        }
+                        if !rest.isEmpty {
+                            Menu {
+                                ForEach(rest) { p in
+                                    Button(p.name) {
+                                        Task { await viewModel.runPipeline(p) }
+                                    }
+                                }
+                            } label: {
+                                Text("More…")
+                                    .font(.caption)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+                        }
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(selectedPipeline == nil || viewModel.session.rawText.isEmpty)
             }
 
             Spacer()
@@ -205,7 +221,7 @@ private struct PipelineResultBubble: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header row
             HStack {
-                Label("Pipeline Result", systemImage: "sparkles")
+                Label("AI Result", systemImage: "sparkles")
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -289,7 +305,7 @@ private struct ChatInputBar: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .disabled(isResponding)
-                .help("Fill prompt from pipeline")
+                .help("Load action prompt")
             }
 
             TextField("Ask about this session…", text: $inputText, axis: .vertical)

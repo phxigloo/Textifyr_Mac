@@ -143,7 +143,7 @@ struct SmartVisionInputView: View {
     private var header: some View {
         HStack {
             Image(systemName: "photo.badge.plus").foregroundStyle(Color.accentColor)
-            Text("Insert Image").font(.title2).bold()
+            Text("Embed Image").font(.title2).bold()
             Spacer()
             stepIndicator
             Spacer()
@@ -405,15 +405,16 @@ struct SmartVisionInputView: View {
     func sourceButtonLabel(_ label: String, icon: String, dimmed: Bool = false) -> some View {
         VStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 24))
+                .font(.system(size: 28))
                 .foregroundStyle(dimmed ? Color.secondary : Color.accentColor)
             Text(label)
                 .font(.caption)
-                .foregroundStyle(dimmed ? Color.secondary : Color.primary)
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .foregroundStyle(dimmed ? Color.secondary : Color.primary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
+        .padding(.vertical, 16)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
@@ -497,6 +498,302 @@ struct SmartVisionInputView: View {
             return
         }
         captureVM.savePictureCapture(pngData: pngData, annotation: annotationText)
+    }
+
+    // MARK: - AI generation
+
+    private func generateAI() async {
+        let prompt = aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+        isGeneratingAI = true
+        do {
+            let stream = try await aiService.send(prompt)
+            var result = ""
+            for await chunk in stream { result += chunk }
+            if !result.isEmpty { annotationText = result }
+        } catch {
+            errorText = "AI generation failed: \(error.localizedDescription)"
+        }
+        isGeneratingAI = false
+    }
+}
+
+// MARK: - Edit mode view
+
+struct SmartVisionEditView: View {
+    let session: SourceSession
+    let context: ModelContext
+    let onDismiss: () -> Void
+
+    @EnvironmentObject private var appState: AppState
+
+    private enum EditStep { case process, annotate }
+    @State private var editStep: EditStep = .process
+
+    @State private var capturedImage: CGImage? = nil
+    @State private var processingMode: PictureProcessingMode = .none
+    @State private var useAppColors = true
+    @State private var processedImage: CGImage? = nil
+    @State private var annotationText = ""
+    @State private var showAIPrompt = false
+    @State private var aiPromptText = ""
+    @State private var isGeneratingAI = false
+    @StateObject private var aiService = SessionAIService()
+    @State private var errorText: String? = nil
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            stepContent
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task { await loadExistingImage() }
+        .alert("Error", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
+            Button("OK") { errorText = nil }
+        } message: { Text(errorText ?? "") }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack {
+            Image(systemName: "photo.badge.checkmark").foregroundStyle(Color.accentColor)
+            Text("Edit Image").font(.title2).bold()
+            Spacer()
+            stepIndicator
+            Spacer()
+            Button("Cancel", action: onDismiss).buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 12)
+    }
+
+    private var stepIndicator: some View {
+        HStack(spacing: 0) {
+            ForEach(0..<2) { i in
+                Circle()
+                    .fill(stepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
+                    .frame(width: stepIndex == i ? 10 : 7, height: stepIndex == i ? 10 : 7)
+                    .animation(.easeInOut(duration: 0.2), value: editStep)
+                if i < 1 {
+                    Rectangle()
+                        .fill(stepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
+                        .frame(width: 36, height: 2)
+                }
+            }
+        }
+    }
+
+    private var stepIndex: Int { editStep == .process ? 0 : 1 }
+
+    @ViewBuilder
+    private var stepContent: some View {
+        switch editStep {
+        case .process:  processStep
+        case .annotate: annotateStep
+        }
+    }
+
+    // MARK: - Step 1: Process
+
+    private var processStep: some View {
+        VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Step 1 — Process").font(.headline)
+                Text("Optionally adapt colours and choose a category label for the image.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+
+            if let img = processedImage {
+                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                    .padding(.horizontal)
+            } else {
+                ProgressView("Processing image…").frame(height: 100)
+            }
+
+            VStack(spacing: 10) {
+                Toggle("Adapt colours to app appearance (grayscale + theme colours)", isOn: $useAppColors)
+                    .font(.caption)
+                    .onChange(of: useAppColors) { _, _ in
+                        if let src = capturedImage { applyPictureProcessing(to: src) }
+                    }
+
+                HStack {
+                    Text("Category:").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $processingMode) {
+                        ForEach(PictureProcessingMode.allCases) { m in
+                            Text(m.displayName).tag(m)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 220)
+                    Spacer()
+                }
+            }
+            .padding(.horizontal)
+
+            if let error = errorText {
+                Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
+            }
+
+            HStack {
+                Button("Cancel", action: onDismiss).buttonStyle(.bordered)
+                Spacer()
+                Button("Continue") { editStep = .annotate }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(processedImage == nil)
+            }
+            .padding(.horizontal)
+            .padding(.bottom)
+            .padding(.top, 8)
+        }
+        .padding(.top, 8)
+    }
+
+    // MARK: - Step 2: Annotate
+
+    private var annotateStep: some View {
+        VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Step 2 — Description").font(.headline)
+                Text("Optionally add text that will appear below the image in the output.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+
+            if let img = processedImage {
+                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxHeight: 140)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                    .padding(.horizontal)
+            }
+
+            TextEditor(text: $annotationText)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal)
+                .frame(minHeight: 80, maxHeight: 160)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    withAnimation { showAIPrompt.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: showAIPrompt ? "chevron.down" : "chevron.right").font(.caption2)
+                        Image(systemName: "wand.and.sparkles").font(.caption)
+                        Text("Generate text with AI").font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+
+                if showAIPrompt {
+                    HStack(spacing: 8) {
+                        TextField("Describe what text to generate…", text: $aiPromptText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                        Button("Generate") { Task { await generateAI() } }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeneratingAI)
+                        if isGeneratingAI { ProgressView().controlSize(.small) }
+                    }
+                }
+            }
+            .padding(.horizontal)
+
+            if let error = errorText {
+                Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
+            }
+
+            HStack {
+                Button("Cancel", action: onDismiss).buttonStyle(.bordered)
+                Button("Back") { editStep = .process }.buttonStyle(.bordered)
+                Spacer()
+                Button("Save") { savePicture() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(processedImage == nil)
+            }
+            .padding(.horizontal)
+            .padding(.bottom)
+            .padding(.top, 8)
+        }
+        .padding(.top, 8)
+    }
+
+    // MARK: - Load existing image
+
+    private func loadExistingImage() async {
+        annotationText = session.rawText
+        guard let pngData = session.rawRTFData,
+              let ns = NSImage(data: pngData),
+              let cg = ns.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            errorText = "Could not load the existing image."
+            return
+        }
+        capturedImage = cg
+        applyPictureProcessing(to: cg)
+    }
+
+    // MARK: - Picture processing
+
+    private func applyPictureProcessing(to image: CGImage) {
+        processedImage = nil
+        guard useAppColors else {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let scaled = SmartVisionImageProcessor.scale(image, maxWidth: 1200)
+                DispatchQueue.main.async { self.processedImage = scaled }
+            }
+            return
+        }
+        var fgColor = CIColor(red: 0, green: 0, blue: 0)
+        var bgColor = CIColor(red: 1, green: 1, blue: 1)
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+            var fgR: CGFloat = 0, fgG: CGFloat = 0, fgB: CGFloat = 0
+            var bgR: CGFloat = 0, bgG: CGFloat = 0, bgB: CGFloat = 0
+            (NSColor.labelColor.usingColorSpace(.genericRGB) ?? .black)
+                .getRed(&fgR, green: &fgG, blue: &fgB, alpha: nil)
+            (NSColor.textBackgroundColor.usingColorSpace(.genericRGB) ?? .white)
+                .getRed(&bgR, green: &bgG, blue: &bgB, alpha: nil)
+            fgColor = CIColor(red: fgR, green: fgG, blue: fgB)
+            bgColor = CIColor(red: bgR, green: bgG, blue: bgB)
+        }
+        let fg = fgColor, bg = bgColor
+        DispatchQueue.global(qos: .userInitiated).async {
+            let recolored = SmartVisionImageProcessor.recolorWith(image, fg: fg, bg: bg) ?? image
+            let scaled = SmartVisionImageProcessor.scale(recolored, maxWidth: 1200)
+            DispatchQueue.main.async { self.processedImage = scaled }
+        }
+    }
+
+    // MARK: - Save
+
+    private func savePicture() {
+        guard let img = processedImage else { return }
+        let bmpRep = NSBitmapImageRep(cgImage: img)
+        guard let pngData = bmpRep.representation(using: .png, properties: [:]) else {
+            errorText = "Could not encode image as PNG."
+            return
+        }
+        session.rawText    = annotationText
+        session.rawRTFData = pngData
+        try? context.save()
+        onDismiss()
     }
 
     // MARK: - AI generation

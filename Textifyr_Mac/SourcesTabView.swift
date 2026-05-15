@@ -11,8 +11,9 @@ struct SourcesTabView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var appState: AppState
 
-    @State private var showingAddSource  = false
+    @State private var showingAddSource = false
     @State private var editingSession: SourceSession?
+    @State private var editingSmartVision: SourceSession?
 
     var body: some View {
         Group {
@@ -23,7 +24,14 @@ struct SourcesTabView: View {
                     onDismiss: { showingAddSource = false }
                 )
                 .transition(.opacity)
-            } else if let session = editingSession, session.captureMethod != .smartVision {
+            } else if let session = editingSmartVision {
+                SmartVisionEditView(
+                    session: session,
+                    context: modelContext,
+                    onDismiss: { withAnimation { editingSmartVision = nil } }
+                )
+                .transition(.opacity)
+            } else if let session = editingSession {
                 SessionEditView(
                     session: session,
                     context: modelContext,
@@ -34,15 +42,18 @@ struct SourcesTabView: View {
                 SourceSessionListView(
                     document: document,
                     viewModel: viewModel,
-                    onAddSource:   { withAnimation { showingAddSource = true } },
-                    onEditSession: { session in withAnimation { editingSession = session } }
+                    onAddSource: { withAnimation { showingAddSource = true } },
+                    onEditSession: { session in
+                        if session.captureMethod == .smartVision {
+                            withAnimation { editingSmartVision = session }
+                        } else {
+                            withAnimation { editingSession = session }
+                        }
+                    }
                 )
                 .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: editingSession) { _, session in
-            if session?.captureMethod == .smartVision { editingSession = nil }
-        }
     }
 }

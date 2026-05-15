@@ -73,7 +73,7 @@ struct PromptBuilderView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    LabeledContent("Pipeline Scope") {
+                    LabeledContent("Action Scope") {
                         Picker("", selection: $promptScope) {
                             ForEach(PipelineScope.allCases, id: \.self) { s in
                                 Text(s.displayName).tag(s)
@@ -118,7 +118,7 @@ struct PromptBuilderView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(promptText.isEmpty)
-                Button("Save to Pipeline…") { showingSaveSheet = true }
+                Button("Save to Action…") { showingSaveSheet = true }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .disabled(promptText.isEmpty)
@@ -409,7 +409,7 @@ private struct LoadFromStepSheet: View {
             HStack(spacing: 0) {
                 // Pipelines
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("PIPELINE")
+                    Text("ACTION")
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 12)
@@ -505,8 +505,8 @@ private struct SaveToPipelineSheet: View {
 
     enum SaveMode: String, CaseIterable {
         case updateStep   = "Update Existing Step"
-        case addStep      = "Add to Pipeline"
-        case newPipeline  = "New Pipeline"
+        case addStep      = "Add to Action"
+        case newPipeline  = "New Action"
     }
 
     @State private var saveMode: SaveMode = .addStep
@@ -537,7 +537,7 @@ private struct SaveToPipelineSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Save to Pipeline").font(.headline)
+                Text("Save to Action").font(.headline)
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(.bordered)
             }
@@ -592,13 +592,13 @@ private struct SaveToPipelineSheet: View {
     @ViewBuilder
     private var updateStepBody: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Select the pipeline and step whose prompt to replace.")
+            Text("Select the action and step whose prompt to replace.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Pipeline (\(scope.displayName))")
+                    Text("Action (\(scope.displayName))")
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                     List(scopedPipelines, id: \.id, selection: $selectedPipelineID) { p in
@@ -626,7 +626,7 @@ private struct SaveToPipelineSheet: View {
     @ViewBuilder
     private var addStepBody: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Appends a new step with this prompt to the selected pipeline.")
+            Text("Appends a new step with this prompt to the selected action.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -651,11 +651,11 @@ private struct SaveToPipelineSheet: View {
     @ViewBuilder
     private var newPipelineBody: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Creates a new \(scope.displayName) pipeline with this prompt as its first step.")
+            Text("Creates a new \(scope.displayName) action with this prompt as its first step.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            LabeledContent("Pipeline Name") {
+            LabeledContent("Action Name") {
                 TextField("e.g. Transcript Cleanup", text: $newPipelineName)
                     .textFieldStyle(.roundedBorder)
             }
@@ -670,7 +670,7 @@ private struct SaveToPipelineSheet: View {
         switch saveMode {
         case .updateStep:  return "Replaces the selected step's prompt in place."
         case .addStep:     return "Appends a new step; existing steps are unchanged."
-        case .newPipeline: return "Creates a pipeline scoped to \(scope.displayName)."
+        case .newPipeline: return "Creates an action scoped to \(scope.displayName)."
         }
     }
 

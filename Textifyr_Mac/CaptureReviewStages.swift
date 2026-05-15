@@ -159,6 +159,7 @@ struct PipelineRun: Identifiable {
 struct PipelineRunBubble: View {
     @Binding var run: PipelineRun
     let onTransfer: () -> Void
+    var onDelete: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -175,6 +176,14 @@ struct PipelineRunBubble: View {
                     Button("Apply", action: onTransfer)
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
+                    if let onDelete {
+                        Button(action: onDelete) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Remove this result")
+                    }
                 }
             }
 
@@ -183,7 +192,6 @@ struct PipelineRunBubble: View {
                 .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(6)
-                .frame(maxHeight: 120)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         }
@@ -267,6 +275,8 @@ struct CaptureReviewStages: View {
     @State private var runningPipelineTask: Task<Void, Never>? = nil
     @State private var pipelineProgress: DocumentFormattingService.Progress? = nil
     @State private var errorText: String? = nil
+    @State private var freeformPromptText = ""
+    @State private var isRunningFreeform = false
 
     @StateObject private var processInsertionProxy = TextInsertionProxy()
     @StateObject private var insertionProxy = TextInsertionProxy()
@@ -359,12 +369,12 @@ struct CaptureReviewStages: View {
 
                     HStack(spacing: 8) {
                         if sourcePipelines.isEmpty {
-                            Text("No Refine Transcript pipelines yet.")
+                            Text("No Before Combining actions yet.")
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                         } else {
-                            Picker("Run Pipeline", selection: $selectedSourcePipelineID) {
-                                Text("Choose a pipeline…").tag(nil as PersistentIdentifier?)
+                            Picker("Run Action", selection: $selectedSourcePipelineID) {
+                                Text("Choose an action…").tag(nil as PersistentIdentifier?)
                                 ForEach(sourcePipelines) { p in
                                     Text(p.name).tag(p.id as PersistentIdentifier?)
                                 }
@@ -389,20 +399,62 @@ struct CaptureReviewStages: View {
 
                         Spacer()
 
-                        Button { appState.inspectorVisible = true } label: {
+                        Button {
+                            appState.inspectorDefaultScope = .source
+                            appState.inspectorVisible = true
+                        } label: {
                             Image(systemName: "slider.horizontal.3")
                         }
                         .buttonStyle(.borderless)
-                        .help("Manage pipelines")
+                        .help("Manage actions")
+                    }
+
+                    // Refine with AI (chaining prompt input)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "text.bubble.badge.plus")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("Refine with AI")
+                                .font(.caption.bold())
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("Chains — each prompt builds on the last")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        HStack(alignment: .top, spacing: 8) {
+                            TextField("Type an instruction…", text: $freeformPromptText, axis: .vertical)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption)
+                                .lineLimit(1...3)
+                                .disabled(isRunningFreeform)
+                            if isRunningFreeform {
+                                ProgressView().controlSize(.small).padding(.top, 6)
+                            } else {
+                                Button("Send") { Task { await runFreeformPrompt() } }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .padding(.top, 3)
+                                    .disabled(freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || currentText.isEmpty)
+                            }
+                        }
                     }
 
                     if !pipelineRuns.isEmpty {
                         VStack(spacing: 8) {
                             ForEach($pipelineRuns) { $run in
-                                PipelineRunBubble(run: $run) {
-                                    currentText = run.result
-                                    run.isTransferred = true
-                                }
+                                PipelineRunBubble(
+                                    run: $run,
+                                    onTransfer: {
+                                        currentText = run.result
+                                        run.isTransferred = true
+                                    },
+                                    onDelete: run.pipelineName == "Refine with AI" && !run.isTransferred ? {
+                                        pipelineRuns.removeAll { $0.id == run.id }
+                                    } : nil
+                                )
                                 .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
                         }
@@ -567,6 +619,7 @@ struct CaptureReviewStages: View {
         guard let pipeline = sourcePipelines.first(where: { $0.id == selectedSourcePipelineID }),
               !currentText.isEmpty else { return }
         runningPipelineTask?.cancel()
+        pipeline.usageCount += 1
         isRunningPipeline = true
         errorText = nil
         let textToProcess = currentText
@@ -581,12 +634,35 @@ struct CaptureReviewStages: View {
                 }
             } catch {
                 if !Task.isCancelled {
-                    errorText = "Pipeline failed: \(error.localizedDescription)"
+                    errorText = "Action failed: \(error.localizedDescription)"
                 }
             }
             isRunningPipeline = false
             pipelineProgress = nil
             runningPipelineTask = nil
         }
+    }
+
+    private func runFreeformPrompt() async {
+        let prompt = freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, !currentText.isEmpty else { return }
+        isRunningFreeform = true
+        errorText = nil
+        // Chain from the last "Refine with AI" result; fall back to the transcript
+        let chainInput = pipelineRuns.last(where: { $0.pipelineName == "Refine with AI" })?.result ?? currentText
+        do {
+            let aiService = SessionAIService()
+            let result = try await aiService.format(
+                chunk: "Here is the text:\n\n\(chainInput)\n\n---\n\nInstruction: \(prompt)",
+                systemPrompt: "You are a helpful assistant editing a text transcript. Follow the user's instruction carefully and return only the result, with no preamble."
+            )
+            if !result.isEmpty {
+                pipelineRuns.append(PipelineRun(pipelineName: "Refine with AI", result: result))
+                freeformPromptText = ""
+            }
+        } catch {
+            errorText = "AI prompt failed: \(error.localizedDescription)"
+        }
+        isRunningFreeform = false
     }
 }

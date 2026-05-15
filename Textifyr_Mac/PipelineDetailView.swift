@@ -14,11 +14,11 @@ struct PipelineDetailView: View {
     private var scopeExplanation: String {
         switch viewModel.pipeline.scope {
         case .postCapture:
-            return "Auto Cleanup — runs automatically after text is acquired from a source."
+            return "After Capture — runs automatically after text is acquired from a source."
         case .source:
-            return "Refine Transcript — each step processes one session's transcript."
+            return "Before Combining — each step processes one session's transcript."
         case .output:
-            return "Format Document — each step processes all combined source text."
+            return "Final Document — each step processes all combined source text."
         }
     }
 
@@ -36,7 +36,7 @@ struct PipelineDetailView: View {
             VStack(alignment: .leading, spacing: 8) {
                 // Row 1: pipeline name
                 HStack(spacing: 8) {
-                    TextField("Pipeline name", text: $viewModel.pipelineName)
+                    TextField("Action name", text: $viewModel.pipelineName)
                         .font(.title2.bold())
                         .textFieldStyle(.plain)
                         .disabled(isBuiltIn)
@@ -89,7 +89,7 @@ struct PipelineDetailView: View {
                     .foregroundStyle(.secondary)
 
                 if isBuiltIn {
-                    Label("Built-in pipelines cannot be edited. Duplicate to customise.", systemImage: "lock.fill")
+                    Label("Built-in actions cannot be edited. Duplicate to customise.", systemImage: "lock.fill")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -110,7 +110,7 @@ struct PipelineDetailView: View {
                     "No Steps",
                     systemImage: "list.bullet",
                     description: Text(isBuiltIn
-                        ? "Duplicate this pipeline to add steps."
+                        ? "Duplicate this action to add steps."
                         : "Tap + to add a step, or use Load Template… to start from a preset.")
                 )
                 .frame(maxHeight: .infinity)

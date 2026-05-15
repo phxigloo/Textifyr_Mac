@@ -156,7 +156,7 @@ struct RTFEditorInputView: View {
     @ViewBuilder private var pipelinePickerCard: some View {
         if !postCapturePipelines.isEmpty {
             VStack(spacing: 0) {
-                LabeledContent("Auto Cleanup") {
+                LabeledContent("After Capture") {
                     Picker("", selection: $selectedPostCapturePipelineID) {
                         Text("None").tag(nil as PersistentIdentifier?)
                         ForEach(postCapturePipelines) { p in
@@ -202,6 +202,7 @@ struct RTFEditorInputView: View {
         if let pipeline = postCapturePipelines.first(where: { $0.id == selectedPostCapturePipelineID }) {
             isRunningPostCapture = true
             postCaptureError = nil
+            pipeline.usageCount += 1
             postCaptureTask = Task { @MainActor in
                 do {
                     let result = try await DocumentFormattingService().formatToText(
@@ -210,7 +211,7 @@ struct RTFEditorInputView: View {
                     if !Task.isCancelled { capturedText = result }
                 } catch {
                     if !Task.isCancelled {
-                        postCaptureError = "Auto Cleanup failed: \(error.localizedDescription)"
+                        postCaptureError = "After Capture failed: \(error.localizedDescription)"
                     }
                 }
                 isRunningPostCapture = false

@@ -27,7 +27,7 @@ struct PipelineInspectorView: View {
             Divider()
             stepsArea
         }
-        .confirmationDialog("Delete Pipeline", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+        .confirmationDialog("Delete Action", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
                 if let id = selectedPipelineID,
                    let pipeline = allPipelines.first(where: { $0.id == id }) {
@@ -39,17 +39,29 @@ struct PipelineInspectorView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            let name = allPipelines.first(where: { $0.id == selectedPipelineID })?.name ?? "this pipeline"
+            let name = allPipelines.first(where: { $0.id == selectedPipelineID })?.name ?? "this action"
             Text("Delete \"\(name)\"? This cannot be undone.")
         }
         .onDisappear { commitAndClearVM() }
+        .onAppear {
+            if let scope = appState.inspectorDefaultScope {
+                selectedScope = scope
+                appState.inspectorDefaultScope = nil
+            }
+        }
+        .onChange(of: appState.inspectorDefaultScope) { _, scope in
+            if let scope {
+                selectedScope = scope
+                appState.inspectorDefaultScope = nil
+            }
+        }
     }
 
     // MARK: - Header
 
     private var inspectorHeader: some View {
         HStack {
-            Text("Pipelines")
+            Text("AI Actions")
                 .font(.headline)
             Spacer()
             Button {
@@ -88,7 +100,7 @@ struct PipelineInspectorView: View {
 
     private var pipelineList: some View {
         VStack(spacing: 0) {
-            List(filteredPipelines, id: \.id, selection: Binding(
+            List(selection: Binding(
                 get: { selectedPipelineID },
                 set: { newID in
                     guard newID != selectedPipelineID else { return }
@@ -96,24 +108,36 @@ struct PipelineInspectorView: View {
                     selectedPipelineID = newID
                     loadVM(for: newID)
                 }
-            )) { pipeline in
-                HStack {
-                    Text(pipeline.name)
-                        .font(.callout)
-                        .lineLimit(1)
-                    Spacer()
-                    if pipeline.isBuiltIn {
-                        Image(systemName: "lock.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+            )) {
+                ForEach(filteredPipelines, id: \.id) { pipeline in
+                    HStack {
+                        Text(pipeline.name)
+                            .font(.callout)
+                            .lineLimit(1)
+                        Spacer()
+                        if pipeline.isBuiltIn {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
-                }
-                .tag(pipeline.id)
-                .contextMenu {
-                    if !pipeline.isBuiltIn {
-                        Button("Delete", role: .destructive) {
-                            selectedPipelineID = pipeline.id
-                            showDeleteConfirmation = true
+                    .tag(pipeline.id)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        if !pipeline.isBuiltIn {
+                            Button(role: .destructive) {
+                                selectedPipelineID = pipeline.id
+                                showDeleteConfirmation = true
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                    }
+                    .contextMenu {
+                        if !pipeline.isBuiltIn {
+                            Button("Delete", role: .destructive) {
+                                selectedPipelineID = pipeline.id
+                                showDeleteConfirmation = true
+                            }
                         }
                     }
                 }
@@ -131,7 +155,7 @@ struct PipelineInspectorView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .help("New pipeline")
+                .help("New action")
 
                 Button {
                     showDeleteConfirmation = true
@@ -146,7 +170,7 @@ struct PipelineInspectorView: View {
                     else { return true }
                     return p.isBuiltIn
                 }())
-                .help("Delete selected pipeline")
+                .help("Delete selected action")
 
                 Spacer()
             }
@@ -161,44 +185,14 @@ struct PipelineInspectorView: View {
     @ViewBuilder
     private var stepsArea: some View {
         if let vm = currentVM {
-            VStack(spacing: 0) {
-                HStack {
-                    Text(vm.pipeline.name)
-                        .font(.subheadline.bold())
-                        .lineLimit(1)
-                    Spacer()
-                    if !vm.pipeline.isBuiltIn {
-                        Button {
-                            vm.addStep()
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Add step")
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(.bar)
-
-                Divider()
-
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(vm.steps) { step in
-                            PipelineStepRow(viewModel: vm, step: step, isLocked: vm.pipeline.isBuiltIn)
-                        }
-                    }
-                    .padding(8)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            InspectorStepsView(vm: vm)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "wand.and.sparkles")
                     .font(.system(size: 28))
                     .foregroundStyle(.tertiary)
-                Text("Select a pipeline to edit its steps")
+                Text("Select an action to edit its steps")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -224,7 +218,7 @@ struct PipelineInspectorView: View {
     }
 
     private func addPipeline() {
-        let p = FormattingPipeline(name: "New Pipeline")
+        let p = FormattingPipeline(name: "New Action")
         p.scope = selectedScope
         modelContext.insert(p)
         try? modelContext.save()
@@ -234,10 +228,76 @@ struct PipelineInspectorView: View {
     }
 
     private func scopeLabel(_ scope: PipelineScope) -> String {
-        switch scope {
-        case .postCapture: return "Auto"
-        case .source:      return "Source"
-        case .output:      return "Output"
+        scope.displayName
+    }
+}
+
+// MARK: - Steps sub-view (needs @ObservedObject for name editing)
+
+private struct InspectorStepsView: View {
+    @ObservedObject var vm: PipelineEditorViewModel
+    @FocusState private var nameFieldFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                if !vm.pipeline.isBuiltIn {
+                    TextField("Action name", text: $vm.pipelineName)
+                        .font(.subheadline.bold())
+                        .textFieldStyle(.plain)
+                        .focused($nameFieldFocused)
+                        .onSubmit { vm.saveName() }
+                        .onChange(of: vm.pipelineName) { _, _ in vm.saveName() }
+                } else {
+                    Text(vm.pipeline.name)
+                        .font(.subheadline.bold())
+                        .lineLimit(1)
+                }
+                Spacer()
+                if !vm.pipeline.isBuiltIn {
+                    Button { vm.addStep() } label: { Image(systemName: "plus") }
+                        .buttonStyle(.borderless)
+                        .help("Add step")
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.bar)
+
+            Divider()
+
+            if vm.steps.isEmpty {
+                VStack(spacing: 6) {
+                    Text(vm.pipeline.isBuiltIn
+                         ? "Duplicate this action to add steps."
+                         : "Tap + to add a step.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
+            } else {
+                List {
+                    ForEach(vm.steps) { step in
+                        PipelineStepRow(viewModel: vm, step: step, isLocked: vm.pipeline.isBuiltIn)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+                    }
+                    .onDelete { offsets in
+                        guard !vm.pipeline.isBuiltIn else { return }
+                        offsets.map { vm.steps[$0] }.forEach { vm.deleteStep($0) }
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .onAppear {
+            if vm.pipelineName == "New Action" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    nameFieldFocused = true
+                }
+            }
         }
     }
 }

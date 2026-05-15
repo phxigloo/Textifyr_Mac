@@ -90,7 +90,7 @@ struct DocumentEditorView: View {
                     .foregroundStyle(appState.inspectorVisible ? Color.accentColor : Color.secondary)
             }
             .buttonStyle(.borderless)
-            .help(appState.inspectorVisible ? "Hide Pipelines Inspector" : "Show Pipelines Inspector")
+            .help(appState.inspectorVisible ? "Hide AI Actions Inspector" : "Show AI Actions Inspector")
             .padding(.trailing, 14)
         }
         .frame(height: 34)

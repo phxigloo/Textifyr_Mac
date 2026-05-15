@@ -28,7 +28,7 @@ struct SettingsView: View {
                 .tag(Tab.stages)
 
             PipelinesLinkTab()
-                .tabItem { Label("Pipelines",       systemImage: "wand.and.sparkles") }
+                .tabItem { Label("AI Actions",      systemImage: "wand.and.sparkles") }
                 .tag(Tab.pipelines)
         }
         .frame(minWidth: 740, minHeight: 520)
@@ -219,8 +219,8 @@ private struct TextProcessingTab: View {
                 }
             }
 
-            Section("Default Output Pipeline") {
-                Picker("New document pipeline", selection: $defaultPipelineID) {
+            Section("Default Final Document Action") {
+                Picker("Default Final Document", selection: $defaultPipelineID) {
                     Text("None").tag("")
                     ForEach(pipelines.filter { $0.scope == .output }) { pipeline in
                         Text(pipeline.name).tag(pipeline.id.uuidString)
@@ -447,10 +447,10 @@ private struct PipelinesLinkTab: View {
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
 
-            Text("Pipeline Editor")
+            Text("Action Editor")
                 .font(.title2.bold())
 
-            Text("Create and manage formatting pipelines in the inspector panel alongside your document.")
+            Text("Create and manage AI actions in the inspector panel alongside your document.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -459,11 +459,11 @@ private struct PipelinesLinkTab: View {
             Button {
                 NotificationCenter.default.post(name: .openPipelineEditorSheet, object: nil)
             } label: {
-                Label("Open Pipeline Inspector", systemImage: "sidebar.right")
+                Label("Open Action Inspector", systemImage: "sidebar.right")
             }
             .buttonStyle(.borderedProminent)
 
-            Text("Also available from Tools → Pipeline Editor  (⇧⌘E)")
+            Text("Also available from Tools → Action Editor  (⇧⌘E)")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

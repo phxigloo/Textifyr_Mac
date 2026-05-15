@@ -90,7 +90,7 @@ struct PipelineStepRow: View {
                             .font(.caption)
                     }
                     .buttonStyle(.borderless)
-                    .help("Pipelines are made of one or more prompts. Use the Prompt Builder to write and test individual prompts before adding them here.")
+                    .help("Actions are made of one or more prompts. Use the Prompt Builder to write and test individual prompts before adding them here.")
 
                     if isImprovingThis {
                         HStack(spacing: 4) {

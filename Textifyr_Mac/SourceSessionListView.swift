@@ -12,6 +12,14 @@ struct SourceSessionListView: View {
 
     @Environment(\.modelContext) private var modelContext
 
+    @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "source" },
+           sort: \FormattingPipeline.name) private var sourceActions: [FormattingPipeline]
+    @State private var showRefineBanner = true
+
+    private var hasUnrefinedSessions: Bool {
+        sessions.contains { !$0.rawText.isEmpty && !$0.hasBeenRefined }
+    }
+
     private var sessions: [SourceSession] {
         (document.sourceSessions ?? []).sorted { $0.sortOrder < $1.sortOrder }
     }
@@ -76,6 +84,10 @@ struct SourceSessionListView: View {
                 }
                 .listStyle(.sidebar)
 
+                if hasUnrefinedSessions && !sourceActions.isEmpty && showRefineBanner {
+                    refineBanner
+                }
+
                 Divider()
 
                 HStack {
@@ -98,6 +110,32 @@ struct SourceSessionListView: View {
                 .background(.bar)
             }
         }
+    }
+
+    // MARK: - Refine banner
+
+    private var refineBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.caption)
+                .foregroundStyle(Color.accentColor)
+            Text("Sources can be refined in the Chat tab before combining.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                withAnimation { showRefineBanner = false }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.07))
+        .transition(.opacity)
     }
 }
 

@@ -32,17 +32,17 @@ struct PipelinePickerView: View {
             Button {
                 onManage?()
             } label: {
-                Label("Manage Pipelines…", systemImage: "slider.horizontal.3")
+                Label("Manage Actions…", systemImage: "slider.horizontal.3")
             }
         } label: {
             Label(
-                viewModel.document.pipeline?.name ?? "Pipeline",
+                viewModel.document.pipeline?.name ?? "Action",
                 systemImage: "wand.and.sparkles"
             )
             .font(.caption)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Select a formatting pipeline")
+        .help("Select a Final Document action")
     }
 }
