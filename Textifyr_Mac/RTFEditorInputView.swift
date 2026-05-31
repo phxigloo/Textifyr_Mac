@@ -68,6 +68,7 @@ struct RTFEditorInputView: View {
                     CaptureReviewStages(
                         originalText: capturedText,
                         initialText: capturedText,
+                        initialRTFData: rtfData,
                         isEditMode: false,
                         reviewStepIndex: $reviewStepIndex,
                         onBack: {
@@ -81,8 +82,15 @@ struct RTFEditorInputView: View {
                             captureVM.reset()
                             closeWizard()
                         },
-                        onAccept: { finalText in
-                            captureVM.saveTextCapture(finalText, captureMethod: .rtfEditor)
+                        onAccept: { finalText, finalRTFData in
+                            if let rtf = finalRTFData {
+                                captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText)
+                            } else {
+                                captureVM.saveTextCapture(finalText, captureMethod: .rtfEditor)
+                            }
+                        },
+                        onAcceptSplit: { parts in
+                            captureVM.saveMultipleTextCaptures(parts, captureMethod: .rtfEditor)
                         }
                     )
                     .transition(stepTransition)

@@ -7,24 +7,30 @@ import TextifyrServices
 
 struct PromptBuilderView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
 
     @Query(sort: \PromptSample.sortOrder) private var allSamples: [PromptSample]
 
     @State private var promptText: String = ""
-    @State private var promptScope: PipelineScope = .source
     @State private var selectedSampleID: UUID? = nil
     @State private var scopeFilter: PipelineScope? = nil
 
     @State private var isRunning = false
     @State private var runTask: Task<Void, Never>? = nil
+    @State private var runProgress: DocumentFormattingService.Progress? = nil
     @State private var testResult: String? = nil
     @State private var testError: String? = nil
+
+    @State private var isImprovingPrompt = false
+    @State private var improveTask: Task<Void, Never>? = nil
+    @State private var improveError: String? = nil
+    @State private var showImprovePopover = false
+    @State private var improveFeedbackText = ""
 
     @State private var showingLoadSheet = false
     @State private var showingSaveSheet = false
 
     private static let draftPromptKey = "promptBuilder.draftText"
-    private static let draftScopeKey  = "promptBuilder.draftScope"
     private let sampleLimit = 30
 
     private var filteredSamples: [PromptSample] {
@@ -38,21 +44,33 @@ struct PromptBuilderView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            promptPanel
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                promptPanel
+                Divider()
+                samplesPanel
+            }
+
             Divider()
-            samplesPanel
+
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.bordered)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(.bar)
         }
         .frame(minWidth: 860, minHeight: 580)
         .onAppear { restoreDraft() }
         .onChange(of: promptText)  { _, t in UserDefaults.standard.set(t, forKey: Self.draftPromptKey) }
-        .onChange(of: promptScope) { _, s in UserDefaults.standard.set(s.rawValue, forKey: Self.draftScopeKey) }
         .onChange(of: scopeFilter) { _, _ in selectedSampleID = nil }
         .sheet(isPresented: $showingLoadSheet) {
             LoadFromStepSheet { loaded in promptText = loaded }
         }
         .sheet(isPresented: $showingSaveSheet) {
-            SaveToPipelineSheet(promptText: promptText, scope: promptScope)
+            SaveToPipelineSheet(promptText: promptText)
         }
     }
 
@@ -72,17 +90,7 @@ struct PromptBuilderView: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    LabeledContent("Action Scope") {
-                        Picker("", selection: $promptScope) {
-                            ForEach(PipelineScope.allCases, id: \.self) { s in
-                                Text(s.displayName).tag(s)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-
+                VStack(alignment: .leading, spacing: 12) {
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: $promptText)
                             .font(.body)
@@ -103,6 +111,65 @@ struct PromptBuilderView: View {
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                     )
+
+                    HStack {
+                        Spacer()
+                        Text("\(promptText.count) / \(AppConstants.maxPromptCharacters) chars")
+                            .font(.caption2)
+                            .foregroundStyle(promptText.count > AppConstants.maxPromptCharacters
+                                ? AnyShapeStyle(.red)
+                                : AnyShapeStyle(.tertiary))
+                    }
+
+                    HStack(spacing: 8) {
+                        if isImprovingPrompt {
+                            ProgressView().controlSize(.mini)
+                            Text("Improving…").font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Cancel") {
+                                improveTask?.cancel()
+                                improveTask = nil
+                                isImprovingPrompt = false
+                            }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                            .foregroundStyle(.secondary)
+                        } else {
+                            if let err = improveError {
+                                Text(err).font(.caption2).foregroundStyle(.red).lineLimit(1)
+                            }
+                            Spacer()
+                            TranslateButton(
+                                helpText: "Insert a translate-to-language prompt into the editor"
+                            ) { lang in
+                                promptText = lang.promptText
+                            }
+                            Button {
+                                showImprovePopover = true
+                            } label: {
+                                Label("Improve with AI", systemImage: "wand.and.sparkles")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .disabled(promptText.isEmpty)
+                            .popover(isPresented: $showImprovePopover, arrowEdge: .bottom) {
+                                ImprovePromptPopover(
+                                    feedbackText: $improveFeedbackText,
+                                    onImprove: {
+                                        let fb = improveFeedbackText
+                                        showImprovePopover = false
+                                        improveFeedbackText = ""
+                                        improvePromptWithAI(feedback: fb)
+                                    },
+                                    onCancel: {
+                                        showImprovePopover = false
+                                        improveFeedbackText = ""
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
                 .padding(16)
             }
@@ -151,11 +218,6 @@ struct PromptBuilderView: View {
                 .labelsHidden()
                 .controlSize(.small)
                 .frame(width: 110)
-
-                Button { addSample() } label: { Image(systemName: "plus") }
-                    .buttonStyle(.borderless)
-                    .disabled(allSamples.count >= sampleLimit)
-                    .help("Add sample (\(sampleLimit) max)")
             }
             .frame(height: 44)
             .padding(.horizontal, 16)
@@ -164,8 +226,12 @@ struct PromptBuilderView: View {
             Divider()
 
             HStack(spacing: 0) {
-                samplesList
-                    .frame(width: 190)
+                VStack(spacing: 0) {
+                    samplesList
+                    Divider()
+                    samplesListControls
+                }
+                .frame(width: 190)
                 Divider()
                 sampleDetailArea
             }
@@ -173,15 +239,55 @@ struct PromptBuilderView: View {
     }
 
     private var samplesList: some View {
-        List(filteredSamples, id: \.id, selection: $selectedSampleID) { sample in
-            SampleRowView(sample: sample)
-                .tag(sample.id)
-                .contextMenu {
-                    Button("Delete", role: .destructive) { deleteSample(sample) }
-                }
+        List(selection: $selectedSampleID) {
+            ForEach(filteredSamples, id: \.id) { sample in
+                SampleRowView(sample: sample)
+                    .tag(sample.id)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            deleteSample(sample)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    .contextMenu {
+                        Button("Delete", role: .destructive) { deleteSample(sample) }
+                    }
+            }
         }
         .listStyle(.sidebar)
         .onChange(of: selectedSampleID) { _, _ in testResult = nil; testError = nil }
+    }
+
+    private var samplesListControls: some View {
+        HStack(spacing: 0) {
+            Button {
+                addSample()
+            } label: {
+                Image(systemName: "plus")
+                    .frame(width: 28, height: 22)
+            }
+            .buttonStyle(.borderless)
+            .disabled(allSamples.count >= sampleLimit)
+            .help("Add sample (\(sampleLimit) max)")
+
+            Divider().frame(height: 14)
+
+            Button {
+                if let s = selectedSample { deleteSample(s) }
+            } label: {
+                Image(systemName: "minus")
+                    .frame(width: 28, height: 22)
+            }
+            .buttonStyle(.borderless)
+            .disabled(selectedSample == nil)
+            .help("Delete selected sample")
+
+            Spacer()
+        }
+        .padding(.horizontal, 2)
+        .frame(height: 28)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     @ViewBuilder
@@ -203,26 +309,11 @@ struct PromptBuilderView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
 
-                // Name + scope row
-                HStack(spacing: 8) {
-                    TextField("Sample name", text: Binding(
-                        get: { sample.name },
-                        set: { sample.name = $0; try? modelContext.save() }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-
-                    Picker("", selection: Binding(
-                        get: { sample.scope },
-                        set: { sample.scope = $0; try? modelContext.save() }
-                    )) {
-                        ForEach(PipelineScope.allCases, id: \.self) { s in
-                            Text(s.displayName).tag(s)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 120)
-                }
+                TextField("Sample name", text: Binding(
+                    get: { sample.name },
+                    set: { sample.name = $0; try? modelContext.save() }
+                ))
+                .textFieldStyle(.roundedBorder)
 
                 Text("Sample Text")
                     .font(.subheadline)
@@ -243,20 +334,32 @@ struct PromptBuilderView: View {
                         .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                 )
 
-                // Run controls
+                HStack {
+                    Spacer()
+                    Text("\(sample.sampleText.count.formatted()) chars")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
                 HStack(spacing: 10) {
                     if isRunning {
                         Button("Cancel") {
                             runTask?.cancel()
                             runTask = nil
                             isRunning = false
+                            runProgress = nil
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        ProgressView().controlSize(.small)
-                        Text("Running…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if let p = runProgress, p.chunkCount > 1 {
+                            PipelineProgressView(progress: p)
+                                .frame(maxWidth: 200)
+                        } else {
+                            ProgressView().controlSize(.small)
+                            Text("Running…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
                         Button {
                             runPrompt(against: sample)
@@ -274,7 +377,6 @@ struct PromptBuilderView: View {
                     Text(err).font(.caption).foregroundStyle(.red)
                 }
 
-                // Result
                 if let result = testResult {
                     Divider()
 
@@ -293,7 +395,7 @@ struct PromptBuilderView: View {
                         .controlSize(.small)
                     }
 
-                    Text(result)
+                    PromptBuilderResultText(result)
                         .font(.body)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -312,7 +414,7 @@ struct PromptBuilderView: View {
         guard allSamples.count < sampleLimit else { return }
         let sample = PromptSample(
             name: "Sample \(allSamples.count + 1)",
-            scope: scopeFilter ?? promptScope,
+            scope: scopeFilter ?? .source,
             sortOrder: allSamples.count
         )
         modelContext.insert(sample)
@@ -329,20 +431,50 @@ struct PromptBuilderView: View {
     private func runPrompt(against sample: PromptSample) {
         testResult = nil
         testError  = nil
+        runProgress = nil
         isRunning  = true
         let prompt     = promptText
         let sampleText = sample.sampleText
         runTask = Task { @MainActor in
             do {
                 let result = try await DocumentFormattingService()
-                    .formatWithPrompt(sourceText: sampleText, systemPrompt: prompt)
+                    .formatWithPrompt(sourceText: sampleText, systemPrompt: prompt) { p in
+                        runProgress = p
+                    }
                 if !Task.isCancelled { testResult = result }
             } catch is CancellationError {
             } catch {
                 if !Task.isCancelled { testError = error.localizedDescription }
             }
             isRunning = false
+            runProgress = nil
             runTask   = nil
+        }
+    }
+
+    private func improvePromptWithAI(feedback: String = "") {
+        guard !promptText.isEmpty else { return }
+        isImprovingPrompt = true
+        improveError = nil
+        let current = promptText
+        let systemPrompt: String
+        let trimmedFeedback = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedFeedback.isEmpty {
+            systemPrompt = "You are an expert prompt engineer. Improve the following AI instruction prompt — make it clearer, more specific, and more effective. Return only the improved prompt text, with no preamble or explanation."
+        } else {
+            systemPrompt = "You are an expert prompt engineer. Improve the following AI instruction prompt based on this feedback: \"\(trimmedFeedback)\". Return only the improved prompt text, with no preamble or explanation."
+        }
+        improveTask = Task { @MainActor in
+            do {
+                let improved = try await DocumentFormattingService()
+                    .formatWithPrompt(sourceText: current, systemPrompt: systemPrompt)
+                if !Task.isCancelled { promptText = improved }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { improveError = error.localizedDescription }
+            }
+            isImprovingPrompt = false
+            improveTask = nil
         }
     }
 
@@ -350,10 +482,46 @@ struct PromptBuilderView: View {
         if let t = UserDefaults.standard.string(forKey: Self.draftPromptKey) {
             promptText = t
         }
-        if let r = UserDefaults.standard.string(forKey: Self.draftScopeKey),
-           let s = PipelineScope(rawValue: r) {
-            promptScope = s
+    }
+}
+
+// MARK: - Improve prompt popover
+
+private struct ImprovePromptPopover: View {
+    @Binding var feedbackText: String
+    let onImprove: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Improve Prompt")
+                .font(.headline)
+
+            Text("Describe what you'd like to change, or leave blank for a general improvement.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $feedbackText)
+                .frame(height: 80)
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
+                )
+
+            HStack {
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.bordered)
+                Spacer()
+                Button("Improve with AI", action: onImprove)
+                    .buttonStyle(.borderedProminent)
+            }
         }
+        .padding(16)
+        .frame(width: 320)
     }
 }
 
@@ -382,11 +550,16 @@ private struct LoadFromStepSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \FormattingPipeline.name) private var allPipelines: [FormattingPipeline]
 
+    @State private var scopeFilter: PipelineScope? = nil
     @State private var selectedPipelineID: UUID? = nil
     @State private var selectedStepID: UUID? = nil
 
+    private var filteredPipelines: [FormattingPipeline] {
+        guard let f = scopeFilter else { return allPipelines }
+        return allPipelines.filter { $0.scope == f }
+    }
     private var selectedPipeline: FormattingPipeline? {
-        allPipelines.first { $0.id == selectedPipelineID }
+        filteredPipelines.first { $0.id == selectedPipelineID }
     }
     private var steps: [PipelineStep] { selectedPipeline?.sortedSteps ?? [] }
     private var selectedStep: PipelineStep? {
@@ -395,9 +568,20 @@ private struct LoadFromStepSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 10) {
                 Text("Load from Step").font(.headline)
                 Spacer()
+                Picker("", selection: $scopeFilter) {
+                    Text("All Scopes").tag(nil as PipelineScope?)
+                    ForEach(PipelineScope.allCases, id: \.self) { s in
+                        Text(s.displayName).tag(s as PipelineScope?)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 110)
+                .onChange(of: scopeFilter) { _, _ in selectedPipelineID = nil; selectedStepID = nil }
                 Button("Cancel") { dismiss() }.buttonStyle(.bordered)
             }
             .padding(.horizontal, 20)
@@ -407,7 +591,6 @@ private struct LoadFromStepSheet: View {
             Divider()
 
             HStack(spacing: 0) {
-                // Pipelines
                 VStack(alignment: .leading, spacing: 0) {
                     Text("ACTION")
                         .font(.caption.bold())
@@ -415,7 +598,7 @@ private struct LoadFromStepSheet: View {
                         .padding(.horizontal, 12)
                         .padding(.top, 10)
                         .padding(.bottom, 4)
-                    List(allPipelines, id: \.id, selection: $selectedPipelineID) { p in
+                    List(filteredPipelines, id: \.id, selection: $selectedPipelineID) { p in
                         Text(p.name).font(.callout).tag(p.id)
                     }
                     .listStyle(.sidebar)
@@ -425,7 +608,6 @@ private struct LoadFromStepSheet: View {
 
                 Divider()
 
-                // Steps
                 VStack(alignment: .leading, spacing: 0) {
                     Text("STEP")
                         .font(.caption.bold())
@@ -454,7 +636,6 @@ private struct LoadFromStepSheet: View {
 
                 Divider()
 
-                // Prompt preview
                 VStack(alignment: .leading, spacing: 8) {
                     Text("PREVIEW")
                         .font(.caption.bold())
@@ -498,7 +679,6 @@ private struct LoadFromStepSheet: View {
 
 private struct SaveToPipelineSheet: View {
     let promptText: String
-    let scope: PipelineScope
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \FormattingPipeline.name) private var allPipelines: [FormattingPipeline]
@@ -509,6 +689,7 @@ private struct SaveToPipelineSheet: View {
         case newPipeline  = "New Action"
     }
 
+    @State private var scope: PipelineScope = .source
     @State private var saveMode: SaveMode = .addStep
     @State private var selectedPipelineID: UUID? = nil
     @State private var selectedStepID: UUID? = nil
@@ -548,6 +729,18 @@ private struct SaveToPipelineSheet: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 16) {
+                LabeledContent("Scope") {
+                    Picker("", selection: $scope) {
+                        ForEach(PipelineScope.allCases, id: \.self) { s in
+                            Text(s.displayName).tag(s)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 130)
+                    .onChange(of: scope) { _, _ in selectedPipelineID = nil; selectedStepID = nil }
+                }
+
                 Picker("", selection: $saveMode) {
                     ForEach(SaveMode.allCases, id: \.self) { m in
                         Text(m.rawValue).tag(m)
@@ -586,7 +779,7 @@ private struct SaveToPipelineSheet: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
-        .frame(width: 520, height: 430)
+        .frame(width: 520, height: 460)
     }
 
     @ViewBuilder
@@ -607,7 +800,7 @@ private struct SaveToPipelineSheet: View {
                     .listStyle(.bordered)
                     .onChange(of: selectedPipelineID) { _, _ in selectedStepID = nil }
                 }
-                .frame(width: 200, height: 180)
+                .frame(width: 200, height: 160)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Step")
@@ -618,7 +811,7 @@ private struct SaveToPipelineSheet: View {
                     }
                     .listStyle(.bordered)
                 }
-                .frame(width: 220, height: 180)
+                .frame(width: 220, height: 160)
             }
         }
     }
@@ -638,7 +831,7 @@ private struct SaveToPipelineSheet: View {
                     Text(p.name).tag(p.id)
                 }
                 .listStyle(.bordered)
-                .frame(height: 150)
+                .frame(height: 130)
             }
 
             LabeledContent("Step Name") {
@@ -709,6 +902,22 @@ private struct SaveToPipelineSheet: View {
             try? modelContext.save()
         }
         dismiss()
+    }
+}
+
+// MARK: - Markdown-aware result text
+
+private struct PromptBuilderResultText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    private var attributedString: AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+
+    var body: some View {
+        Text(attributedString)
     }
 }
 

@@ -147,12 +147,29 @@ struct DictationAwareTextEditor: NSViewRepresentable {
     }
 }
 
+// MARK: - Markdown-aware text view
+
+struct MarkdownOrPlainText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    private var attributedString: AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+
+    var body: some View {
+        Text(attributedString)
+    }
+}
+
 // MARK: - Pipeline run record
 
 struct PipelineRun: Identifiable {
     let id = UUID()
     let pipelineName: String
-    let result: String
+    let result: String       // plain text for AI chaining
+    var resultRTF: Data?     // RTF for the editable bubble
     var isTransferred = false
 }
 
@@ -191,7 +208,7 @@ struct PipelineRunBubble: View {
                 let lineCount = run.result.components(separatedBy: "\n").count
                 if lineCount > 25 {
                     ScrollView {
-                        Text(run.result)
+                        MarkdownOrPlainText(run.result)
                             .font(.caption)
                             .foregroundStyle(.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -200,7 +217,7 @@ struct PipelineRunBubble: View {
                     }
                     .frame(maxHeight: 420)
                 } else {
-                    Text(run.result)
+                    MarkdownOrPlainText(run.result)
                         .font(.caption)
                         .foregroundStyle(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -257,34 +274,35 @@ struct PipelineProgressView: View {
     }
 }
 
-// MARK: - Shared wizard stages 2 & 3
+// MARK: - Shared wizard stages (single RTF step)
 
-/// Stages 2 (Refine Transcript) and 3 (Final Edit) shared across all input wizards.
+/// Single review stage shared across all input wizards.
 /// The outer wizard owns the header/step-indicator; this view owns only the body content.
-/// - `reviewStepIndex`: updated by this view as the user moves between process (1) and polish (2).
-/// - `onBack`: called when the user taps Back on the process step; nil in edit-mode contexts.
+/// - `reviewStepIndex`: kept for backward compat; always set to 1 on appear.
+/// - `onBack`: called when the user taps Back; nil in edit-mode contexts.
 /// - `onCancel`: outer wizard cleans up any in-progress capture and dismisses.
-/// - `onAccept`: outer wizard receives the final text, saves it to the session, and dismisses.
+/// - `onAccept`: outer wizard receives the final plain text + optional RTF data, saves to the session, and dismisses.
 struct CaptureReviewStages: View {
     let originalText: String
+    private let initialText: String
+    private let initialRTFData: Data?
     let isEditMode: Bool
     let showAutoStoppedBanner: Bool
     @Binding var reviewStepIndex: Int
     var onBack: (() -> Void)?
     let onCancel: () -> Void
-    let onAccept: (String) -> Void
+    let onAccept: (String, Data?) -> Void
+    var onAcceptSplit: (([String]) -> Void)? = nil
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "source" },
            sort: \FormattingPipeline.name) private var sourcePipelines: [FormattingPipeline]
 
     @EnvironmentObject private var appState: AppState
 
-    private enum Step { case process, polish }
-    @State private var step: Step = .process
-    @State private var stepForward = true
+    @State private var sourceRTFData: Data? = nil
+    @StateObject private var editorFormatState = TextFormatState()
+    @StateObject private var dictation = DictationHolder()
 
-    @State private var currentText: String
-    @State private var finalText: String
     @State private var selectedSourcePipelineID: PersistentIdentifier? = nil
     @State private var pipelineRuns: [PipelineRun] = []
     @State private var isRunningPipeline = false
@@ -294,52 +312,64 @@ struct CaptureReviewStages: View {
     @State private var freeformPromptText = ""
     @State private var isRunningFreeform = false
     @State private var runningFreeformTask: Task<Void, Never>? = nil
+    @State private var freeformProgress: DocumentFormattingService.Progress? = nil
 
-    @StateObject private var processInsertionProxy = TextInsertionProxy()
-    @StateObject private var insertionProxy = TextInsertionProxy()
-    @StateObject private var dictation = DictationHolder()
+    @State private var isTranslating = false
+    @State private var translateTask: Task<Void, Never>? = nil
+    @State private var splitSheetText: String? = nil
+
+    private static let splitThreshold = 50_000
 
     init(
         originalText: String,
         initialText: String,
+        initialRTFData: Data? = nil,
         isEditMode: Bool,
         showAutoStoppedBanner: Bool = false,
         reviewStepIndex: Binding<Int>,
         onBack: (() -> Void)? = nil,
         onCancel: @escaping () -> Void,
-        onAccept: @escaping (String) -> Void
+        onAccept: @escaping (String, Data?) -> Void,
+        onAcceptSplit: (([String]) -> Void)? = nil
     ) {
         self.originalText = originalText
+        self.initialText = initialText
+        self.initialRTFData = initialRTFData
         self.isEditMode = isEditMode
         self.showAutoStoppedBanner = showAutoStoppedBanner
         _reviewStepIndex = reviewStepIndex
         self.onBack = onBack
         self.onCancel = onCancel
         self.onAccept = onAccept
-        _currentText = State(initialValue: initialText)
-        _finalText = State(initialValue: initialText)
+        self.onAcceptSplit = onAcceptSplit
     }
 
     var body: some View {
-        ZStack {
-            switch step {
-            case .process: processView.transition(stepTransition)
-            case .polish:  polishView.transition(stepTransition)
+        reviewView
+            .onAppear { initializeRTF() }
+            .sheet(isPresented: Binding(get: { splitSheetText != nil }, set: { if !$0 { splitSheetText = nil } })) {
+                if let text = splitSheetText, let handler = onAcceptSplit {
+                    SourceSplitSheet(text: text) { parts in
+                        splitSheetText = nil
+                        handler(parts)
+                    } onCancel: {
+                        splitSheetText = nil
+                    }
+                }
             }
-        }
-        .clipped()
     }
 
-    private var stepTransition: AnyTransition {
-        .asymmetric(
-            insertion: .move(edge: stepForward ? .trailing : .leading).combined(with: .opacity),
-            removal:   .move(edge: stepForward ? .leading  : .trailing).combined(with: .opacity)
-        )
+    // MARK: - RTF initialization
+
+    private func initializeRTF() {
+        guard sourceRTFData == nil else { return }
+        sourceRTFData = initialRTFData ?? textToRTF(initialText)
+        reviewStepIndex = 1
     }
 
-    // MARK: - Step 2: Process
+    // MARK: - Review view
 
-    private var processView: some View {
+    private var reviewView: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -356,31 +386,61 @@ struct CaptureReviewStages: View {
                         .transition(.opacity)
                     }
 
+                    // Header row
                     HStack(alignment: .firstTextBaseline) {
-                        Text("Transcript")
+                        Text("Source")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Text("\(currentText.count.formatted()) chars")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                        Button { currentText = originalText } label: {
-                            Label("Revert to Original", systemImage: "arrow.uturn.backward")
+                        if let data = sourceRTFData,
+                           let attr = NSAttributedString(rtf: data, documentAttributes: nil) {
+                            Text("\(attr.string.count.formatted()) chars")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.tertiary)
+                        }
+                        Button {
+                            sourceRTFData = textToRTF(originalText)
+                        } label: {
+                            Label("Revert", systemImage: "arrow.uturn.backward")
                         }
                         .buttonStyle(.borderless)
                         .font(.caption)
-                        .foregroundStyle(currentText == originalText
-                            ? AnyShapeStyle(Color.secondary)
-                            : AnyShapeStyle(Color.accentColor))
-                        .disabled(currentText == originalText)
-                        .animation(.easeInOut(duration: 0.15), value: currentText == originalText)
+                        .foregroundStyle(.secondary)
                     }
 
-                    DictationAwareTextEditor(text: $currentText, proxy: processInsertionProxy)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .frame(minHeight: 160, maxHeight: 200)
+                    // RTF editor block
+                    VStack(spacing: 0) {
+                        FormattingToolbar(fmt: editorFormatState)
+                        Divider()
+                        RichTextEditor(rtfData: $sourceRTFData, isEditable: true, formatState: editorFormatState)
+                            .frame(minHeight: 240)
+                            .onAppear { connectDictation() }
+                    }
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
-                    dictationControls(for: .process)
+                    // Dictation controls
+                    dictationControlsView
+
+                    // Split warning
+                    if plainTextForAI.count > Self.splitThreshold, onAcceptSplit != nil {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                            Text("Large text (~\(estimatedChunks(for: plainTextForAI)) chunks). For better AI results, consider splitting into multiple sources before running AI.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Split Now…") { splitSheetText = plainTextForAI }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.orange.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.25), lineWidth: 0.5))
+                    }
 
                     Divider()
 
@@ -447,7 +507,7 @@ struct CaptureReviewStages: View {
                                         Button("Run") { runSourcePipeline() }
                                             .buttonStyle(.borderedProminent)
                                             .controlSize(.small)
-                                            .disabled(selectedSourcePipelineID == nil || currentText.isEmpty)
+                                            .disabled(selectedSourcePipelineID == nil || plainTextForAI.isEmpty)
                                     }
                                 }
                             }
@@ -486,9 +546,13 @@ struct CaptureReviewStages: View {
                                     .lineLimit(2...4)
                                     .disabled(isRunningFreeform)
 
-                                VStack(spacing: 4) {
+                                VStack(alignment: .leading, spacing: 4) {
                                     if isRunningFreeform {
-                                        ProgressView().controlSize(.small)
+                                        if let p = freeformProgress, p.chunkCount > 1 {
+                                            PipelineProgressView(progress: p)
+                                        } else {
+                                            ProgressView().controlSize(.small)
+                                        }
                                         Button("Cancel") {
                                             runningFreeformTask?.cancel()
                                             runningFreeformTask = nil
@@ -501,10 +565,50 @@ struct CaptureReviewStages: View {
                                         }
                                         .buttonStyle(.borderedProminent)
                                         .controlSize(.small)
-                                        .disabled(freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || currentText.isEmpty)
+                                        .disabled(freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || plainTextForAI.isEmpty)
                                     }
                                 }
                                 .padding(.top, 2)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+
+                        HStack {
+                            VStack { Divider() }
+                            Text("or")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize()
+                            VStack { Divider() }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+
+                        // Translate row
+                        HStack(spacing: 8) {
+                            Text("Translate")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .textCase(.uppercase)
+                            Spacer()
+                            if isTranslating {
+                                ProgressView().controlSize(.small)
+                                Text("Translating…").font(.caption).foregroundStyle(.secondary)
+                                Button("Cancel") {
+                                    translateTask?.cancel()
+                                    translateTask = nil
+                                    isTranslating = false
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            } else {
+                                TranslateButton(
+                                    helpText: "Translate the captured text using AI"
+                                ) { lang in
+                                    translate(to: lang)
+                                }
+                                .disabled(plainTextForAI.isEmpty)
                             }
                         }
                         .padding(.horizontal, 12)
@@ -520,7 +624,7 @@ struct CaptureReviewStages: View {
                                 PipelineRunBubble(
                                     run: $run,
                                     onTransfer: {
-                                        currentText = run.result
+                                        sourceRTFData = run.resultRTF
                                         run.isTransferred = true
                                     },
                                     onDelete: run.pipelineName == "Refine with AI" && !run.isTransferred ? {
@@ -545,6 +649,7 @@ struct CaptureReviewStages: View {
             HStack {
                 Button("Cancel") {
                     runningPipelineTask?.cancel()
+                    translateTask?.cancel()
                     stopDictationIfActive()
                     onCancel()
                 }
@@ -562,76 +667,9 @@ struct CaptureReviewStages: View {
 
                 Spacer()
 
-                Button("Continue") {
-                    stopDictationIfActive()
-                    finalText = currentText
-                    reviewStepIndex = 2
-                    stepForward = true
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { step = .polish }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(currentText.isEmpty)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-        }
-    }
-
-    // MARK: - Step 3: Final Edit
-
-    private var polishView: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Final Edit")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("\(finalText.count.formatted()) chars")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    DictationAwareTextEditor(text: $finalText, proxy: insertionProxy)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .frame(minHeight: 240)
-
-                    dictationControls(for: .polish)
-
-                    if let err = errorText {
-                        Text(err).font(.caption).foregroundStyle(.red)
-                    }
-                }
-                .padding(20)
-            }
-
-            Divider()
-
-            HStack {
-                Button("Cancel") {
-                    stopDictationIfActive()
-                    onCancel()
-                }
-                .buttonStyle(.bordered)
-
-                Button("Back") {
-                    stopDictationIfActive()
-                    reviewStepIndex = 1
-                    stepForward = false
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { step = .process }
-                }
-                .buttonStyle(.bordered)
-
-                Spacer()
-
-                Button("Accept") {
-                    stopDictationIfActive()
-                    onAccept(finalText)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(finalText.isEmpty)
+                Button("Accept") { accept() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(sourceRTFData == nil && plainTextForAI.isEmpty)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -640,7 +678,23 @@ struct CaptureReviewStages: View {
 
     // MARK: - Dictation
 
-    private func dictationControls(for step: Step) -> some View {
+    private func connectDictation() {
+        guard let tv = editorFormatState.textView else { return }
+        final class DS { var start: Int? = nil; var len = 0 }
+        let s = DS()
+        let proxy = TextInsertionProxy()
+        proxy.insertAtCursor = { [weak tv] t in tv?.insertText(t, replacementRange: tv?.selectedRange() ?? NSRange()) }
+        proxy.startDictation = { [weak tv, s] in s.start = tv?.selectedRange().location; s.len = 0 }
+        proxy.updateDictation = { [weak tv, s] t in
+            guard let tv, let start = s.start else { return }
+            tv.insertText(t, replacementRange: NSRange(location: start, length: s.len))
+            s.len = (t as NSString).length
+        }
+        proxy.endDictation = { [s] in s.start = nil; s.len = 0 }
+        dictation.proxy = proxy
+    }
+
+    private var dictationControlsView: some View {
         VStack(alignment: .leading, spacing: 6) {
             if dictation.isActive {
                 HStack(spacing: 10) {
@@ -660,7 +714,14 @@ struct CaptureReviewStages: View {
                         .controlSize(.small)
                 }
             } else {
-                Button { startDictation(for: step) } label: {
+                Button {
+                    errorText = nil
+                    connectDictation()
+                    Task {
+                        do { try await dictation.start() }
+                        catch { errorText = "Dictation failed: \(error.localizedDescription)" }
+                    }
+                } label: {
                     Label("Dictate", systemImage: "mic.badge.plus").font(.caption)
                 }
                 .buttonStyle(.bordered)
@@ -671,30 +732,38 @@ struct CaptureReviewStages: View {
         .animation(.easeInOut(duration: 0.2), value: dictation.isActive)
     }
 
-    private func startDictation(for step: Step) {
-        errorText = nil
-        dictation.proxy = step == .process ? processInsertionProxy : insertionProxy
-        Task {
-            do { try await dictation.start() }
-            catch { errorText = "Dictation failed: \(error.localizedDescription)" }
-        }
-    }
-
     private func stopDictationIfActive() {
         guard dictation.isActive else { return }
         dictation.cancel()
     }
 
+    // MARK: - Plain text extraction
+
+    private var plainTextForAI: String {
+        guard let data = sourceRTFData,
+              let attr = NSAttributedString(rtf: data, documentAttributes: nil)
+        else { return "" }
+        return attr.string.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - Accept
+
+    private func accept() {
+        stopDictationIfActive()
+        let plain = plainTextForAI
+        onAccept(plain.isEmpty ? "" : plain, sourceRTFData)
+    }
+
     // MARK: - Pipeline
 
     private func runSourcePipeline() {
+        let textToProcess = plainTextForAI
         guard let pipeline = sourcePipelines.first(where: { $0.id == selectedSourcePipelineID }),
-              !currentText.isEmpty else { return }
+              !textToProcess.isEmpty else { return }
         runningPipelineTask?.cancel()
         pipeline.usageCount += 1
         isRunningPipeline = true
         errorText = nil
-        let textToProcess = currentText
         let pipelineName = pipeline.name
         runningPipelineTask = Task { @MainActor in
             do {
@@ -702,7 +771,7 @@ struct CaptureReviewStages: View {
                     sourceText: textToProcess, pipeline: pipeline,
                     onProgress: { [self] p in pipelineProgress = p })
                 if !Task.isCancelled {
-                    pipelineRuns.append(PipelineRun(pipelineName: pipelineName, result: result))
+                    pipelineRuns.append(PipelineRun(pipelineName: pipelineName, result: result, resultRTF: textToRTF(result)))
                 }
             } catch {
                 if !Task.isCancelled {
@@ -715,28 +784,360 @@ struct CaptureReviewStages: View {
         }
     }
 
+    private func translate(to language: TranslationLanguage) {
+        let source = plainTextForAI
+        guard !source.isEmpty else { return }
+        isTranslating = true
+        errorText = nil
+        translateTask = Task { @MainActor in
+            do {
+                let result = try await DocumentFormattingService()
+                    .formatWithPrompt(sourceText: source, systemPrompt: language.promptText)
+                if !Task.isCancelled {
+                    pipelineRuns.append(PipelineRun(pipelineName: "Translate to \(language.name)", result: result, resultRTF: textToRTF(result)))
+                }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { errorText = "Translation failed: \(error.localizedDescription)" }
+            }
+            isTranslating = false
+            translateTask = nil
+        }
+    }
+
     private func runFreeformPrompt() async {
         let prompt = freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, !currentText.isEmpty else { return }
+        let currentPlain = plainTextForAI
+        guard !prompt.isEmpty, !currentPlain.isEmpty else { return }
         isRunningFreeform = true
+        freeformProgress = nil
         errorText = nil
-        let chainInput = pipelineRuns.last(where: { $0.pipelineName == "Refine with AI" })?.result ?? currentText
+        let chainInput = pipelineRuns.last(where: { $0.pipelineName == "Refine with AI" })?.result ?? currentPlain
+        let systemPrompt = "You are a helpful assistant editing a text transcript. Follow this instruction exactly and return only the modified text, with no preamble: \(prompt)"
         do {
-            let aiService = SessionAIService()
-            let result = try await aiService.format(
-                chunk: "Here is the text:\n\n\(chainInput)\n\n---\n\nInstruction: \(prompt)",
-                systemPrompt: "You are a helpful assistant editing a text transcript. Follow the user's instruction carefully and return only the result, with no preamble."
-            )
-            if !result.isEmpty {
-                pipelineRuns.append(PipelineRun(pipelineName: "Refine with AI", result: result))
+            let result = try await DocumentFormattingService()
+                .formatWithPrompt(sourceText: chainInput, systemPrompt: systemPrompt) { p in
+                    freeformProgress = p
+                }
+            if !result.isEmpty && !Task.isCancelled {
+                pipelineRuns.append(PipelineRun(pipelineName: "Refine with AI", result: result, resultRTF: textToRTF(result)))
                 freeformPromptText = ""
             }
         } catch is CancellationError {
             // user cancelled — no error shown
         } catch {
-            errorText = "AI prompt failed: \(error.localizedDescription)"
+            if !Task.isCancelled { errorText = "AI prompt failed: \(error.localizedDescription)" }
         }
         isRunningFreeform = false
+        freeformProgress = nil
         runningFreeformTask = nil
+    }
+
+    private func estimatedChunks(for text: String) -> Int {
+        let chunkSize = ChunkingService.adaptiveChunkSize(for: 400)
+        guard chunkSize > 0, !text.isEmpty else { return 1 }
+        return max(1, Int(ceil(Double(text.count) / Double(chunkSize))))
+    }
+
+    // MARK: - Markdown detection + RTF conversion
+
+    private func looksLikeMarkdown(_ text: String) -> Bool {
+        var score = 0
+        for line in text.components(separatedBy: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("# ") || t.hasPrefix("## ") || t.hasPrefix("### ") { score += 2 }
+            if t.hasPrefix("- ") || t.hasPrefix("* ") || t.hasPrefix("+ ") { score += 1 }
+            if t.hasPrefix("> ") || t.hasPrefix("```") { score += 1 }
+            if MarkdownRenderer.isHRule(t) { score += 1 }
+        }
+        let boldCount = text.components(separatedBy: "**").count / 2
+        let doubleUnderCount = text.components(separatedBy: "__").count / 2
+        score += min(boldCount + doubleUnderCount, 4)
+        return score >= 2
+    }
+
+    // Converts text to RTF via Markdown→HTML→NSAttributedString when markdown
+    // is detected; falls back to basic NSAttributedString for plain text.
+    private func textToRTF(_ text: String) -> Data? {
+        #if canImport(AppKit)
+        if looksLikeMarkdown(text) {
+            if let data = MarkdownRenderer.toRTF(text) { return data }
+        }
+        let ns = NSAttributedString(string: text,
+            attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)])
+        return ns.rtf(from: NSRange(location: 0, length: ns.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+        #else
+        return nil
+        #endif
+    }
+}
+
+// MARK: - Source split sheet
+
+struct SourceSplitSheet: View {
+    let text: String
+    let onConfirm: ([String]) -> Void
+    let onCancel: () -> Void
+
+    private var paragraphs: [String] {
+        text.components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var isTextWall: Bool { paragraphs.count < 3 }
+
+    @State private var splitAfter: Set<Int> = []
+    @State private var wallPartCount: Int = 2
+    @State private var hoveredDivider: Int? = nil
+
+    private var paragraphParts: [String] {
+        var result: [String] = []
+        var current: [String] = []
+        for (i, para) in paragraphs.enumerated() {
+            current.append(para)
+            if splitAfter.contains(i) {
+                result.append(current.joined(separator: "\n\n"))
+                current = []
+            }
+        }
+        if !current.isEmpty { result.append(current.joined(separator: "\n\n")) }
+        return result.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private func computeWallParts(count: Int) -> [String] {
+        guard count >= 2, !text.isEmpty else { return [text] }
+        let chars = Array(text)
+        let total = chars.count
+        var splitPoints: [Int] = []
+        for i in 1..<count {
+            let target = (total * i) / count
+            var foundAt: Int? = nil
+            let fwdLimit = min(target + 600, total)
+            for j in target..<fwdLimit {
+                let c = chars[j]
+                if (c == "." || c == "!" || c == "?"), j + 1 < total {
+                    let next = chars[j + 1]
+                    if next == " " || next == "\n" || next == "\r" { foundAt = j + 1; break }
+                }
+            }
+            if foundAt == nil {
+                let bwdLimit = max(target - 600, 0)
+                for j in stride(from: target - 1, through: bwdLimit, by: -1) {
+                    let c = chars[j]
+                    if (c == "." || c == "!" || c == "?"), j + 1 < total {
+                        let next = chars[j + 1]
+                        if next == " " || next == "\n" || next == "\r" { foundAt = j + 1; break }
+                    }
+                }
+            }
+            let sp = foundAt ?? target
+            if splitPoints.isEmpty || sp > (splitPoints.last ?? 0) { splitPoints.append(sp) }
+        }
+        var parts: [String] = []
+        var start = 0
+        for sp in splitPoints {
+            let end = min(sp, total)
+            if end > start {
+                let sub = String(chars[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !sub.isEmpty { parts.append(sub) }
+            }
+            start = end
+        }
+        if start < total {
+            let sub = String(chars[start..<total]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sub.isEmpty { parts.append(sub) }
+        }
+        return parts.isEmpty ? [text] : parts
+    }
+
+    private var parts: [String] {
+        isTextWall ? computeWallParts(count: wallPartCount) : paragraphParts
+    }
+
+    private var canConfirm: Bool { parts.count >= 2 }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("Split Source", systemImage: "scissors")
+                    .font(.headline)
+                Spacer()
+                Button("Cancel", action: onCancel).buttonStyle(.bordered)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .background(.bar)
+
+            Divider()
+
+            if isTextWall {
+                wallSplitterView
+            } else {
+                paragraphSplitterView
+            }
+
+            Divider()
+
+            HStack(spacing: 10) {
+                if canConfirm {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(Array(parts.enumerated()), id: \.offset) { i, part in
+                                HStack(spacing: 3) {
+                                    Image(systemName: "\(i + 1).square.fill")
+                                        .font(.caption2)
+                                        .foregroundStyle(Color.accentColor)
+                                    Text("\(part.count.formatted()) chars")
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Text(isTextWall ? "Choose number of parts above" : "Tap the lines between paragraphs to add split points")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Button("Confirm Split") {
+                    let trimmed = parts
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    onConfirm(trimmed)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canConfirm)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+        }
+        .frame(width: 640, height: 540)
+    }
+
+    // MARK: - Option A: paragraph list with toggle dividers
+
+    private var paragraphSplitterView: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(paragraphs.enumerated()), id: \.offset) { i, para in
+                    Text(para)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .textSelection(.enabled)
+                        .background(Color(nsColor: .textBackgroundColor))
+
+                    if i < paragraphs.count - 1 {
+                        toggleDividerRow(after: i)
+                    }
+                }
+            }
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func toggleDividerRow(after index: Int) -> some View {
+        let isActive = splitAfter.contains(index)
+        let isHovered = hoveredDivider == index
+
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                if isActive { splitAfter.remove(index) } else { splitAfter.insert(index) }
+            }
+        } label: {
+            ZStack {
+                if isActive {
+                    HStack(spacing: 6) {
+                        Rectangle().fill(Color.accentColor).frame(height: 1.5)
+                        Image(systemName: "scissors")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentColor)
+                        Text("split — tap to remove")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentColor)
+                        Rectangle().fill(Color.accentColor).frame(height: 1.5)
+                    }
+                    .padding(.horizontal, 12)
+                } else if isHovered {
+                    HStack(spacing: 4) {
+                        Rectangle().fill(Color.accentColor.opacity(0.4)).frame(height: 1)
+                        Image(systemName: "plus")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentColor.opacity(0.7))
+                        Text("tap to split here")
+                            .font(.caption2)
+                            .foregroundStyle(Color.accentColor.opacity(0.7))
+                        Rectangle().fill(Color.accentColor.opacity(0.4)).frame(height: 1)
+                    }
+                    .padding(.horizontal, 12)
+                } else {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.2))
+                        .frame(height: 1)
+                        .padding(.horizontal, 16)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: isActive ? 32 : 22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            isActive ? Color.accentColor.opacity(0.06) :
+            isHovered ? Color.accentColor.opacity(0.03) :
+            Color(nsColor: .textBackgroundColor)
+        )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                hoveredDivider = hovering ? index : nil
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: isActive)
+    }
+
+    // MARK: - Option B: stepper for text walls
+
+    private var wallSplitterView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("This text has no clear paragraph breaks. Choose how many parts to split it into — we'll divide at sentence boundaries.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Stepper(value: $wallPartCount, in: 2...5) {
+                    Text("Split into **\(wallPartCount)** parts")
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Preview")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                        .textCase(.uppercase)
+
+                    ForEach(Array(parts.enumerated()), id: \.offset) { i, part in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Part \(i + 1)")
+                                .font(.caption2.bold())
+                                .foregroundStyle(Color.accentColor)
+                            Text(part.count > 300 ? (String(part.prefix(300)) + "…") : part)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(10)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+            .padding(20)
+        }
     }
 }

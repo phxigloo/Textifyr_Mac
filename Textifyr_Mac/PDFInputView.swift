@@ -112,8 +112,11 @@ struct PDFInputView: View {
                     captureVM.reset()
                     closeWizard()
                 },
-                onAccept: { finalText in
+                onAccept: { finalText, _ in
                     captureVM.saveTextCapture(finalText, captureMethod: .pdf)
+                },
+                onAcceptSplit: { parts in
+                    captureVM.saveMultipleTextCaptures(parts, captureMethod: .pdf)
                 }
             )
         }

@@ -71,8 +71,11 @@ struct WebInputView: View {
                             captureVM.reset()
                             closeWizard()
                         },
-                        onAccept: { finalText in
+                        onAccept: { finalText, _ in
                             captureVM.saveTextCapture(finalText, captureMethod: .webURL)
+                        },
+                        onAcceptSplit: { parts in
+                            captureVM.saveMultipleTextCaptures(parts, captureMethod: .webURL)
                         }
                     )
                     .transition(stepTransition)

@@ -9,9 +9,10 @@ import Combine
 final class TextFormatState: ObservableObject {
     weak var textView: NSTextView?
 
-    @Published var isBold      = false
-    @Published var isItalic    = false
-    @Published var isUnderline = false
+    @Published var isBold          = false
+    @Published var isItalic        = false
+    @Published var isUnderline     = false
+    @Published var isStrikethrough = false
     @Published var fontSize: CGFloat    = 13
     @Published var textColor: Color     = Color(nsColor: .labelColor)
     @Published var alignment: NSTextAlignment = .left
@@ -23,6 +24,30 @@ final class TextFormatState: ObservableObject {
 
     func applyBold()      { toggleFontTrait(.boldFontMask);   syncFromTextView() }
     func applyItalic()    { toggleFontTrait(.italicFontMask); syncFromTextView() }
+
+    func applyStrikethrough() {
+        guard let tv = textView else { return }
+        let range = tv.selectedRange()
+        let isOn = (tv.typingAttributes[.strikethroughStyle] as? Int).map { $0 != 0 } ?? false
+        let value = isOn ? 0 : NSUnderlineStyle.single.rawValue
+        if range.length > 0 {
+            tv.textStorage?.addAttribute(.strikethroughStyle, value: value, range: range)
+        } else {
+            tv.typingAttributes[.strikethroughStyle] = value
+        }
+        syncFromTextView()
+    }
+
+    func performFind(_ action: NSTextFinder.Action) {
+        guard let tv = textView else { return }
+        tv.window?.makeFirstResponder(tv)
+        final class TaggedSender: NSObject {
+            private let _tag: Int
+            init(_ t: Int) { _tag = t }
+            @objc var tag: Int { _tag }
+        }
+        tv.performTextFinderAction(TaggedSender(action.rawValue))
+    }
 
     func applyUnderline() {
         guard let tv = textView else { return }
@@ -119,6 +144,12 @@ final class TextFormatState: ObservableObject {
             isUnderline = false
         }
 
+        if let ss = attrs[.strikethroughStyle] as? Int {
+            isStrikethrough = ss != 0
+        } else {
+            isStrikethrough = false
+        }
+
         if let color = attrs[.foregroundColor] as? NSColor {
             textColor = Color(nsColor: color)
         }
@@ -136,11 +167,12 @@ struct FormattingToolbar: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            // Bold / Italic / Underline
+            // Bold / Italic / Underline / Strikethrough
             HStack(spacing: 1) {
-                fmtBtn("bold",      on: fmt.isBold,      tip: "Bold (⌘B)")      { fmt.applyBold() }
-                fmtBtn("italic",    on: fmt.isItalic,    tip: "Italic (⌘I)")    { fmt.applyItalic() }
-                fmtBtn("underline", on: fmt.isUnderline, tip: "Underline (⌘U)") { fmt.applyUnderline() }
+                fmtBtn("bold",            on: fmt.isBold,          tip: "Bold (⌘B)")      { fmt.applyBold() }
+                fmtBtn("italic",          on: fmt.isItalic,        tip: "Italic (⌘I)")    { fmt.applyItalic() }
+                fmtBtn("underline",       on: fmt.isUnderline,     tip: "Underline (⌘U)") { fmt.applyUnderline() }
+                fmtBtn("strikethrough",   on: fmt.isStrikethrough, tip: "Strikethrough")  { fmt.applyStrikethrough() }
             }
 
             sep
@@ -180,6 +212,15 @@ struct FormattingToolbar: View {
                 .buttonStyle(.bordered)
                 .font(.caption)
                 .help("Show the Fonts panel")
+
+            sep
+
+            HStack(spacing: 1) {
+                fmtBtn("magnifyingglass",        tip: "Find (⌘F)")         { fmt.performFind(.showFindInterface) }
+                fmtBtn("arrow.up",               tip: "Previous (⇧⌘G)")    { fmt.performFind(.previousMatch) }
+                fmtBtn("arrow.down",             tip: "Next (⌘G)")         { fmt.performFind(.nextMatch) }
+                fmtBtn("arrow.left.arrow.right", tip: "Find & Replace")    { fmt.performFind(.showReplaceInterface) }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
@@ -249,6 +290,7 @@ struct RichTextEditor: NSViewRepresentable {
         tv.isRichText               = true
         tv.allowsUndo               = true
         tv.usesFontPanel            = true
+        tv.usesFindBar              = true
         tv.isAutomaticLinkDetectionEnabled = true
         tv.textContainerInset       = NSSize(width: 20, height: 20)
         tv.backgroundColor          = .textBackgroundColor

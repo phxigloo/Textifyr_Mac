@@ -132,7 +132,7 @@ struct ScreenCaptureInputView: View {
                     captureVM.reset()
                     closeWizard()
                 },
-                onAccept: { finalText in
+                onAccept: { finalText, _ in
                     captureVM.saveTextCapture(finalText, captureMethod: .screenCapture)
                 }
             )

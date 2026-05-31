@@ -210,8 +210,23 @@ struct SessionEditView: View {
                 isEditMode: true,
                 reviewStepIndex: $reviewStepIndex,
                 onCancel: { onDismiss() },
-                onAccept: { finalText in
+                onAccept: { finalText, rtfData in
                     session.rawText = finalText
+                    if let rtf = rtfData { session.rawRTFData = rtf }
+                    try? context.save()
+                    onDismiss()
+                },
+                onAcceptSplit: { parts in
+                    session.rawText = parts[0]
+                    for part in parts.dropFirst() {
+                        let order = (session.document?.sourceSessions ?? []).count
+                        let newSession = SourceSession(captureMethod: session.captureMethod,
+                                                      rawText: part, sortOrder: order)
+                        context.insert(newSession)
+                        newSession.document = session.document
+                        session.document?.sourceSessions = (session.document?.sourceSessions ?? []) + [newSession]
+                    }
+                    session.document?.modificationDate = Date()
                     try? context.save()
                     onDismiss()
                 }

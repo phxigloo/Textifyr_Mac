@@ -15,8 +15,26 @@ struct RTFOutputView: View {
 
     @State private var showExportSheet = false
     @State private var formatBannerDismissed = false
+    @State private var isTranslating = false
+    @State private var translateTask: Task<Void, Never>? = nil
+    @State private var translateError: String? = nil
+
+    @State private var showRefinePanel = false
+    @State private var refinePromptText = ""
+    @State private var isRefining = false
+    @State private var refineTask: Task<Void, Never>? = nil
+    @State private var refineProgress: DocumentFormattingService.Progress? = nil
+    @State private var refineResult: String? = nil
+    @State private var refineError: String? = nil
 
     private var document: TextifyrDocument { viewModel.document }
+
+    private var estimatedChunkCount: Int {
+        let len = document.mergedSourceText.count
+        guard len > 0 else { return 0 }
+        let chunkSize = ChunkingService.adaptiveChunkSize(for: 400)
+        return max(1, Int(ceil(Double(len) / Double(chunkSize))))
+    }
 
     private var showFormatBanner: Bool {
         !document.hasOutput
@@ -50,6 +68,26 @@ struct RTFOutputView: View {
         .sheet(isPresented: $showExportSheet) {
             ExportFormatSheet(viewModel: viewModel)
         }
+        .overlay(alignment: .top) {
+            if let err = translateError {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(err).font(.caption).foregroundStyle(.primary)
+                    Spacer()
+                    Button { translateError = nil } label: {
+                        Image(systemName: "xmark").font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 16)
+                .padding(.top, 52)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: translateError != nil)
     }
 
     // MARK: - Format nudge banner
@@ -115,15 +153,48 @@ struct RTFOutputView: View {
                     Label("Manage Actions…", systemImage: "slider.horizontal.3")
                 }
             } label: {
-                Label(
-                    document.pipeline?.name ?? "Action",
-                    systemImage: "wand.and.sparkles"
-                )
-                .font(.caption)
+                VStack(alignment: .leading, spacing: 1) {
+                    Label(
+                        document.pipeline?.name ?? "Action",
+                        systemImage: "wand.and.sparkles"
+                    )
+                    .font(.caption)
+                    if estimatedChunkCount > 1 {
+                        Text("~\(estimatedChunkCount) chunks")
+                            .font(.caption2)
+                            .foregroundStyle(estimatedChunkCount > 4
+                                ? AnyShapeStyle(Color.orange)
+                                : AnyShapeStyle(Color.secondary))
+                    }
+                }
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .help("Select a Final Document action")
+            .help(estimatedChunkCount > 4
+                ? "~\(estimatedChunkCount) chunks — synthesis prompts (summarise, analyse) work better as multi-step actions"
+                : "Select a Final Document action")
+
+            // Translate
+            if document.hasOutput && !viewModel.isFormatting {
+                if isTranslating {
+                    ProgressView().controlSize(.small)
+                    Text("Translating…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Button("Cancel") {
+                        translateTask?.cancel()
+                        translateTask = nil
+                        isTranslating = false
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    TranslateButton(helpText: "Translate the formatted output using AI") { lang in
+                        translateOutput(to: lang)
+                    }
+                }
+            }
 
             // Format / Cancel
             if viewModel.isFormatting {
@@ -143,6 +214,16 @@ struct RTFOutputView: View {
                     .controlSize(.small)
                 }
             } else {
+                Button {
+                    viewModel.useMergedSourcesAsOutput()
+                } label: {
+                    Label("Combine", systemImage: "text.append")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(document.mergedSourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isFormatting)
+                .help("Assemble all sources into the Output without AI formatting")
+
                 Button {
                     Task { await viewModel.runFormatting(appState: appState) }
                 } label: {
@@ -200,6 +281,8 @@ struct RTFOutputView: View {
                     Divider()
                     pictureStrip
                 }
+                Divider()
+                refinePanel
             }
         } else if !viewModel.isFormatting {
             emptyState
@@ -278,6 +361,189 @@ struct RTFOutputView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    // MARK: - Refine panel
+
+    private var refinePanel: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("Refine Output", systemImage: "wand.and.stars")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showRefinePanel.toggle()
+                        if !showRefinePanel { refineResult = nil; refineError = nil }
+                    }
+                } label: {
+                    Image(systemName: showRefinePanel ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showRefinePanel.toggle()
+                    if !showRefinePanel { refineResult = nil; refineError = nil }
+                }
+            }
+
+            if showRefinePanel {
+                Divider()
+                VStack(alignment: .leading, spacing: 10) {
+                    if let result = refineResult {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Label("Refined Result", systemImage: "wand.and.stars")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Apply") { applyRefineResult(result) }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.mini)
+                                Button { refineResult = nil } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            RefineResultText(result)
+                                .font(.caption)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(Color(nsColor: .textBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+
+                    if let err = refineError {
+                        Text(err).font(.caption).foregroundStyle(.red)
+                    }
+
+                    HStack(alignment: .top, spacing: 8) {
+                        TextField("Describe a change to make…", text: $refinePromptText, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.callout)
+                            .lineLimit(2...3)
+                            .disabled(isRefining)
+
+                        if isRefining {
+                            VStack(alignment: .leading, spacing: 4) {
+                                if let p = refineProgress, p.chunkCount > 1 {
+                                    PipelineProgressView(progress: p)
+                                        .frame(maxWidth: 160)
+                                } else {
+                                    ProgressView().controlSize(.small)
+                                }
+                                Button("Cancel") {
+                                    refineTask?.cancel()
+                                    refineTask = nil
+                                    isRefining = false
+                                    refineProgress = nil
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                            .padding(.top, 2)
+                        } else {
+                            Button("Send") { refineOutput() }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(refinePromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                .padding(.top, 2)
+                        }
+                    }
+                }
+                .padding(14)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+    }
+
+    private func refineOutput() {
+        guard let rtfData = document.outputRTF,
+              let attr = NSAttributedString(rtf: rtfData, documentAttributes: nil) else { return }
+        let plainText = attr.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !plainText.isEmpty else { return }
+        isRefining = true
+        refineResult = nil
+        refineError = nil
+        refineProgress = nil
+        let prompt = refinePromptText
+        refineTask = Task { @MainActor in
+            do {
+                let result = try await DocumentFormattingService()
+                    .formatWithPrompt(sourceText: plainText, systemPrompt: prompt) { p in
+                        refineProgress = p
+                    }
+                if !Task.isCancelled { refineResult = result }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { refineError = error.localizedDescription }
+            }
+            isRefining = false
+            refineProgress = nil
+            refineTask = nil
+        }
+    }
+
+    private func applyRefineResult(_ result: String) {
+        let attr = NSAttributedString(
+            string: result,
+            attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]
+        )
+        let range = NSRange(location: 0, length: attr.length)
+        if let rtfData = try? attr.data(
+            from: range,
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        ) {
+            document.outputRTF = rtfData
+        }
+        refineResult = nil
+        withAnimation { showRefinePanel = false }
+    }
+
+    // MARK: - Translation
+
+    private func translateOutput(to language: TranslationLanguage) {
+        guard let rtfData = document.outputRTF,
+              let attr = NSAttributedString(rtf: rtfData, documentAttributes: nil) else { return }
+        let plainText = attr.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !plainText.isEmpty else { return }
+        isTranslating = true
+        translateError = nil
+        translateTask = Task { @MainActor in
+            do {
+                let result = try await DocumentFormattingService()
+                    .formatWithPrompt(sourceText: plainText, systemPrompt: language.promptText)
+                if !Task.isCancelled {
+                    let newAttr = NSAttributedString(
+                        string: result,
+                        attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]
+                    )
+                    let range = NSRange(location: 0, length: newAttr.length)
+                    if let newRTF = try? newAttr.data(
+                        from: range,
+                        documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+                    ) {
+                        document.outputRTF = newRTF
+                    }
+                }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { translateError = error.localizedDescription }
+            }
+            isTranslating = false
+            translateTask = nil
+        }
+    }
 }
 
 // MARK: - Picture thumbnail
@@ -307,6 +573,20 @@ private struct PictureThumbnailView: View {
             }
         }
     }
+}
+
+// MARK: - Markdown-aware result text
+
+private struct RefineResultText: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    private var attributedString: AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+
+    var body: some View { Text(attributedString) }
 }
 
 #Preview("Empty output") { @MainActor in

@@ -42,17 +42,16 @@ struct ExportFormatSheet: View {
                     ExportRow(icon: "doc.text",        title: "Plain Text",    detail: ".txt — no formatting")            { exportToFile(.plainText) }
                     ExportRow(icon: "chevron.left.forwardslash.chevron.right",
                                                        title: "Markdown",      detail: ".md — Obsidian, Notion, GitHub") { exportToFile(.markdown) }
+                    ExportRow(icon: "globe",            title: "HTML",          detail: "Self-contained .html with images") { exportToFile(.html) }
                     ExportRow(icon: "doc.fill",        title: "PDF",           detail: "Fixed layout for sharing")        { exportToFile(.pdf) }
                 }
 
                 Divider().padding(.vertical, 4)
 
                 Group {
-                    ExportRow(icon: "printer",         title: "Print…",        detail: "Print or save as PDF")           { printDocument() }
-                    ExportRow(icon: "p.circle",        title: "Open in Pages", detail: "Full editing in Apple Pages")    { openInPages() }
-                    if isTableDocument {
-                        ExportRow(icon: "n.circle",    title: "Open in Numbers", detail: "Tab-separated data detected")  { openInNumbers() }
-                    }
+                    ExportRow(icon: "printer",         title: "Print…",          detail: "Print or save as PDF")              { printDocument() }
+                    ExportRow(icon: "p.circle",        title: "Open in Pages",   detail: "Full editing in Apple Pages")       { openInPages() }
+                    ExportRow(icon: "n.circle",        title: "Open in Numbers", detail: "Spreadsheet with embedded images")  { openInNumbers() }
                 }
 
                 Divider().padding(.vertical, 4)
@@ -89,13 +88,12 @@ struct ExportFormatSheet: View {
     private func runSavePanel(for url: URL, format: ExportFormat) {
         let panel = NSSavePanel()
         let safeName = viewModel.document.title.isEmpty ? "Document" : viewModel.document.title
-        panel.nameFieldStringValue = "\(safeName).\(format.rawValue)"
-        switch format {
-        case .rtf:       panel.allowedContentTypes = [.rtf]
-        case .plainText: panel.allowedContentTypes = [.plainText]
-        case .markdown:  panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        case .pdf:       panel.allowedContentTypes = [.pdf]
-        case .csv:       panel.allowedContentTypes = [.commaSeparatedText]
+        // The produced file may differ from the requested format (e.g. .rtf upgrades to
+        // an .rtfd package when it contains images), so key off the real file extension.
+        let ext = url.pathExtension.isEmpty ? format.rawValue : url.pathExtension
+        panel.nameFieldStringValue = "\(safeName).\(ext)"
+        if let type = UTType(filenameExtension: ext) {
+            panel.allowedContentTypes = [type]
         }
         if panel.runModal() == .OK, let dest = panel.url {
             try? FileManager.default.removeItem(at: dest)
@@ -108,11 +106,11 @@ struct ExportFormatSheet: View {
             exportError = "No formatted content to print. Run formatting first."
             return
         }
-        let attrStr = (try? NSAttributedString(
-            data: rtfData,
-            options: [.documentType: NSAttributedString.DocumentType.rtf],
-            documentAttributes: nil
-        )) ?? NSAttributedString(string: plainText)
+        // Build text + image attachments; NSTextView draws the attachments directly.
+        let attrStr = ExportService.attributedStringWithPictures(
+            rtfData: rtfData,
+            pictureSessions: viewModel.document.sourceSessions ?? []
+        )
 
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 540, height: 720))
         textView.isVerticallyResizable = true
@@ -135,13 +133,20 @@ struct ExportFormatSheet: View {
         do {
             let url = try viewModel.exportFile(format: .rtf)
             let safeName = viewModel.document.title.isEmpty ? "Document" : viewModel.document.title
+            // Preserve the produced extension (.rtf, or .rtfd when images are embedded).
+            let ext = url.pathExtension.isEmpty ? "rtf" : url.pathExtension
             let dest = FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(safeName).rtf")
+                .appendingPathComponent("\(safeName).\(ext)")
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.copyItem(at: url, to: dest)
             dismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                NSWorkspace.shared.open(dest)
+                if let pagesURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.iWork.Pages") {
+                    NSWorkspace.shared.open([dest], withApplicationAt: pagesURL,
+                                           configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+                } else {
+                    NSWorkspace.shared.open(dest)
+                }
             }
         } catch {
             exportError = error.localizedDescription
@@ -150,15 +155,20 @@ struct ExportFormatSheet: View {
 
     private func openInNumbers() {
         do {
-            let url = try viewModel.exportFile(format: .csv)
+            let url = try viewModel.exportFile(format: .xlsx)
             let safeName = viewModel.document.title.isEmpty ? "Document" : viewModel.document.title
             let dest = FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(safeName).csv")
+                .appendingPathComponent("\(safeName).xlsx")
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.copyItem(at: url, to: dest)
             dismiss()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                NSWorkspace.shared.open(dest)
+                if let numbersURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.iWork.Numbers") {
+                    NSWorkspace.shared.open([dest], withApplicationAt: numbersURL,
+                                           configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+                } else {
+                    NSWorkspace.shared.open(dest)
+                }
             }
         } catch {
             exportError = error.localizedDescription

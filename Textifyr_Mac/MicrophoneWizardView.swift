@@ -36,6 +36,7 @@ struct MicrophoneWizardView: View {
     @State private var capturedSession: SourceSession? = nil
     @State private var originalText: String = ""
     @State private var initialText: String = ""
+    @State private var initialRTFData: Data? = nil
 
     private var isEditMode: Bool { initialSession != nil }
     private static let postCapturePipelineKey = "defaultPostCapturePipelineName"
@@ -58,6 +59,7 @@ struct MicrophoneWizardView: View {
                 capturedSession = session
                 originalText = session.rawText
                 initialText = session.rawText
+                initialRTFData = session.rawRTFData
                 reviewStepIndex = 1
                 wizardStep = .review
             }
@@ -135,13 +137,30 @@ struct MicrophoneWizardView: View {
                 CaptureReviewStages(
                     originalText: originalText,
                     initialText: initialText,
+                    initialRTFData: initialRTFData,
                     isEditMode: isEditMode,
                     showAutoStoppedBanner: captureVM.recordingAutoStopped,
                     reviewStepIndex: $reviewStepIndex,
                     onBack: isEditMode ? nil : { backFromReview() },
                     onCancel: { cancel() },
-                    onAccept: { finalText in
+                    onAccept: { finalText, rtfData in
                         capturedSession?.rawText = finalText
+                        if let rtf = rtfData { capturedSession?.rawRTFData = rtf }
+                        try? modelContext.save()
+                        closeWizard()
+                    },
+                    onAcceptSplit: { parts in
+                        guard let session = capturedSession else { return }
+                        session.rawText = parts[0]
+                        for part in parts.dropFirst() {
+                            let order = (session.document?.sourceSessions ?? []).count
+                            let newSession = SourceSession(captureMethod: session.captureMethod,
+                                                          rawText: part, sortOrder: order)
+                            modelContext.insert(newSession)
+                            newSession.document = session.document
+                            session.document?.sourceSessions = (session.document?.sourceSessions ?? []) + [newSession]
+                        }
+                        session.document?.modificationDate = Date()
                         try? modelContext.save()
                         closeWizard()
                     }
@@ -382,6 +401,8 @@ struct MicrophoneWizardView: View {
         capturedSession = session
         originalText = session.rawText
         initialText = session.rawText
+        capturedSession?.rawRTFData = MarkdownRenderer.toRTF(initialText) ?? capturedSession?.rawRTFData
+        try? modelContext.save()
 
         if let pipeline = postCapturePipelines.first(where: { $0.id == selectedPostCapturePipelineID }) {
             runPostCapturePipeline(pipeline)
@@ -414,6 +435,7 @@ struct MicrophoneWizardView: View {
     }
 
     private func transitionToReview() {
+        initialRTFData = capturedSession?.rawRTFData
         reviewStepIndex = 1
         stepForward = true
         withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .review }

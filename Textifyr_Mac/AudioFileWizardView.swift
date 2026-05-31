@@ -39,6 +39,7 @@ struct AudioFileWizardView: View {
     @State private var capturedSession: SourceSession? = nil
     @State private var originalText: String = ""
     @State private var initialText: String = ""
+    @State private var initialRTFData: Data? = nil
 
     private static let audioTypes: [UTType] = [.audio, .movie, .mpeg4Movie, .quickTimeMovie]
     private static let postCapturePipelineKey = "defaultPostCapturePipelineName"
@@ -124,12 +125,29 @@ struct AudioFileWizardView: View {
                 CaptureReviewStages(
                     originalText: originalText,
                     initialText: initialText,
+                    initialRTFData: initialRTFData,
                     isEditMode: false,
                     reviewStepIndex: $reviewStepIndex,
                     onBack: { backFromReview() },
                     onCancel: { cancel() },
-                    onAccept: { finalText in
+                    onAccept: { finalText, rtfData in
                         capturedSession?.rawText = finalText
+                        if let rtf = rtfData { capturedSession?.rawRTFData = rtf }
+                        try? modelContext.save()
+                        closeWizard()
+                    },
+                    onAcceptSplit: { parts in
+                        guard let session = capturedSession else { return }
+                        session.rawText = parts[0]
+                        for part in parts.dropFirst() {
+                            let order = (session.document?.sourceSessions ?? []).count
+                            let newSession = SourceSession(captureMethod: session.captureMethod,
+                                                          rawText: part, sortOrder: order)
+                            modelContext.insert(newSession)
+                            newSession.document = session.document
+                            session.document?.sourceSessions = (session.document?.sourceSessions ?? []) + [newSession]
+                        }
+                        session.document?.modificationDate = Date()
                         try? modelContext.save()
                         closeWizard()
                     }
@@ -374,6 +392,8 @@ struct AudioFileWizardView: View {
         capturedSession = session
         originalText = session.rawText
         initialText = session.rawText
+        capturedSession?.rawRTFData = MarkdownRenderer.toRTF(initialText) ?? capturedSession?.rawRTFData
+        try? modelContext.save()
 
         if let pipeline = postCapturePipelines.first(where: { $0.id == selectedPostCapturePipelineID }) {
             runPostCapturePipeline(pipeline)
@@ -406,6 +426,7 @@ struct AudioFileWizardView: View {
     }
 
     private func transitionToReview() {
+        initialRTFData = capturedSession?.rawRTFData
         reviewStepIndex = 1
         stepForward = true
         withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .review }

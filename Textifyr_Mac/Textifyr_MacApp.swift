@@ -19,7 +19,7 @@ struct Textifyr_MacApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             ContentView()
                 .environmentObject(appState)
                 .frame(minWidth: 900, minHeight: 600)
@@ -105,6 +105,13 @@ private struct AppCommands: Commands {
                 .keyboardShortcut("e", modifiers: [.command, .option])
         }
         CommandMenu("Tools") {
+            Button("Open Main Window") {
+                openWindow(id: "main")
+            }
+            .keyboardShortcut("1", modifiers: .command)
+
+            Divider()
+
             Button("Prompt Builder") {
                 NotificationCenter.default.post(name: .openPromptBuilderSheet, object: nil)
             }

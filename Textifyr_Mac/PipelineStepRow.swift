@@ -92,6 +92,11 @@ struct PipelineStepRow: View {
                     .buttonStyle(.borderless)
                     .help("Actions are made of one or more prompts. Use the Prompt Builder to write and test individual prompts before adding them here.")
 
+                    TranslateButton(helpText: "Replace this step's prompt with a translation instruction") { lang in
+                        prompt = lang.promptText
+                        saveStep()
+                    }
+
                     if isImprovingThis {
                         HStack(spacing: 4) {
                             ProgressView().controlSize(.small)

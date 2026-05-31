@@ -177,6 +177,39 @@ let helpTopics: [HelpTopic] = [
         ])
     ),
     HelpTopic(
+        id: "how-ai-works",
+        title: "How the AI Works",
+        icon: "brain.head.profile",
+        content: HelpContent(sections: [
+            HelpSection(heading: nil,
+                body: "Textifyr uses Apple Intelligence — an AI built into your Mac by Apple. Most processing happens directly on your device. For more complex tasks, Apple may use Private Cloud Compute — Apple-run servers that are private, secure, retain no data, and whose code is publicly verifiable. Your text is never sent to Anthropic or any other third-party. Here's what you need to know to get the best results."),
+
+            HelpSection(heading: "What the AI actually does",
+                body: "• You give it an instruction (called a prompt). It follows the instruction and returns a result.\n• It reads text in, writes text out — that's it.\n• It can clean up grammar, summarise, translate, reformat, remove filler words — whatever your prompt asks.\n• It does not browse the internet or remember previous documents."),
+
+            HelpSection(heading: "Tokens — not characters",
+                body: "• The AI doesn't count characters. It works in pieces called tokens.\n• One token is roughly 4 characters, or about ¾ of a word.\n• Example: \"Hello world\" ≈ 2 tokens. A Shakespeare play (100,000 characters) ≈ 25,000 tokens.\n• Why does this matter? The AI can only hold a limited number of tokens in memory at one time."),
+
+            HelpSection(heading: "The context window — AI's short-term memory",
+                body: "• The AI can only \"see\" about 16,000 characters at a time. This limit is called the context window.\n• Think of it like a sticky note. If your text is too long to fit on the sticky note, the AI can't read the whole thing at once.\n• Your prompt AND your text both have to share that sticky note — so a long prompt leaves less room for text.\n• Textifyr works around this automatically using chunking (see below)."),
+
+            HelpSection(heading: "Your text is added automatically",
+                body: "• When you write a prompt like \"Summarise this\", Textifyr automatically adds your transcript to the message before sending it to the AI.\n• You only write the instruction. Textifyr handles the rest.\n• This is why the context window matters — every time the AI runs, your prompt takes up part of that 16,000-character limit."),
+
+            HelpSection(heading: "Chunking — how large text is handled",
+                body: "• When your text is too big to fit in one go, Textifyr automatically splits it into pieces called chunks.\n• Each chunk is processed separately, then all the results are joined together.\n• You'll see \"Part 1 of 14\" in the progress bar when this is happening.\n• Chunk size is calculated automatically — a longer prompt means smaller chunks, because the prompt takes up more of the sticky note."),
+
+            HelpSection(heading: "What chunking is great at",
+                body: "These tasks work perfectly because each piece of text can be handled on its own:\n• Fixing grammar and punctuation\n• Removing filler words\n• Translating to another language\n• Reformatting or restructuring paragraphs\n• Cleaning up a transcript"),
+
+            HelpSection(heading: "What chunking can't do",
+                body: "These tasks need to see the whole document at once — chunking can't help:\n• Writing one unified summary of a very long document — you'll get 14 mini-summaries joined together, not one paragraph.\n• \"List all characters in this play\" — each chunk only sees its own section, so the lists won't combine.\n• Any task that requires understanding the full story or context from start to finish.\n\nFix: Use a two-step action. Step 1: \"Summarise this section\" (runs chunked, produces 14 mini-summaries). Step 2: \"Combine these summaries into one\" (the combined mini-summaries are now short enough to fit in one context window)."),
+
+            HelpSection(heading: "Tips for best results",
+                body: "• Keep prompts focused on one task. \"Fix grammar and remove filler words\" works better than five instructions crammed into one prompt.\n• For very long documents, multi-step actions give more consistent results — one clear task per step.\n• If the AI seems to ignore part of your instruction, your prompt may be too long — try shortening it.\n• If the output looks cut off, the source text may have been very long — try splitting it into smaller sources.\n• The AI sometimes adds unwanted phrases like \"Sure, here's the result…\" — Textifyr strips these automatically."),
+        ])
+    ),
+    HelpTopic(
         id: "keyboard-shortcuts",
         title: "Keyboard Shortcuts",
         icon: "keyboard",
@@ -211,8 +244,8 @@ let helpTopics: [HelpTopic] = [
         content: HelpContent(sections: [
             HelpSection(heading: nil,
                 body: "Textifyr is designed with privacy as a priority."),
-            HelpSection(heading: "On-device processing",
-                body: "All AI processing uses Apple Intelligence, which runs entirely on your device. Your transcripts, documents, and images are never sent to Anthropic or any third-party server."),
+            HelpSection(heading: "On-device and Private Cloud Compute",
+                body: "Apple Intelligence processes most tasks directly on your device using its built-in AI models. For more complex requests, your Mac may send the task to Apple's Private Cloud Compute — Apple-run servers built on Apple Silicon.\n\nPrivate Cloud Compute is designed with strong privacy guarantees:\n• Your data is used only to complete the task and is not retained afterwards.\n• Apple cannot inspect the content of your requests.\n• The server software is published so independent security researchers can verify these claims.\n\nYour transcripts, documents, and images are never sent to Anthropic or any other third-party service. The decision to use on-device or cloud processing is made automatically by Apple Intelligence based on the complexity of the task."),
             HelpSection(heading: "Local storage",
                 body: "All documents and source sessions are stored in SwiftData on your Mac. Textifyr does not sync data externally unless you use iCloud Drive and have enabled it in System Settings."),
             HelpSection(heading: "Microphone and camera",
