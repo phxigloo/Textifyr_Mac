@@ -63,24 +63,29 @@ struct SourceSessionListView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(sessions, id: \.id) { session in
-                    SessionRowView(session: session)
-                        .contentShape(Rectangle())
-                        .onTapGesture { onEditSession(session) }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                viewModel.deleteSession(session)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
+                List {
+                    ForEach(sessions, id: \.id) { session in
+                        SessionRowView(session: session)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onEditSession(session) }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    viewModel.deleteSession(session)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
                             }
-                        }
-                        .contextMenu {
-                            Button("Edit") { onEditSession(session) }
-                            Divider()
-                            Button("Delete", role: .destructive) {
-                                viewModel.deleteSession(session)
+                            .contextMenu {
+                                Button("Edit") { onEditSession(session) }
+                                Divider()
+                                Button("Delete", role: .destructive) { viewModel.deleteSession(session) }
                             }
-                        }
+                    }
+                    .onMove { from, to in
+                        var reordered = sessions
+                        reordered.move(fromOffsets: from, toOffset: to)
+                        viewModel.reorderSessions(reordered)
+                    }
                 }
                 .listStyle(.sidebar)
 
@@ -147,6 +152,10 @@ private struct SessionRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
+                Image(systemName: "line.3.horizontal")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .help("Drag to reorder")
                 Image(systemName: session.captureMethod.systemImage)
                     .foregroundStyle(Color.accentColor)
                 Text(session.captureMethod.displayName)
@@ -207,6 +216,7 @@ struct SessionEditView: View {
             CaptureReviewStages(
                 originalText: session.rawText,
                 initialText: session.rawText,
+                initialRTFData: session.rawRTFData,
                 isEditMode: true,
                 reviewStepIndex: $reviewStepIndex,
                 onCancel: { onDismiss() },
@@ -217,11 +227,13 @@ struct SessionEditView: View {
                     onDismiss()
                 },
                 onAcceptSplit: { parts in
-                    session.rawText = parts[0]
+                    session.rawText    = parts[0]
+                    session.rawRTFData = MarkdownRenderer.toRTF(parts[0])
                     for part in parts.dropFirst() {
                         let order = (session.document?.sourceSessions ?? []).count
                         let newSession = SourceSession(captureMethod: session.captureMethod,
                                                       rawText: part, sortOrder: order)
+                        newSession.rawRTFData = MarkdownRenderer.toRTF(part)
                         context.insert(newSession)
                         newSession.document = session.document
                         session.document?.sourceSessions = (session.document?.sourceSessions ?? []) + [newSession]

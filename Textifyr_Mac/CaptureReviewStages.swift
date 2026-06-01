@@ -299,6 +299,9 @@ struct CaptureReviewStages: View {
 
     @EnvironmentObject private var appState: AppState
 
+    @AppStorage("textifyr.aiExpanded")  private var aiExpanded:  Bool = false
+    @AppStorage("textifyr.focusMode")   private var focusMode:   Bool = false
+
     @State private var sourceRTFData: Data? = nil
     @StateObject private var editorFormatState = TextFormatState()
     @StateObject private var dictation = DictationHolder()
@@ -363,7 +366,21 @@ struct CaptureReviewStages: View {
 
     private func initializeRTF() {
         guard sourceRTFData == nil else { return }
-        sourceRTFData = initialRTFData ?? textToRTF(initialText)
+        if let rtf = initialRTFData {
+            // In edit mode the stored RTF was already processed/formatted on first capture,
+            // so use it as-is. In capture mode the RTF editor passes raw RTF whose text may
+            // contain markdown literals (e.g. "## Header", "**bold**") — detect and convert
+            // those so the review step opens with proper formatting.
+            if !isEditMode,
+               let attr = NSAttributedString(rtf: rtf, documentAttributes: nil),
+               looksLikeMarkdown(attr.string) {
+                sourceRTFData = textToRTF(attr.string) ?? rtf
+            } else {
+                sourceRTFData = rtf
+            }
+        } else {
+            sourceRTFData = textToRTF(initialText)
+        }
         reviewStepIndex = 1
     }
 
@@ -406,6 +423,17 @@ struct CaptureReviewStages: View {
                         .buttonStyle(.borderless)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { focusMode.toggle() }
+                        } label: {
+                            Image(systemName: focusMode
+                                  ? "arrow.down.right.and.arrow.up.left"
+                                  : "arrow.up.left.and.arrow.down.right")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(focusMode ? "Exit focus mode" : "Focus mode — hide AI tools")
                     }
 
                     // RTF editor block
@@ -418,224 +446,256 @@ struct CaptureReviewStages: View {
                     }
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
 
-                    // Dictation controls
-                    dictationControlsView
+                    if !focusMode {
+                        // Dictation controls
+                        dictationControlsView
 
-                    // Split warning
-                    if plainTextForAI.count > Self.splitThreshold, onAcceptSplit != nil {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                            Text("Large text (~\(estimatedChunks(for: plainTextForAI)) chunks). For better AI results, consider splitting into multiple sources before running AI.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Split Now…") { splitSheetText = plainTextForAI }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.orange.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.25), lineWidth: 0.5))
-                    }
-
-                    Divider()
-
-                    // AI actions card
-                    VStack(spacing: 0) {
-                        // Card header
-                        HStack {
-                            Text("AI Actions")
-                                .font(.caption.bold())
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button {
-                                appState.inspectorDefaultScope = .source
-                                appState.inspectorVisible = true
-                            } label: {
-                                Image(systemName: "slider.horizontal.3")
+                        // Split warning
+                        if plainTextForAI.count > Self.splitThreshold, onAcceptSplit != nil {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                                Text("Large text (~\(estimatedChunks(for: plainTextForAI)) chunks). For better AI results, consider splitting into multiple sources before running AI.")
                                     .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Split Now…") { splitSheetText = plainTextForAI }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
                             }
-                            .buttonStyle(.borderless)
-                            .help("Manage Before Combining actions")
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.orange.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.25), lineWidth: 0.5))
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color(nsColor: .controlBackgroundColor))
 
                         Divider()
 
-                        // Run preset action row
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Run Preset Action")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .textCase(.uppercase)
-
-                            if sourcePipelines.isEmpty {
-                                Text("No Before Combining actions yet — tap ⠿ to add one.")
+                        // AI section disclosure header
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { aiExpanded.toggle() }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "wand.and.sparkles")
                                     .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            } else {
-                                HStack(spacing: 8) {
-                                    Picker("", selection: $selectedSourcePipelineID) {
-                                        Text("Choose an action…").tag(nil as PersistentIdentifier?)
-                                        ForEach(sourcePipelines) { p in
-                                            Text(p.name).tag(p.id as PersistentIdentifier?)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                    .labelsHidden()
-                                    .frame(maxWidth: .infinity)
-
-                                    if isRunningPipeline {
-                                        if let p = pipelineProgress {
-                                            PipelineProgressView(progress: p).transition(.opacity)
-                                        } else {
-                                            ProgressView().controlSize(.small)
-                                        }
-                                        Button("Cancel") {
-                                            runningPipelineTask?.cancel()
-                                            runningPipelineTask = nil
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                    } else {
-                                        Button("Run") { runSourcePipeline() }
-                                            .buttonStyle(.borderedProminent)
-                                            .controlSize(.small)
-                                            .disabled(selectedSourcePipelineID == nil || plainTextForAI.isEmpty)
-                                    }
+                                    .foregroundStyle(Color.accentColor)
+                                Text("AI Actions")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.secondary)
+                                if !aiExpanded && !pipelineRuns.isEmpty {
+                                    Text("(\(pipelineRuns.count) result\(pipelineRuns.count == 1 ? "" : "s"))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
                                 }
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-
-                        HStack {
-                            VStack { Divider() }
-                            Text("or")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .fixedSize()
-                            VStack { Divider() }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-
-                        // Refine with AI row
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("Refine with AI")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                    .textCase(.uppercase)
                                 Spacer()
-                                Text("Each prompt builds on the last")
+                                Image(systemName: aiExpanded ? "chevron.down" : "chevron.right")
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                             }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
 
-                            HStack(alignment: .top, spacing: 8) {
-                                TextField("Type an instruction…", text: $freeformPromptText, axis: .vertical)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.callout)
-                                    .lineLimit(2...4)
-                                    .disabled(isRunningFreeform)
+                        if aiExpanded {
+                            // AI actions card
+                            VStack(spacing: 0) {
+                                // Card header
+                                HStack {
+                                    Text("AI Actions")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Button {
+                                        appState.inspectorDefaultScope = .source
+                                        appState.inspectorVisible = true
+                                    } label: {
+                                        Image(systemName: "slider.horizontal.3")
+                                            .font(.caption)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Manage Before Combining actions")
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color(nsColor: .controlBackgroundColor))
 
-                                VStack(alignment: .leading, spacing: 4) {
-                                    if isRunningFreeform {
-                                        if let p = freeformProgress, p.chunkCount > 1 {
-                                            PipelineProgressView(progress: p)
-                                        } else {
-                                            ProgressView().controlSize(.small)
+                                Divider()
+
+                                // Run preset action row
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Run Preset Action")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .textCase(.uppercase)
+
+                                    if sourcePipelines.isEmpty {
+                                        Text("No Before Combining actions yet — tap ⠿ to add one.")
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                    } else {
+                                        HStack(spacing: 8) {
+                                            Picker("", selection: $selectedSourcePipelineID) {
+                                                Text("Choose an action…").tag(nil as PersistentIdentifier?)
+                                                ForEach(sourcePipelines) { p in
+                                                    Text(p.name).tag(p.id as PersistentIdentifier?)
+                                                }
+                                            }
+                                            .pickerStyle(.menu)
+                                            .labelsHidden()
+                                            .frame(maxWidth: .infinity)
+
+                                            if isRunningPipeline {
+                                                if let p = pipelineProgress {
+                                                    PipelineProgressView(progress: p).transition(.opacity)
+                                                } else {
+                                                    ProgressView().controlSize(.small)
+                                                }
+                                                Button("Cancel") {
+                                                    runningPipelineTask?.cancel()
+                                                    runningPipelineTask = nil
+                                                }
+                                                .buttonStyle(.bordered)
+                                                .controlSize(.small)
+                                            } else {
+                                                Button("Run") { runSourcePipeline() }
+                                                    .buttonStyle(.borderedProminent)
+                                                    .controlSize(.small)
+                                                    .disabled(selectedSourcePipelineID == nil || plainTextForAI.isEmpty)
+                                            }
                                         }
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+
+                                HStack {
+                                    VStack { Divider() }
+                                    Text("or")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .fixedSize()
+                                    VStack { Divider() }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 4)
+
+                                // Refine with AI row
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text("Refine with AI")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                            .textCase(.uppercase)
+                                        Spacer()
+                                        Text("Each prompt builds on the last")
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+
+                                    HStack(alignment: .top, spacing: 8) {
+                                        TextField("Type an instruction…", text: $freeformPromptText, axis: .vertical)
+                                            .textFieldStyle(.roundedBorder)
+                                            .font(.callout)
+                                            .lineLimit(2...4)
+                                            .disabled(isRunningFreeform)
+
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            if isRunningFreeform {
+                                                if let p = freeformProgress, p.chunkCount > 1 {
+                                                    PipelineProgressView(progress: p)
+                                                } else {
+                                                    ProgressView().controlSize(.small)
+                                                }
+                                                Button("Cancel") {
+                                                    runningFreeformTask?.cancel()
+                                                    runningFreeformTask = nil
+                                                }
+                                                .buttonStyle(.bordered)
+                                                .controlSize(.small)
+                                            } else {
+                                                Button("Send") {
+                                                    runningFreeformTask = Task { await runFreeformPrompt() }
+                                                }
+                                                .buttonStyle(.borderedProminent)
+                                                .controlSize(.small)
+                                                .disabled(freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || plainTextForAI.isEmpty)
+                                            }
+                                        }
+                                        .padding(.top, 2)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+
+                                HStack {
+                                    VStack { Divider() }
+                                    Text("or")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .fixedSize()
+                                    VStack { Divider() }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 4)
+
+                                // Translate row
+                                HStack(spacing: 8) {
+                                    Text("Translate")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .textCase(.uppercase)
+                                    Spacer()
+                                    if isTranslating {
+                                        ProgressView().controlSize(.small)
+                                        Text("Translating…").font(.caption).foregroundStyle(.secondary)
                                         Button("Cancel") {
-                                            runningFreeformTask?.cancel()
-                                            runningFreeformTask = nil
+                                            translateTask?.cancel()
+                                            translateTask = nil
+                                            isTranslating = false
                                         }
                                         .buttonStyle(.bordered)
                                         .controlSize(.small)
                                     } else {
-                                        Button("Send") {
-                                            runningFreeformTask = Task { await runFreeformPrompt() }
+                                        TranslateButton(
+                                            helpText: "Translate the captured text using AI"
+                                        ) { lang in
+                                            translate(to: lang)
                                         }
-                                        .buttonStyle(.borderedProminent)
-                                        .controlSize(.small)
-                                        .disabled(freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || plainTextForAI.isEmpty)
+                                        .disabled(plainTextForAI.isEmpty)
                                     }
                                 }
-                                .padding(.top, 2)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
                             }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
+                            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
 
-                        HStack {
-                            VStack { Divider() }
-                            Text("or")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .fixedSize()
-                            VStack { Divider() }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 4)
-
-                        // Translate row
-                        HStack(spacing: 8) {
-                            Text("Translate")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .textCase(.uppercase)
-                            Spacer()
-                            if isTranslating {
-                                ProgressView().controlSize(.small)
-                                Text("Translating…").font(.caption).foregroundStyle(.secondary)
-                                Button("Cancel") {
-                                    translateTask?.cancel()
-                                    translateTask = nil
-                                    isTranslating = false
+                            if !pipelineRuns.isEmpty {
+                                VStack(spacing: 8) {
+                                    ForEach($pipelineRuns) { $run in
+                                        PipelineRunBubble(
+                                            run: $run,
+                                            onTransfer: {
+                                                sourceRTFData = run.resultRTF
+                                                run.isTransferred = true
+                                            },
+                                            onDelete: run.pipelineName == "Refine with AI" && !run.isTransferred ? {
+                                                pipelineRuns.removeAll { $0.id == run.id }
+                                            } : nil
+                                        )
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                                    }
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                            } else {
-                                TranslateButton(
-                                    helpText: "Translate the captured text using AI"
-                                ) { lang in
-                                    translate(to: lang)
-                                }
-                                .disabled(plainTextForAI.isEmpty)
+                                .animation(.spring(response: 0.3, dampingFraction: 0.85), value: pipelineRuns.count)
                             }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                    }
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-
-                    if !pipelineRuns.isEmpty {
-                        VStack(spacing: 8) {
-                            ForEach($pipelineRuns) { $run in
-                                PipelineRunBubble(
-                                    run: $run,
-                                    onTransfer: {
-                                        sourceRTFData = run.resultRTF
-                                        run.isTransferred = true
-                                    },
-                                    onDelete: run.pipelineName == "Refine with AI" && !run.isTransferred ? {
-                                        pipelineRuns.removeAll { $0.id == run.id }
-                                    } : nil
-                                )
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                            }
-                        }
-                        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: pipelineRuns.count)
-                    }
+                    } // end if !focusMode
 
                     if let err = errorText {
                         Text(err).font(.caption).foregroundStyle(.red)

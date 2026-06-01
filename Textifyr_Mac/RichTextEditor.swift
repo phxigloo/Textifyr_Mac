@@ -16,6 +16,11 @@ final class TextFormatState: ObservableObject {
     @Published var fontSize: CGFloat    = 13
     @Published var textColor: Color     = Color(nsColor: .labelColor)
     @Published var alignment: NSTextAlignment = .left
+    @Published var isBulletList   = false
+    @Published var isNumberedList = false
+    @Published var isSuperscript  = false
+    @Published var isSubscript    = false
+    @Published var highlightColor: Color = Color(nsColor: .clear)
 
     // Prevents onChange(of: textColor) from re-applying color while we are syncing.
     private var isSyncing = false
@@ -121,6 +126,106 @@ final class TextFormatState: ObservableObject {
         alignment = align
     }
 
+    func toggleList(ordered: Bool) {
+        guard let tv = textView, let ts = tv.textStorage, ts.length > 0 else { return }
+        let range = tv.selectedRange()
+        let fullStr = tv.string as NSString
+        let paraRange = fullStr.paragraphRange(for: range)
+        let existingStyle = ts.attribute(.paragraphStyle, at: paraRange.location, effectiveRange: nil) as? NSParagraphStyle
+        let currentLists = existingStyle?.textLists ?? []
+        let desiredFormat: NSTextList.MarkerFormat = ordered ? .decimal : .disc
+        let alreadyThisKind = currentLists.first?.markerFormat == desiredFormat
+        ts.beginEditing()
+        if alreadyThisKind {
+            let plain = NSMutableParagraphStyle()
+            ts.addAttribute(.paragraphStyle, value: plain, range: paraRange)
+        } else {
+            let list = NSTextList(markerFormat: desiredFormat, options: 0)
+            let ps = NSMutableParagraphStyle()
+            ps.textLists = [list]
+            ps.headIndent = 18
+            ps.firstLineHeadIndent = 0
+            ts.addAttribute(.paragraphStyle, value: ps, range: paraRange)
+        }
+        ts.endEditing()
+        syncFromTextView()
+    }
+
+    func changeIndent(by delta: CGFloat) {
+        guard let tv = textView, let ts = tv.textStorage, ts.length > 0 else { return }
+        let range = tv.selectedRange()
+        let fullStr = tv.string as NSString
+        let paraRange = fullStr.paragraphRange(for: range)
+        ts.beginEditing()
+        ts.enumerateAttribute(.paragraphStyle, in: paraRange, options: []) { val, r, _ in
+            let ps = (val as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            ps.headIndent           = max(0, ps.headIndent + delta)
+            ps.firstLineHeadIndent  = max(0, ps.firstLineHeadIndent + delta)
+            ts.addAttribute(.paragraphStyle, value: ps, range: r)
+        }
+        ts.endEditing()
+    }
+
+    func applySuperscript() {
+        guard let tv = textView else { return }
+        let range = tv.selectedRange()
+        let current = (tv.typingAttributes[.superscript] as? Int) ?? 0
+        let newVal  = current == 1 ? 0 : 1
+        if range.length > 0 {
+            tv.textStorage?.addAttribute(.superscript, value: newVal, range: range)
+        } else {
+            tv.typingAttributes[.superscript] = newVal
+        }
+        isSuperscript = newVal == 1
+        if isSuperscript { isSubscript = false }
+        syncFromTextView()
+    }
+
+    func applySubscript() {
+        guard let tv = textView else { return }
+        let range = tv.selectedRange()
+        let current = (tv.typingAttributes[.superscript] as? Int) ?? 0
+        let newVal  = current == -1 ? 0 : -1
+        if range.length > 0 {
+            tv.textStorage?.addAttribute(.superscript, value: newVal, range: range)
+        } else {
+            tv.typingAttributes[.superscript] = newVal
+        }
+        isSubscript = newVal == -1
+        if isSubscript { isSuperscript = false }
+        syncFromTextView()
+    }
+
+    func applyHighlight() {
+        guard let tv = textView else { return }
+        let ns = NSColor(highlightColor)
+        let range = tv.selectedRange()
+        if range.length > 0 {
+            if ns.alphaComponent < 0.01 {
+                tv.textStorage?.removeAttribute(.backgroundColor, range: range)
+            } else {
+                tv.textStorage?.addAttribute(.backgroundColor, value: ns, range: range)
+            }
+        } else {
+            if ns.alphaComponent < 0.01 {
+                tv.typingAttributes.removeValue(forKey: .backgroundColor)
+            } else {
+                tv.typingAttributes[.backgroundColor] = ns
+            }
+        }
+    }
+
+    func clearHighlight() {
+        guard let tv = textView else { return }
+        let range = tv.selectedRange()
+        if range.length > 0 {
+            tv.textStorage?.removeAttribute(.backgroundColor, range: range)
+        } else {
+            tv.typingAttributes.removeValue(forKey: .backgroundColor)
+        }
+        highlightColor = Color(nsColor: .clear)
+    }
+
     // MARK: Sync from text view
 
     /// Refreshes published state to match the current cursor position / typing attributes.
@@ -157,6 +262,24 @@ final class TextFormatState: ObservableObject {
         if let para = attrs[.paragraphStyle] as? NSParagraphStyle {
             alignment = para.alignment == .natural ? .left : para.alignment
         }
+
+        let lists = (attrs[.paragraphStyle] as? NSParagraphStyle)?.textLists ?? []
+        isBulletList   = lists.first?.markerFormat == .disc
+        isNumberedList = lists.first?.markerFormat == .decimal
+
+        let superVal = (attrs[.superscript] as? Int) ?? 0
+        isSuperscript = superVal == 1
+        isSubscript   = superVal == -1
+
+        if let bg = attrs[.backgroundColor] as? NSColor {
+            isSyncing = true
+            highlightColor = Color(nsColor: bg)
+            isSyncing = false
+        } else {
+            isSyncing = true
+            highlightColor = Color(nsColor: .clear)
+            isSyncing = false
+        }
     }
 }
 
@@ -189,21 +312,99 @@ struct FormattingToolbar: View {
 
             sep
 
-            // Text colour
-            ColorPicker("", selection: $fmt.textColor, supportsOpacity: false)
-                .labelsHidden()
-                .frame(width: 26, height: 20)
-                .help("Text colour")
-                .onChange(of: fmt.textColor) { _, _ in fmt.applyTextColor() }
-
-            sep
-
             // Alignment
             HStack(spacing: 1) {
                 fmtBtn("text.alignleft",   on: fmt.alignment == .left,      tip: "Align Left")   { fmt.applyAlignment(.left) }
                 fmtBtn("text.aligncenter", on: fmt.alignment == .center,    tip: "Align Centre") { fmt.applyAlignment(.center) }
                 fmtBtn("text.alignright",  on: fmt.alignment == .right,     tip: "Align Right")  { fmt.applyAlignment(.right) }
                 fmtBtn("text.justify",     on: fmt.alignment == .justified, tip: "Justify")      { fmt.applyAlignment(.justified) }
+            }
+
+            sep
+
+            // Lists and indentation — single menu button keeps toolbar compact
+            Menu {
+                Button { fmt.toggleList(ordered: false) } label: {
+                    Label(fmt.isBulletList ? "Remove Bullet List" : "Bullet List",
+                          systemImage: fmt.isBulletList ? "list.bullet.circle.fill" : "list.bullet")
+                }
+                Button { fmt.toggleList(ordered: true) } label: {
+                    Label(fmt.isNumberedList ? "Remove Numbered List" : "Numbered List",
+                          systemImage: fmt.isNumberedList ? "list.number.circle.fill" : "list.number")
+                }
+                Divider()
+                Button { fmt.changeIndent(by:  18) } label: { Label("Indent More", systemImage: "increase.indent") }
+                Button { fmt.changeIndent(by: -18) } label: { Label("Outdent",     systemImage: "decrease.indent") }
+            } label: {
+                Image(systemName: (fmt.isBulletList || fmt.isNumberedList) ? "list.bullet.circle.fill" : "list.dash")
+                    .font(.system(size: 12))
+                    .frame(width: 26, height: 22)
+                    .background(
+                        (fmt.isBulletList || fmt.isNumberedList) ? Color.accentColor.opacity(0.18) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 4)
+                    )
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Lists and indentation")
+
+            sep
+
+            // Superscript / Subscript
+            HStack(spacing: 1) {
+                Button { fmt.applySuperscript() } label: {
+                    Text("x²")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 26, height: 22)
+                        .background(
+                            fmt.isSuperscript ? Color.accentColor.opacity(0.18) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 4)
+                        )
+                }
+                .buttonStyle(.borderless)
+                .help("Superscript")
+
+                Button { fmt.applySubscript() } label: {
+                    Text("x₂")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 26, height: 22)
+                        .background(
+                            fmt.isSubscript ? Color.accentColor.opacity(0.18) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 4)
+                        )
+                }
+                .buttonStyle(.borderless)
+                .help("Subscript")
+            }
+
+            sep
+
+            // Text colour + Highlight colour side by side
+            HStack(spacing: 4) {
+                ColorPicker("", selection: $fmt.textColor, supportsOpacity: false)
+                    .labelsHidden()
+                    .frame(width: 26, height: 20)
+                    .help("Text colour")
+                    .onChange(of: fmt.textColor) { _, _ in fmt.applyTextColor() }
+
+                Button {
+                    fmt.clearHighlight()
+                } label: {
+                    ZStack {
+                        Image(systemName: "highlighter")
+                            .font(.system(size: 11))
+                            .foregroundStyle(fmt.highlightColor == Color(nsColor: .clear) ? Color.secondary : Color.primary)
+                    }
+                    .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.borderless)
+                .help("Clear highlight")
+
+                ColorPicker("", selection: $fmt.highlightColor, supportsOpacity: false)
+                    .labelsHidden()
+                    .frame(width: 26, height: 20)
+                    .help("Highlight colour")
+                    .onChange(of: fmt.highlightColor) { _, _ in fmt.applyHighlight() }
             }
 
             Spacer()
