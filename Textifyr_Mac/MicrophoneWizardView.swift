@@ -151,11 +151,17 @@ struct MicrophoneWizardView: View {
                     },
                     onAcceptSplit: { parts in
                         guard let session = capturedSession else { return }
-                        session.rawText = parts[0]
+                        let first = parts[0]
+                        session.rawText    = first.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                        session.rawRTFData = first.rtf(from: NSRange(location: 0, length: first.length),
+                                                       documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
                         for part in parts.dropFirst() {
-                            let order = (session.document?.sourceSessions ?? []).count
+                            let order      = (session.document?.sourceSessions ?? []).count
                             let newSession = SourceSession(captureMethod: session.captureMethod,
-                                                          rawText: part, sortOrder: order)
+                                                          rawText: part.string.trimmingCharacters(in: .whitespacesAndNewlines),
+                                                          sortOrder: order)
+                            newSession.rawRTFData = part.rtf(from: NSRange(location: 0, length: part.length),
+                                                             documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
                             modelContext.insert(newSession)
                             newSession.document = session.document
                             session.document?.sourceSessions = (session.document?.sourceSessions ?? []) + [newSession]

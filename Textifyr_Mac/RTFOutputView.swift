@@ -123,6 +123,8 @@ struct RTFOutputView: View {
 
     // MARK: - Header
 
+    private var toolbarSep: some View { Divider().frame(height: 18) }
+
     private var headerBar: some View {
         HStack(spacing: 8) {
             Text("Output")
@@ -130,7 +132,32 @@ struct RTFOutputView: View {
 
             Spacer()
 
+            // ── Section 1: Combine / Clear ────────────────────────────────
+            Button {
+                viewModel.useMergedSourcesAsOutput()
+            } label: {
+                Label("Combine", systemImage: "text.append")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(document.mergedSourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                      || viewModel.isFormatting)
+            .help("Assemble all sources into the Output without AI formatting")
 
+            if document.hasOutput && !viewModel.isFormatting {
+                Button {
+                    viewModel.clearOutput()
+                } label: {
+                    Label("Clear", systemImage: "eraser")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Clear formatted output")
+            }
+
+            toolbarSep
+
+            // ── Section 2: Action / Format / Translate ────────────────────
             // Pipeline picker
             Menu {
                 ForEach(outputPipelines) { pipeline in
@@ -153,28 +180,53 @@ struct RTFOutputView: View {
                     Label("Manage Actions…", systemImage: "slider.horizontal.3")
                 }
             } label: {
-                VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
                     Label(
                         document.pipeline?.name ?? "Action",
                         systemImage: "wand.and.sparkles"
                     )
-                    .font(.caption)
                     if estimatedChunkCount > 1 {
-                        Text("~\(estimatedChunkCount) chunks")
-                            .font(.caption2)
-                            .foregroundStyle(estimatedChunkCount > 4
-                                ? AnyShapeStyle(Color.orange)
-                                : AnyShapeStyle(Color.secondary))
+                        Text("~\(estimatedChunkCount)")
+                            .foregroundStyle(estimatedChunkCount > 4 ? Color.orange : Color.secondary)
                     }
                 }
             }
-            .menuStyle(.borderlessButton)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
             .fixedSize()
             .help(estimatedChunkCount > 4
-                ? "~\(estimatedChunkCount) chunks — synthesis prompts (summarise, analyse) work better as multi-step actions"
+                ? "~\(estimatedChunkCount) chunks — synthesis prompts work better as multi-step actions"
                 : "Select a Final Document action")
 
-            // Translate
+            // Format / Cancel
+            if viewModel.isFormatting {
+                ProgressView().controlSize(.small)
+                if !viewModel.formattingStep.isEmpty {
+                    Text(viewModel.formattingStep)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: 160)
+                }
+                Button("Cancel") {
+                    viewModel.cancelFormatting(appState: appState)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Button {
+                    Task { await viewModel.runFormatting(appState: appState) }
+                } label: {
+                    Label("Format", systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(document.pipeline == nil ||
+                          document.mergedSourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Run the selected action on all sources")
+            }
+
+            // Translate (only when output exists and not currently formatting)
             if document.hasOutput && !viewModel.isFormatting {
                 if isTranslating {
                     ProgressView().controlSize(.small)
@@ -190,70 +242,24 @@ struct RTFOutputView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 } else {
-                    TranslateButton(helpText: "Translate the formatted output using AI") { lang in
+                    TranslateButton(helpText: "Translate the formatted output using AI", bordered: true) { lang in
                         translateOutput(to: lang)
                     }
                 }
             }
 
-            // Format / Cancel
-            if viewModel.isFormatting {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    if !viewModel.formattingStep.isEmpty {
-                        Text(viewModel.formattingStep)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: 200)
-                    }
-                    Button("Cancel") {
-                        viewModel.cancelFormatting(appState: appState)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            } else {
-                Button {
-                    viewModel.useMergedSourcesAsOutput()
-                } label: {
-                    Label("Combine", systemImage: "text.append")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(document.mergedSourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isFormatting)
-                .help("Assemble all sources into the Output without AI formatting")
-
-                Button {
-                    Task { await viewModel.runFormatting(appState: appState) }
-                } label: {
-                    Label("Format", systemImage: "sparkles")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(document.pipeline == nil ||
-                          document.mergedSourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .help("Run Final Document action")
-            }
-
+            // ── Section 3: Export ─────────────────────────────────────────
             if document.hasOutput && !viewModel.isFormatting {
+                toolbarSep
+
                 Button {
                     showExportSheet = true
                 } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
-                        .font(.caption)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .help("Export document")
-
-                Button {
-                    viewModel.clearOutput()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .help("Clear formatted output")
             }
         }
         .frame(height: 44)

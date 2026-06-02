@@ -152,8 +152,12 @@ struct CameraInputView: View {
                         captureVM.reset()
                         closeWizard()
                     },
-                    onAccept: { finalText, _ in
-                        captureVM.saveTextCapture(finalText, captureMethod: .camera)
+                    onAccept: { finalText, rtfData in
+                        if let rtf = rtfData {
+                            captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .camera)
+                        } else {
+                            captureVM.saveTextCapture(finalText, captureMethod: .camera)
+                        }
                     }
                 )
                 .transition(stepTransition)

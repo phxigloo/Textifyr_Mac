@@ -71,11 +71,15 @@ struct WebInputView: View {
                             captureVM.reset()
                             closeWizard()
                         },
-                        onAccept: { finalText, _ in
-                            captureVM.saveTextCapture(finalText, captureMethod: .webURL)
+                        onAccept: { finalText, rtfData in
+                            if let rtf = rtfData {
+                                captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .webURL)
+                            } else {
+                                captureVM.saveTextCapture(finalText, captureMethod: .webURL)
+                            }
                         },
                         onAcceptSplit: { parts in
-                            captureVM.saveMultipleTextCaptures(parts, captureMethod: .webURL)
+                            captureVM.saveMultipleRTFCaptures(parts, captureMethod: .webURL)
                         }
                     )
                     .transition(stepTransition)

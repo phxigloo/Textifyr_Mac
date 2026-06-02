@@ -292,7 +292,7 @@ struct CaptureReviewStages: View {
     var onBack: (() -> Void)?
     let onCancel: () -> Void
     let onAccept: (String, Data?) -> Void
-    var onAcceptSplit: (([String]) -> Void)? = nil
+    var onAcceptSplit: (([NSAttributedString]) -> Void)? = nil
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "source" },
            sort: \FormattingPipeline.name) private var sourcePipelines: [FormattingPipeline]
@@ -319,7 +319,7 @@ struct CaptureReviewStages: View {
 
     @State private var isTranslating = false
     @State private var translateTask: Task<Void, Never>? = nil
-    @State private var splitSheetText: String? = nil
+    @State private var splitSheetRTFData: Data? = nil
 
     private static let splitThreshold = 50_000
 
@@ -333,7 +333,7 @@ struct CaptureReviewStages: View {
         onBack: (() -> Void)? = nil,
         onCancel: @escaping () -> Void,
         onAccept: @escaping (String, Data?) -> Void,
-        onAcceptSplit: (([String]) -> Void)? = nil
+        onAcceptSplit: (([NSAttributedString]) -> Void)? = nil
     ) {
         self.originalText = originalText
         self.initialText = initialText
@@ -350,13 +350,14 @@ struct CaptureReviewStages: View {
     var body: some View {
         reviewView
             .onAppear { initializeRTF() }
-            .sheet(isPresented: Binding(get: { splitSheetText != nil }, set: { if !$0 { splitSheetText = nil } })) {
-                if let text = splitSheetText, let handler = onAcceptSplit {
-                    SourceSplitSheet(text: text) { parts in
-                        splitSheetText = nil
+            .sheet(isPresented: Binding(get: { splitSheetRTFData != nil },
+                                        set: { if !$0 { splitSheetRTFData = nil } })) {
+                if let data = splitSheetRTFData, let handler = onAcceptSplit {
+                    SourceSplitSheet(rtfData: data) { parts in
+                        splitSheetRTFData = nil
                         handler(parts)
                     } onCancel: {
-                        splitSheetText = nil
+                        splitSheetRTFData = nil
                     }
                 }
             }
@@ -460,7 +461,7 @@ struct CaptureReviewStages: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 Spacer()
-                                Button("Split Now…") { splitSheetText = plainTextForAI }
+                                Button("Split Now…") { splitSheetRTFData = sourceRTFData }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
                             }
@@ -936,94 +937,71 @@ struct CaptureReviewStages: View {
 // MARK: - Source split sheet
 
 struct SourceSplitSheet: View {
-    let text: String
-    let onConfirm: ([String]) -> Void
+    let rtfData: Data
+    let onConfirm: ([NSAttributedString]) -> Void
     let onCancel: () -> Void
 
-    private var paragraphs: [String] {
-        text.components(separatedBy: "\n\n")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-    }
+    private let attr: NSAttributedString
 
-    private var isTextWall: Bool { paragraphs.count < 3 }
-
+    // Split-point state
     @State private var splitAfter: Set<Int> = []
     @State private var wallPartCount: Int = 2
+    @State private var maxCharsPerSplit: Int = 0
     @State private var hoveredDivider: Int? = nil
 
-    private var paragraphParts: [String] {
-        var result: [String] = []
-        var current: [String] = []
-        for (i, para) in paragraphs.enumerated() {
-            current.append(para)
-            if splitAfter.contains(i) {
-                result.append(current.joined(separator: "\n\n"))
-                current = []
-            }
-        }
-        if !current.isEmpty { result.append(current.joined(separator: "\n\n")) }
-        return result.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    // Cached results — populated once on appear, rebuilt only when split config changes.
+    // Never recomputed during rendering (scroll/hover/click).
+    @State private var paragraphsCache: [NSAttributedString] = []
+    @State private var partLengthsCache: [Int] = []   // NSString UTF-16 lengths; O(1) per access
+    @State private var partCountCache: Int = 0
+
+    init(rtfData: Data,
+         onConfirm: @escaping ([NSAttributedString]) -> Void,
+         onCancel: @escaping () -> Void) {
+        self.rtfData = rtfData
+        self.onConfirm = onConfirm
+        self.onCancel = onCancel
+        self.attr = (try? NSAttributedString(data: rtfData,
+                                              options: [.documentType: NSAttributedString.DocumentType.rtfd],
+                                              documentAttributes: nil))
+            ?? NSAttributedString(rtf: rtfData, documentAttributes: nil)
+            ?? NSAttributedString()
     }
 
-    private func computeWallParts(count: Int) -> [String] {
-        guard count >= 2, !text.isEmpty else { return [text] }
-        let chars = Array(text)
-        let total = chars.count
-        var splitPoints: [Int] = []
-        for i in 1..<count {
-            let target = (total * i) / count
-            var foundAt: Int? = nil
-            let fwdLimit = min(target + 600, total)
-            for j in target..<fwdLimit {
-                let c = chars[j]
-                if (c == "." || c == "!" || c == "?"), j + 1 < total {
-                    let next = chars[j + 1]
-                    if next == " " || next == "\n" || next == "\r" { foundAt = j + 1; break }
-                }
-            }
-            if foundAt == nil {
-                let bwdLimit = max(target - 600, 0)
-                for j in stride(from: target - 1, through: bwdLimit, by: -1) {
-                    let c = chars[j]
-                    if (c == "." || c == "!" || c == "?"), j + 1 < total {
-                        let next = chars[j + 1]
-                        if next == " " || next == "\n" || next == "\r" { foundAt = j + 1; break }
-                    }
-                }
-            }
-            let sp = foundAt ?? target
-            if splitPoints.isEmpty || sp > (splitPoints.last ?? 0) { splitPoints.append(sp) }
-        }
-        var parts: [String] = []
-        var start = 0
-        for sp in splitPoints {
-            let end = min(sp, total)
-            if end > start {
-                let sub = String(chars[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !sub.isEmpty { parts.append(sub) }
-            }
-            start = end
-        }
-        if start < total {
-            let sub = String(chars[start..<total]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !sub.isEmpty { parts.append(sub) }
-        }
-        return parts.isEmpty ? [text] : parts
-    }
-
-    private var parts: [String] {
-        isTextWall ? computeWallParts(count: wallPartCount) : paragraphParts
-    }
-
-    private var canConfirm: Bool { parts.count >= 2 }
+    // O(1) reads from cache — safe to call in body.
+    private var isTextWall: Bool { paragraphsCache.count < 3 }
+    private var canConfirm: Bool { partCountCache >= 2 }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            // Header
+            HStack(spacing: 12) {
                 Label("Split Source", systemImage: "scissors")
                     .font(.headline)
                 Spacer()
+                if maxCharsPerSplit > 0 {
+                    HStack(spacing: 4) {
+                        Text("Max per part:")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Stepper(value: $maxCharsPerSplit, in: 500...100_000, step: 500) {
+                            Text(maxCharsPerSplit.formatted())
+                                .font(.caption.monospacedDigit())
+                                .frame(minWidth: 52, alignment: .trailing)
+                        }
+                        .controlSize(.small)
+                        Button {
+                            maxCharsPerSplit = 0
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
+                    Button("Set max…") { maxCharsPerSplit = 5_000 }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
                 Button("Cancel", action: onCancel).buttonStyle(.bordered)
             }
             .padding(.horizontal, 20)
@@ -1032,49 +1010,62 @@ struct SourceSplitSheet: View {
 
             Divider()
 
-            if isTextWall {
-                wallSplitterView
-            } else {
-                paragraphSplitterView
-            }
+            if isTextWall { wallSplitterView } else { paragraphSplitterView }
 
             Divider()
 
+            // Footer: per-part char counts + Confirm
             HStack(spacing: 10) {
                 if canConfirm {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 10) {
-                            ForEach(Array(parts.enumerated()), id: \.offset) { i, part in
+                            // Use cached lengths — O(1) each, no string traversal.
+                            ForEach(0..<partLengthsCache.count, id: \.self) { i in
+                                let len  = partLengthsCache[i]
+                                let over = maxCharsPerSplit > 0 && len > maxCharsPerSplit
                                 HStack(spacing: 3) {
                                     Image(systemName: "\(i + 1).square.fill")
                                         .font(.caption2)
                                         .foregroundStyle(Color.accentColor)
-                                    Text("\(part.count.formatted()) chars")
+                                    Text("\(len.formatted()) chars")
                                         .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(over ? Color.orange : Color.secondary)
+                                    if over {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.caption2).foregroundStyle(.orange)
+                                    }
                                 }
                             }
                         }
                     }
                 } else {
-                    Text(isTextWall ? "Choose number of parts above" : "Tap the lines between paragraphs to add split points")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    Text(isTextWall
+                         ? "Choose number of parts above"
+                         : "Tap the lines between paragraphs to add split points")
+                        .font(.caption).foregroundStyle(.tertiary)
                 }
                 Spacer()
-                Button("Confirm Split") {
-                    let trimmed = parts
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .filter { !$0.isEmpty }
-                    onConfirm(trimmed)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canConfirm)
+                Button("Confirm Split") { confirmSplit() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canConfirm)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
         .frame(width: 640, height: 540)
+        .onAppear {
+            // Parse paragraphs once — the only O(total chars) operation in this view.
+            paragraphsCache = Self.paragraphsOf(attr)
+            rebuildPartCache()
+        }
+        .onChange(of: splitAfter)      { _, _ in rebuildPartCache() }
+        .onChange(of: wallPartCount)   { _, _ in rebuildPartCache() }
+        .onChange(of: maxCharsPerSplit) { _, newVal in
+            if isTextWall && newVal > 0 {
+                wallPartCount = max(2, Int(ceil(Double(attr.length) / Double(newVal))))
+            }
+            rebuildPartCache()
+        }
     }
 
     // MARK: - Option A: paragraph list with toggle dividers
@@ -1082,17 +1073,16 @@ struct SourceSplitSheet: View {
     private var paragraphSplitterView: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(Array(paragraphs.enumerated()), id: \.offset) { i, para in
-                    Text(para)
-                        .font(.caption)
-                        .foregroundStyle(.primary)
+                // Index-based ForEach avoids Array(enumerated()) allocation on every render.
+                ForEach(0..<paragraphsCache.count, id: \.self) { i in
+                    Text(AttributedString(paragraphsCache[i]))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                         .textSelection(.enabled)
                         .background(Color(nsColor: .textBackgroundColor))
 
-                    if i < paragraphs.count - 1 {
+                    if i < paragraphsCache.count - 1 {
                         toggleDividerRow(after: i)
                     }
                 }
@@ -1103,7 +1093,7 @@ struct SourceSplitSheet: View {
 
     @ViewBuilder
     private func toggleDividerRow(after index: Int) -> some View {
-        let isActive = splitAfter.contains(index)
+        let isActive  = splitAfter.contains(index)
         let isHovered = hoveredDivider == index
 
         Button {
@@ -1171,26 +1161,32 @@ struct SourceSplitSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Stepper(value: $wallPartCount, in: 2...5) {
+                Stepper(value: $wallPartCount, in: 2...10) {
                     Text("Split into **\(wallPartCount)** parts")
                 }
 
+                // Wall preview reads from partLengthsCache; actual previews are pre-built
+                // in wallPreviewsCache so the view body stays computation-free.
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Preview")
                         .font(.caption.bold())
                         .foregroundStyle(.tertiary)
                         .textCase(.uppercase)
 
-                    ForEach(Array(parts.enumerated()), id: \.offset) { i, part in
+                    ForEach(0..<wallPreviewsCache.count, id: \.self) { i in
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Part \(i + 1)")
                                 .font(.caption2.bold())
                                 .foregroundStyle(Color.accentColor)
-                            Text(part.count > 300 ? (String(part.prefix(300)) + "…") : part)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Text(AttributedString(wallPreviewsCache[i]))
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                            if i < partLengthsCache.count && partLengthsCache[i] > 300 {
+                                Text("…")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        .font(.caption)
                         .padding(10)
                         .background(Color(nsColor: .controlBackgroundColor))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -1199,5 +1195,118 @@ struct SourceSplitSheet: View {
             }
             .padding(20)
         }
+    }
+
+    // MARK: - Cache management
+
+    // Pre-built 300-char attributed previews for the wall splitter. Updated with partsCache.
+    @State private var wallPreviewsCache: [NSAttributedString] = []
+
+    /// Rebuilds part length and preview caches from the current split configuration.
+    /// Called only when split points or counts change — never during rendering.
+    private func rebuildPartCache() {
+        let builtParts = buildParts()
+        partCountCache    = builtParts.count
+        partLengthsCache  = builtParts.map { $0.length }
+        if isTextWall {
+            wallPreviewsCache = builtParts.map { part in
+                part.attributedSubstring(from: NSRange(location: 0, length: min(300, part.length)))
+            }
+        }
+    }
+
+    /// Materialises the [NSAttributedString] split result from current config.
+    /// Called from rebuildPartCache (on config change) and confirmSplit (on user action).
+    private func buildParts() -> [NSAttributedString] {
+        if isTextWall { return buildWallParts(count: wallPartCount) }
+
+        // Paragraph mode: combine paragraphsCache using the splitAfter set.
+        let paras = paragraphsCache
+        let combined = NSMutableAttributedString()
+        var result: [NSAttributedString] = []
+        for (i, para) in paras.enumerated() {
+            if combined.length > 0 { combined.append(NSAttributedString(string: "\n\n")) }
+            combined.append(para)
+            if splitAfter.contains(i) || i == paras.count - 1 {
+                let part = NSAttributedString(attributedString: combined)
+                if !part.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    result.append(part)
+                }
+                combined.setAttributedString(NSAttributedString())
+            }
+        }
+        return result
+    }
+
+    private func buildWallParts(count: Int) -> [NSAttributedString] {
+        guard count >= 2, attr.length > 0 else { return [attr] }
+        let ns = attr.string as NSString
+        let total = ns.length
+        var splitPoints: [Int] = []
+        for i in 1..<count {
+            let target = (total * i) / count
+            var found: Int? = nil
+            for j in target..<min(target + 600, total) {
+                let c = ns.character(at: j)
+                if (c == 0x2E || c == 0x21 || c == 0x3F), j + 1 < total {
+                    let n = ns.character(at: j + 1)
+                    if n == 0x20 || n == 0x0A || n == 0x0D { found = j + 1; break }
+                }
+            }
+            if found == nil {
+                for j in stride(from: target - 1, through: max(target - 600, 0), by: -1) {
+                    let c = ns.character(at: j)
+                    if (c == 0x2E || c == 0x21 || c == 0x3F), j + 1 < total {
+                        let n = ns.character(at: j + 1)
+                        if n == 0x20 || n == 0x0A || n == 0x0D { found = j + 1; break }
+                    }
+                }
+            }
+            let sp = found ?? target
+            if splitPoints.isEmpty || sp > splitPoints.last! { splitPoints.append(sp) }
+        }
+        var parts: [NSAttributedString] = []
+        var start = 0
+        for sp in splitPoints {
+            let end = min(sp, total)
+            if end > start {
+                let sub = attr.attributedSubstring(from: NSRange(location: start, length: end - start))
+                if !sub.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(sub) }
+            }
+            start = end
+        }
+        if start < total {
+            let sub = attr.attributedSubstring(from: NSRange(location: start, length: total - start))
+            if !sub.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(sub) }
+        }
+        return parts.isEmpty ? [attr] : parts
+    }
+
+    private func confirmSplit() {
+        // Materialise the full attributed strings only at the moment of confirmation.
+        let result = buildParts().filter {
+            !$0.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard result.count >= 2 else { return }
+        onConfirm(result)
+    }
+
+    // MARK: - Static helpers
+
+    private static func paragraphsOf(_ attr: NSAttributedString) -> [NSAttributedString] {
+        var result: [NSAttributedString] = []
+        let ns  = attr.string as NSString
+        var loc = 0
+        while loc < ns.length {
+            let r   = ns.paragraphRange(for: NSRange(location: loc, length: 0))
+            let sub = attr.attributedSubstring(from: r)
+            if !sub.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                result.append(sub)
+            }
+            let next = NSMaxRange(r)
+            if next <= loc { break }
+            loc = next
+        }
+        return result
     }
 }

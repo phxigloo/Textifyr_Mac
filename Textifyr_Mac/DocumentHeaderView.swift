@@ -9,6 +9,7 @@ struct DocumentHeaderView: View {
     @Query(sort: \WorkStage.sortOrder) private var stages: [WorkStage]
     @FocusState private var titleFocused: Bool
     @State private var showStagePicker = false
+    @State private var titleSaveTask: Task<Void, Never>? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -19,6 +20,15 @@ struct DocumentHeaderView: View {
                 .onSubmit { viewModel.saveTitle() }
                 .onChange(of: titleFocused) { _, focused in
                     if !focused { viewModel.saveTitle() }
+                }
+                .onChange(of: viewModel.title) { _, _ in
+                    // Save after typing stops — covers focus moving to AppKit views
+                    // where @FocusState may not fire.
+                    titleSaveTask?.cancel()
+                    titleSaveTask = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(1))
+                        if !Task.isCancelled { viewModel.saveTitle() }
+                    }
                 }
 
             Spacer()

@@ -132,8 +132,12 @@ struct ScreenCaptureInputView: View {
                     captureVM.reset()
                     closeWizard()
                 },
-                onAccept: { finalText, _ in
-                    captureVM.saveTextCapture(finalText, captureMethod: .screenCapture)
+                onAccept: { finalText, rtfData in
+                    if let rtf = rtfData {
+                        captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .screenCapture)
+                    } else {
+                        captureVM.saveTextCapture(finalText, captureMethod: .screenCapture)
+                    }
                 }
             )
         }

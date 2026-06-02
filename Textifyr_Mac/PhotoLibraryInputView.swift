@@ -115,8 +115,12 @@ struct PhotoLibraryInputView: View {
                     captureVM.reset()
                     closeWizard()
                 },
-                onAccept: { finalText, _ in
-                    captureVM.saveTextCapture(finalText, captureMethod: .photoLibrary)
+                onAccept: { finalText, rtfData in
+                    if let rtf = rtfData {
+                        captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .photoLibrary)
+                    } else {
+                        captureVM.saveTextCapture(finalText, captureMethod: .photoLibrary)
+                    }
                 }
             )
         }

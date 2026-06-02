@@ -43,6 +43,10 @@ final class TextFormatState: ObservableObject {
         syncFromTextView()
     }
 
+    @Published var isFindBarVisible  = false
+    @Published var findMatchCount    = 0
+    @Published var findCurrentMatch  = 0
+
     func performFind(_ action: NSTextFinder.Action) {
         guard let tv = textView else { return }
         tv.window?.makeFirstResponder(tv)
@@ -52,6 +56,32 @@ final class TextFormatState: ObservableObject {
             @objc var tag: Int { _tag }
         }
         tv.performTextFinderAction(TaggedSender(action.rawValue))
+        if action == .nextMatch || action == .previousMatch {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                self?.refreshFindCount()
+            }
+        }
+    }
+
+    func toggleFind() {
+        isFindBarVisible.toggle()
+        performFind(isFindBarVisible ? .showFindInterface : .hideFindInterface)
+        if !isFindBarVisible { findMatchCount = 0; findCurrentMatch = 0 }
+    }
+
+    func refreshFindCount() {
+        guard let tv = textView else { return }
+        let searchText = NSPasteboard(name: .find).string(forType: .string) ?? ""
+        guard !searchText.isEmpty else { findMatchCount = 0; findCurrentMatch = 0; return }
+        let text = tv.string
+        guard let regex = try? NSRegularExpression(
+            pattern: NSRegularExpression.escapedPattern(for: searchText),
+            options: .caseInsensitive) else { return }
+        let nsText    = text as NSString
+        let allRanges = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+        findMatchCount   = allRanges.count
+        let sel          = tv.selectedRange()
+        findCurrentMatch = (allRanges.firstIndex { NSEqualRanges($0.range, sel) } ?? -1) + 1
     }
 
     func applyUnderline() {
@@ -379,49 +409,69 @@ struct FormattingToolbar: View {
 
             sep
 
-            // Text colour + Highlight colour side by side
-            HStack(spacing: 4) {
+            // Text colour: icon + swatch
+            HStack(spacing: 6) {
+                Image(systemName: "paintbrush.pointed.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, alignment: .center)
                 ColorPicker("", selection: $fmt.textColor, supportsOpacity: false)
                     .labelsHidden()
                     .frame(width: 26, height: 20)
                     .help("Text colour")
                     .onChange(of: fmt.textColor) { _, _ in fmt.applyTextColor() }
+            }
+            .padding(.horizontal, 2)
 
-                Button {
-                    fmt.clearHighlight()
-                } label: {
-                    ZStack {
-                        Image(systemName: "highlighter")
-                            .font(.system(size: 11))
-                            .foregroundStyle(fmt.highlightColor == Color(nsColor: .clear) ? Color.secondary : Color.primary)
-                    }
-                    .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.borderless)
-                .help("Clear highlight")
+            sep
 
+            // Highlight colour: icon + swatch + clear
+            HStack(spacing: 6) {
+                Image(systemName: "highlighter")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, alignment: .center)
                 ColorPicker("", selection: $fmt.highlightColor, supportsOpacity: false)
                     .labelsHidden()
                     .frame(width: 26, height: 20)
                     .help("Highlight colour")
                     .onChange(of: fmt.highlightColor) { _, _ in fmt.applyHighlight() }
+                Button {
+                    fmt.clearHighlight()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 16, height: 16)
+                }
+                .buttonStyle(.borderless)
+                .help("Clear highlight")
             }
+            .padding(.horizontal, 2)
 
             Spacer()
 
-            Button("Fonts") { NSFontManager.shared.orderFrontFontPanel(nil) }
-                .buttonStyle(.bordered)
-                .font(.caption)
-                .help("Show the Fonts panel")
+            fmtBtn("textformat", tip: "Fonts panel") { NSFontManager.shared.orderFrontFontPanel(nil) }
 
             sep
 
             HStack(spacing: 1) {
-                fmtBtn("magnifyingglass",        tip: "Find (⌘F)")         { fmt.performFind(.showFindInterface) }
-                fmtBtn("arrow.up",               tip: "Previous (⇧⌘G)")    { fmt.performFind(.previousMatch) }
-                fmtBtn("arrow.down",             tip: "Next (⌘G)")         { fmt.performFind(.nextMatch) }
-                fmtBtn("arrow.left.arrow.right", tip: "Find & Replace")    { fmt.performFind(.showReplaceInterface) }
+                fmtBtn("magnifyingglass", on: fmt.isFindBarVisible,
+                       tip: fmt.isFindBarVisible ? "Hide Find" : "Find (⌘F)") { fmt.toggleFind() }
+                if fmt.isFindBarVisible && fmt.findMatchCount > 0 {
+                    Text(fmt.findCurrentMatch > 0
+                         ? "\(fmt.findCurrentMatch)/\(fmt.findMatchCount)"
+                         : "\(fmt.findMatchCount)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 34)
+                        .transition(.opacity)
+                }
+                fmtBtn("arrow.up",               tip: "Previous (⇧⌘G)")  { fmt.performFind(.previousMatch) }
+                fmtBtn("arrow.down",             tip: "Next (⌘G)")        { fmt.performFind(.nextMatch) }
+                fmtBtn("arrow.left.arrow.right", tip: "Find & Replace")   { fmt.performFind(.showReplaceInterface) }
             }
+            .animation(.easeInOut(duration: 0.15), value: fmt.findMatchCount)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
@@ -503,7 +553,20 @@ struct RichTextEditor: NSViewRepresentable {
     }
 
     private func loadContent(into tv: NSTextView, data: Data?) {
-        if let data, let attr = NSAttributedString(rtf: data, documentAttributes: nil) {
+        guard let data else { tv.string = ""; return }
+
+        // Try RTFD first (preserves NSTextAttachment images from Combine path),
+        // fall back to plain RTF for AI-formatted text-only output.
+        let raw: NSAttributedString?
+        if let rtfd = try? NSAttributedString(
+            data: data,
+            options: [.documentType: NSAttributedString.DocumentType.rtfd],
+            documentAttributes: nil) {
+            raw = rtfd
+        } else {
+            raw = NSAttributedString(rtf: data, documentAttributes: nil)
+        }
+        if let attr = raw {
             let mutable = NSMutableAttributedString(attributedString: attr)
             let fullRange = NSRange(location: 0, length: mutable.length)
 
@@ -550,13 +613,23 @@ struct RichTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
-            let attr = tv.attributedString()
-            let data = attr.rtf(
-                from: NSRange(location: 0, length: attr.length),
-                documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
-            )
+            let attr  = tv.attributedString()
+            let range = NSRange(location: 0, length: attr.length)
+
+            // Preserve image attachments by saving as RTFD when present.
+            var hasAttachments = false
+            attr.enumerateAttribute(.attachment, in: range, options: []) { val, _, stop in
+                if val != nil { hasAttachments = true; stop.pointee = true }
+            }
+            let data: Data?
+            if hasAttachments {
+                data = try? attr.data(from: range,
+                                      documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd])
+            } else {
+                data = attr.rtf(from: range,
+                                documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+            }
             lastKnownData = data
-            // Defer to avoid mutating binding during a view update pass
             DispatchQueue.main.async { [weak self] in
                 self?.parent.rtfData = data
                 self?.parent.formatState.syncFromTextView()
@@ -566,6 +639,9 @@ struct RichTextEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             DispatchQueue.main.async { [weak self] in
                 self?.parent.formatState.syncFromTextView()
+                if self?.parent.formatState.isFindBarVisible == true {
+                    self?.parent.formatState.refreshFindCount()
+                }
             }
         }
     }

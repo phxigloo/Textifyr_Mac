@@ -39,18 +39,27 @@ let translationLanguages: [TranslationLanguage] = [
 struct TranslateButton: View {
     var font: Font = .caption
     var helpText: String = "Translate text to another language"
+    var bordered: Bool = false
     let onSelect: (TranslationLanguage) -> Void
     @State private var showPopover = false
 
     var body: some View {
-        Button {
-            showPopover = true
-        } label: {
-            Label("Translate…", systemImage: "globe")
-                .font(font)
+        Group {
+            if bordered {
+                Button { showPopover = true } label: {
+                    Label("Translate…", systemImage: "globe")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Button { showPopover = true } label: {
+                    Label("Translate…", systemImage: "globe")
+                        .font(font)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+            }
         }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
         .help(helpText)
         .popover(isPresented: $showPopover, arrowEdge: .bottom) {
             TranslationLanguagePopover { lang in

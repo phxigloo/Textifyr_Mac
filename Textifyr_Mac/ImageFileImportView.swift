@@ -124,8 +124,12 @@ struct ImageFileImportView: View {
                     captureVM.reset()
                     closeWizard()
                 },
-                onAccept: { finalText, _ in
-                    captureVM.saveTextCapture(finalText, captureMethod: .imageFile)
+                onAccept: { finalText, rtfData in
+                    if let rtf = rtfData {
+                        captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .imageFile)
+                    } else {
+                        captureVM.saveTextCapture(finalText, captureMethod: .imageFile)
+                    }
                 }
             )
         }

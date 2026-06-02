@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 import TextifyrModels
 import TextifyrServices
 import TextifyrViewModels
@@ -15,6 +16,8 @@ struct SourceSessionListView: View {
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "source" },
            sort: \FormattingPipeline.name) private var sourceActions: [FormattingPipeline]
     @State private var showRefineBanner = true
+    @State private var isReordering = false
+    @State private var draggingID: UUID? = nil
 
     private var hasUnrefinedSessions: Bool {
         sessions.contains { !$0.rawText.isEmpty && !$0.hasBeenRefined }
@@ -36,12 +39,23 @@ struct SourceSessionListView: View {
                     .font(.headline)
                 Spacer()
                 Button {
+                    withAnimation { isReordering.toggle() }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .foregroundStyle(isReordering ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(isReordering ? "Done reordering" : "Reorder sources")
+                .disabled(sessions.count < 2)
+
+                Button {
                     onAddSource()
                 } label: {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(.borderless)
                 .help("Add source")
+                .disabled(isReordering)
             }
             .frame(height: 44)
             .padding(.horizontal, 16)
@@ -64,10 +78,13 @@ struct SourceSessionListView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(sessions, id: \.id) { session in
-                        SessionRowView(session: session)
+                    ForEach(sessions) { session in
+                        SessionRowView(session: session, showHandle: isReordering)
                             .contentShape(Rectangle())
-                            .onTapGesture { onEditSession(session) }
+                            .onTapGesture {
+                                guard !isReordering else { return }
+                                onEditSession(session)
+                            }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button(role: .destructive) {
                                     viewModel.deleteSession(session)
@@ -76,15 +93,29 @@ struct SourceSessionListView: View {
                                 }
                             }
                             .contextMenu {
-                                Button("Edit") { onEditSession(session) }
-                                Divider()
+                                if !isReordering {
+                                    Button("Edit") { onEditSession(session) }
+                                    Divider()
+                                }
                                 Button("Delete", role: .destructive) { viewModel.deleteSession(session) }
                             }
-                    }
-                    .onMove { from, to in
-                        var reordered = sessions
-                        reordered.move(fromOffsets: from, toOffset: to)
-                        viewModel.reorderSessions(reordered)
+                            .onDrag {
+                                draggingID = session.id
+                                return NSItemProvider(object: session.id.uuidString as NSString)
+                            }
+                            .onDrop(of: [UTType.plainText], isTargeted: nil) { providers in
+                                guard isReordering,
+                                      let fromID = draggingID,
+                                      let fromIndex = sessions.firstIndex(where: { $0.id == fromID }),
+                                      let toIndex = sessions.firstIndex(where: { $0.id == session.id }),
+                                      fromIndex != toIndex else { return false }
+                                var arr = sessions
+                                arr.move(fromOffsets: IndexSet(integer: fromIndex),
+                                         toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex)
+                                viewModel.reorderSessions(arr)
+                                draggingID = nil
+                                return true
+                            }
                     }
                 }
                 .listStyle(.sidebar)
@@ -148,40 +179,45 @@ struct SourceSessionListView: View {
 
 private struct SessionRowView: View {
     let session: SourceSession
+    var showHandle: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
+        HStack(spacing: 6) {
+            if showHandle {
                 Image(systemName: "line.3.horizontal")
-                    .font(.caption2)
+                    .font(.system(size: 12, weight: .regular))
                     .foregroundStyle(.tertiary)
-                    .help("Drag to reorder")
-                Image(systemName: session.captureMethod.systemImage)
-                    .foregroundStyle(Color.accentColor)
-                Text(session.captureMethod.displayName)
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if session.containsCopyrightNotice {
-                    Image(systemName: "c.circle.fill")
-                        .foregroundStyle(.orange)
+                    .frame(width: 20)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Image(systemName: session.captureMethod.systemImage)
+                        .foregroundStyle(Color.accentColor)
+                    Text(session.captureMethod.displayName)
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if session.containsCopyrightNotice {
+                        Image(systemName: "c.circle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption2)
+                            .help("This session may contain copyrighted material")
+                    }
+                    if session.rawText.count > 0 {
+                        Text("\(session.rawText.count.formatted()) chars")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text(session.createdAt, style: .date)
                         .font(.caption2)
-                        .help("This session may contain copyrighted material")
-                }
-                if session.rawText.count > 0 {
-                    Text("\(session.rawText.count.formatted()) chars")
-                        .font(.caption2.monospacedDigit())
                         .foregroundStyle(.tertiary)
                 }
-                Text(session.createdAt, style: .date)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            if !session.rawText.isEmpty {
-                Text(session.previewText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                if !session.rawText.isEmpty {
+                    Text(session.previewText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
         .padding(.vertical, 2)
@@ -227,13 +263,17 @@ struct SessionEditView: View {
                     onDismiss()
                 },
                 onAcceptSplit: { parts in
-                    session.rawText    = parts[0]
-                    session.rawRTFData = MarkdownRenderer.toRTF(parts[0])
+                    let first = parts[0]
+                    session.rawText    = first.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    session.rawRTFData = first.rtf(from: NSRange(location: 0, length: first.length),
+                                                   documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
                     for part in parts.dropFirst() {
-                        let order = (session.document?.sourceSessions ?? []).count
+                        let order      = (session.document?.sourceSessions ?? []).count
                         let newSession = SourceSession(captureMethod: session.captureMethod,
-                                                      rawText: part, sortOrder: order)
-                        newSession.rawRTFData = MarkdownRenderer.toRTF(part)
+                                                      rawText: part.string.trimmingCharacters(in: .whitespacesAndNewlines),
+                                                      sortOrder: order)
+                        newSession.rawRTFData = part.rtf(from: NSRange(location: 0, length: part.length),
+                                                         documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
                         context.insert(newSession)
                         newSession.document = session.document
                         session.document?.sourceSessions = (session.document?.sourceSessions ?? []) + [newSession]

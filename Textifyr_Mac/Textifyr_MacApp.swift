@@ -16,6 +16,30 @@ struct Textifyr_MacApp: App {
             fatalError("Failed to create ModelContainer: \(error)")
         }
         DataSeeder.seedIfNeeded(context: container.mainContext)
+        Self.sweepStaleTempFiles()
+    }
+
+    /// Deletes UUID-named export temp files older than 2 hours left by a previous session.
+    private static func sweepStaleTempFiles() {
+        let exportExtensions: Set<String> = ["rtf", "rtfd", "pdf", "xlsx", "html", "md", "txt", "csv"]
+        let cutoff = Date().addingTimeInterval(-2 * 60 * 60)
+        let tempDir = FileManager.default.temporaryDirectory
+        DispatchQueue.global(qos: .background).async {
+            guard let items = try? FileManager.default.contentsOfDirectory(
+                at: tempDir,
+                includingPropertiesForKeys: [.creationDateKey],
+                options: .skipsHiddenFiles) else { return }
+            for url in items {
+                guard exportExtensions.contains(url.pathExtension.lowercased()) else { continue }
+                // Only remove files whose name is a bare UUID (36 chars, 4 dashes) —
+                // the pattern ExportService.write(data:extension:) always produces.
+                let base = url.deletingPathExtension().lastPathComponent
+                guard base.count == 36, base.filter({ $0 == "-" }).count == 4 else { continue }
+                guard let created = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate,
+                      created < cutoff else { continue }
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     var body: some Scene {

@@ -90,7 +90,7 @@ struct RTFEditorInputView: View {
                             }
                         },
                         onAcceptSplit: { parts in
-                            captureVM.saveMultipleTextCaptures(parts, captureMethod: .rtfEditor)
+                            captureVM.saveMultipleRTFCaptures(parts, captureMethod: .rtfEditor)
                         }
                     )
                     .transition(stepTransition)

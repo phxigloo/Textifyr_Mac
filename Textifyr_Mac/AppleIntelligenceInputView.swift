@@ -70,8 +70,12 @@ struct AppleIntelligenceInputView: View {
                             captureVM.reset()
                             closeWizard()
                         },
-                        onAccept: { finalText, _ in
-                            captureVM.saveTextCapture(finalText, captureMethod: .appleIntelligence)
+                        onAccept: { finalText, rtfData in
+                            if let rtf = rtfData {
+                                captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .appleIntelligence)
+                            } else {
+                                captureVM.saveTextCapture(finalText, captureMethod: .appleIntelligence)
+                            }
                         }
                     )
                     .transition(stepTransition)

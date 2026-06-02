@@ -112,11 +112,15 @@ struct PDFInputView: View {
                     captureVM.reset()
                     closeWizard()
                 },
-                onAccept: { finalText, _ in
-                    captureVM.saveTextCapture(finalText, captureMethod: .pdf)
+                onAccept: { finalText, rtfData in
+                    if let rtf = rtfData {
+                        captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .pdf)
+                    } else {
+                        captureVM.saveTextCapture(finalText, captureMethod: .pdf)
+                    }
                 },
                 onAcceptSplit: { parts in
-                    captureVM.saveMultipleTextCaptures(parts, captureMethod: .pdf)
+                    captureVM.saveMultipleRTFCaptures(parts, captureMethod: .pdf)
                 }
             )
         }

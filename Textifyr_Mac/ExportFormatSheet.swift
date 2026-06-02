@@ -86,6 +86,7 @@ struct ExportFormatSheet: View {
     }
 
     private func runSavePanel(for url: URL, format: ExportFormat) {
+        defer { deleteTempFile(url) }
         let panel = NSSavePanel()
         let safeName = viewModel.document.title.isEmpty ? "Document" : viewModel.document.title
         // The produced file may differ from the requested format (e.g. .rtf upgrades to
@@ -132,9 +133,9 @@ struct ExportFormatSheet: View {
     private func openInPages() {
         do {
             let url = try viewModel.exportFile(format: .rtf)
+            defer { deleteTempFile(url) }
             let safeName = viewModel.document.title.isEmpty ? "Document" : viewModel.document.title
-            // Preserve the produced extension (.rtf, or .rtfd when images are embedded).
-            let ext = url.pathExtension.isEmpty ? "rtf" : url.pathExtension
+            let ext  = url.pathExtension.isEmpty ? "rtf" : url.pathExtension
             let dest = FileManager.default.temporaryDirectory
                 .appendingPathComponent("\(safeName).\(ext)")
             try? FileManager.default.removeItem(at: dest)
@@ -156,6 +157,7 @@ struct ExportFormatSheet: View {
     private func openInNumbers() {
         do {
             let url = try viewModel.exportFile(format: .xlsx)
+            defer { deleteTempFile(url) }
             let safeName = viewModel.document.title.isEmpty ? "Document" : viewModel.document.title
             let dest = FileManager.default.temporaryDirectory
                 .appendingPathComponent("\(safeName).xlsx")
@@ -184,8 +186,20 @@ struct ExportFormatSheet: View {
                 let picker = NSSharingServicePicker(items: [url])
                 picker.show(relativeTo: .zero, of: anchor, preferredEdge: .minY)
             }
+            // Share sheet reads the file asynchronously; delete after 2 min to cover all services.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 120) {
+                try? FileManager.default.removeItem(at: url)
+            }
         } catch {
             exportError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Temp file cleanup
+
+    private func deleteTempFile(_ url: URL) {
+        DispatchQueue.global(qos: .utility).async {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 }
