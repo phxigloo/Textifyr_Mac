@@ -157,6 +157,6 @@ private struct LanguageRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .help(language.isSupported ? "" : "May require a language pack installation")
+        .help(language.isSupported ? "" : "Not available on this device — install language packs in System Settings → Language & Region")
     }
 }

@@ -149,6 +149,45 @@ let helpTopics: [HelpTopic] = [
         ])
     ),
     HelpTopic(
+        id: "splitting",
+        title: "Splitting a Source",
+        icon: "scissors",
+        content: HelpContent(sections: [
+            HelpSection(heading: nil,
+                body: "The Splitter is a tool that cuts a long piece of text into smaller pieces. Each piece becomes its own source. This matters because the AI can only read a certain amount of text at one time — like reading one chapter of a book instead of the whole thing at once. Smaller, focused pieces give the AI a better chance of doing a great job."),
+
+            HelpSection(heading: "When should I split?",
+                body: "A warning appears in the source review screen when your text is very long. It tells you roughly how many chunks the AI will need. If that number is larger than 4 or 5, splitting first usually gives better results. You choose where to make the cuts.\n\nYou can also split any time you want to keep different topics or sections as separate sources — for example, splitting a long meeting into one source per agenda item."),
+
+            HelpSection(heading: "How to open the Splitter",
+                body: "In the source review screen, tap the Split Now button that appears below the large-text warning. The Splitter window opens."),
+
+            HelpSection(heading: "The two panels",
+                body: "The Splitter window has two panels side by side.\n\nLeft panel — the Part list. This shows each section (called a Part) after you add splits. Every row shows a coloured dot, the name Part 1, Part 2, and so on, and how many characters are in that Part. If a Part is too long, an orange warning triangle appears. Hover over the triangle to see exactly how long it is and what the limit is. Tap any row to jump to that Part in the text panel.\n\nRight panel — the text. This shows all your text at once. Each Part is highlighted in its own colour so you can see at a glance where one Part ends and the next begins. Between every two paragraphs or sentences there is a thin line — that is where you can add a split."),
+
+            HelpSection(heading: "Adding a split by hand",
+                body: "Move your mouse over any thin line between two paragraphs. The line lights up and shows a prompt to split here. Click it and a solid blue line appears — that is your confirmed split point. The text on either side is now shown in different colours in the Part list.\n\nTo remove a split, click the blue line again. It disappears and the two Parts merge back into one."),
+
+            HelpSection(heading: "Setting a maximum size — Set Max",
+                body: "Click Set max at the top of the window. A counter appears. Use the + and − buttons to choose a target size in characters — for example, 4,000. Textifyr immediately calculates where to cut and shows orange dotted lines at the suggested split points.\n\nThe counter remembers the number you chose last time, so you do not have to type it in again the next time you open the Splitter."),
+
+            HelpSection(heading: "Suggested splits",
+                body: "Orange dotted lines are suggestions — Textifyr has worked out where to cut so that each Part stays at or under your chosen size. You have three choices:\n\n• Click any individual orange line to accept just that one cut. It turns blue.\n• Tap Accept Suggested at the bottom of the window to accept all orange suggestions at once.\n• Tap Accept All Splits to split at every single paragraph and sentence boundary — this gives you the maximum number of Parts.\n\nYou can always click a blue line to remove a split you do not want, even after accepting suggestions."),
+
+            HelpSection(heading: "Searching the text",
+                body: "At the top of the right panel there is a search box. Type any word or phrase to find it in your text. Paragraphs that match are highlighted in yellow. Use the arrow buttons to jump between matches.\n\nThis is handy when you want to split near a specific part of the text — for example, the start of a new topic or the beginning of a different speaker\'s turn."),
+
+            HelpSection(heading: "Confirming your splits",
+                body: "When you are happy with your split points, tap Confirm Split at the bottom right. The Splitter closes and each Part becomes its own source in your document. The original long source is replaced by two or more shorter ones, each of which you can work with independently.\n\nTap Cancel at any time to close the Splitter without making any changes. Nothing in your document is affected."),
+
+            HelpSection(heading: "When text has no paragraph breaks",
+                body: "Some text arrives as one solid block with no paragraph or sentence breaks — this is called a text wall. The Splitter detects this and shows a simpler screen. Use the + and − buttons to choose how many Parts you want. A short preview shows the start of each Part so you can check the cuts make sense. Tap Confirm Split when you are ready."),
+
+            HelpSection(heading: "Tips for best results",
+                body: "• A good size for most AI tasks is 4,000 to 10,000 characters per Part. Smaller is not always better — splitting too finely means the AI loses the thread between Parts.\n• If a Part still has a warning triangle after you have added all your splits, it means that single sentence is already longer than your limit on its own. The AI will still process it — it just may be a little slower.\n• Splitting by topic or section (one idea per Part) often works better than splitting purely by size. The AI responds well when each Part has a clear focus.\n• After splitting, you can run a Before Combining action on each Part individually — useful for cleaning up or summarising each section separately before the final document is created."),
+        ])
+    ),
+    HelpTopic(
         id: "final-document",
         title: "Final Document Actions",
         icon: "doc.text.fill",

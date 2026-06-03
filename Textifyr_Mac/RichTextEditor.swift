@@ -553,6 +553,11 @@ struct RichTextEditor: NSViewRepresentable {
     }
 
     private func loadContent(into tv: NSTextView, data: Data?) {
+        // Suppress delegate during programmatic load to prevent textDidChange from
+        // publishing state changes while SwiftUI's updateNSView is still on the stack.
+        let savedDelegate = tv.delegate
+        tv.delegate = nil
+        defer { tv.delegate = savedDelegate }
         guard let data else { tv.string = ""; return }
 
         // Try RTFD first (preserves NSTextAttachment images from Combine path),

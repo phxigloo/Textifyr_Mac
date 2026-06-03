@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import AppKit
 import Combine
+import NaturalLanguage
 import TextifyrModels
 import TextifyrViewModels
 import TextifyrServices
@@ -947,13 +948,20 @@ struct SourceSplitSheet: View {
     @State private var splitAfter: Set<Int> = []
     @State private var wallPartCount: Int = 2
     @State private var maxCharsPerSplit: Int = 0
+    @AppStorage("textifyr.splitMaxChars") private var lastMaxCharsPerSplit: Int = 5_000
     @State private var hoveredDivider: Int? = nil
-
+    @State private var scrollTarget: Int? = nil
+    @State private var suggestedSplits: Set<Int> = []
+    @State private var searchText: String = ""
+    @State private var searchMatchIndices: [Int] = []
+    @State private var searchMatchCursor: Int = 0
+    @State private var currentVisiblePart: Int = 0
     // Cached results — populated once on appear, rebuilt only when split config changes.
     // Never recomputed during rendering (scroll/hover/click).
     @State private var paragraphsCache: [NSAttributedString] = []
     @State private var partLengthsCache: [Int] = []   // NSString UTF-16 lengths; O(1) per access
     @State private var partCountCache: Int = 0
+    @State private var paragraphPartIndices: [Int] = []  // part index per paragraph; rebuilt with cache
 
     init(rtfData: Data,
          onConfirm: @escaping ([NSAttributedString]) -> Void,
@@ -971,6 +979,26 @@ struct SourceSplitSheet: View {
     // O(1) reads from cache — safe to call in body.
     private var isTextWall: Bool { paragraphsCache.count < 3 }
     private var canConfirm: Bool { partCountCache >= 2 }
+
+    private func partIndex(for paragraphIndex: Int) -> Int {
+        let sorted = splitAfter.sorted()
+        for (i, sp) in sorted.enumerated() {
+            if paragraphIndex <= sp { return i }
+        }
+        return sorted.count
+    }
+
+    private func partNumberStartingAfter(_ index: Int) -> Int {
+        splitAfter.filter { $0 <= index }.count + 1
+    }
+
+    private static let partColors: [Color] = [
+        .blue, .green, .orange, .purple, .pink, .teal
+    ]
+
+    private func color(forPart part: Int) -> Color {
+        Self.partColors[part % Self.partColors.count]
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -998,11 +1026,11 @@ struct SourceSplitSheet: View {
                         .buttonStyle(.plain)
                     }
                 } else {
-                    Button("Set max…") { maxCharsPerSplit = 5_000 }
+                    Button("Set max…") { maxCharsPerSplit = lastMaxCharsPerSplit }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
-                Button("Cancel", action: onCancel).buttonStyle(.bordered)
+                Button("Cancel", action: onCancel).buttonStyle(.bordered).controlSize(.small)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -1010,34 +1038,38 @@ struct SourceSplitSheet: View {
 
             Divider()
 
+            if !isTextWall && !paragraphsCache.isEmpty {
+                searchBarView
+                Divider()
+            }
+
             if isTextWall { wallSplitterView } else { paragraphSplitterView }
 
             Divider()
 
-            // Footer: per-part char counts + Confirm
+            // Footer: part navigator menu + Confirm
             HStack(spacing: 10) {
                 if canConfirm {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            // Use cached lengths — O(1) each, no string traversal.
-                            ForEach(0..<partLengthsCache.count, id: \.self) { i in
+                    let anyOver = maxCharsPerSplit > 0 && partLengthsCache.contains { $0 > maxCharsPerSplit }
+                    Menu {
+                        ForEach(0..<partLengthsCache.count, id: \.self) { i in
+                            Button {
+                                scrollTarget = partStartParagraph(i)
+                            } label: {
                                 let len  = partLengthsCache[i]
                                 let over = maxCharsPerSplit > 0 && len > maxCharsPerSplit
-                                HStack(spacing: 3) {
-                                    Image(systemName: "\(i + 1).square.fill")
-                                        .font(.caption2)
-                                        .foregroundStyle(Color.accentColor)
-                                    Text("\(len.formatted()) chars")
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(over ? Color.orange : Color.secondary)
-                                    if over {
-                                        Image(systemName: "exclamationmark.triangle.fill")
-                                            .font(.caption2).foregroundStyle(.orange)
-                                    }
-                                }
+                                Text("Part \(i + 1): \(len.formatted()) chars\(over ? " ⚠" : "")")
                             }
                         }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "list.number").font(.caption2)
+                            Text("\(partCountCache) part\(partCountCache == 1 ? "" : "s")")
+                                .font(.caption2.monospacedDigit())
+                        }
+                        .foregroundStyle(anyOver ? Color.orange : Color.accentColor)
                     }
+                    .help("Jump to a part in the list")
                 } else {
                     Text(isTextWall
                          ? "Choose number of parts above"
@@ -1045,6 +1077,23 @@ struct SourceSplitSheet: View {
                         .font(.caption).foregroundStyle(.tertiary)
                 }
                 Spacer()
+                if !isTextWall && !suggestedSplits.isEmpty {
+                    Button("Accept Suggested") {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            splitAfter.formUnion(suggestedSplits)
+                            suggestedSplits.removeAll()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+                if !isTextWall && paragraphsCache.count >= 2 && splitAfter.count < paragraphsCache.count - 1 {
+                    Button("Accept All Splits") {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            splitAfter = Set(0..<(paragraphsCache.count - 1))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
                 Button("Confirm Split") { confirmSplit() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canConfirm)
@@ -1052,53 +1101,194 @@ struct SourceSplitSheet: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
-        .frame(width: 640, height: 540)
+        .frame(width: 720, height: 560)
         .onAppear {
-            // Parse paragraphs once — the only O(total chars) operation in this view.
-            paragraphsCache = Self.paragraphsOf(attr)
+            // Parse paragraphs once. Paragraphs over 1,500 chars are sub-divided
+            // at sentence boundaries so splits can be placed within large blocks.
+            paragraphsCache = Self.paragraphsOf(attr, sentenceThreshold: 1_500)
             rebuildPartCache()
+            if !isTextWall && maxCharsPerSplit > 0 {
+                suggestedSplits = computeSuggestedSplits(maxCharsPerSplit)
+            }
         }
-        .onChange(of: splitAfter)      { _, _ in rebuildPartCache() }
+        .onChange(of: splitAfter) { _, new in
+            rebuildPartCache()
+            suggestedSplits.subtract(new)
+        }
         .onChange(of: wallPartCount)   { _, _ in rebuildPartCache() }
         .onChange(of: maxCharsPerSplit) { _, newVal in
+            if newVal > 0 { lastMaxCharsPerSplit = newVal }
             if isTextWall && newVal > 0 {
                 wallPartCount = max(2, Int(ceil(Double(attr.length) / Double(newVal))))
             }
             rebuildPartCache()
+            if !isTextWall {
+                suggestedSplits = newVal > 0
+                    ? computeSuggestedSplits(newVal).subtracting(splitAfter)
+                    : []
+            }
+        }
+        .onChange(of: searchText) { _, newText in
+            updateSearch(query: newText)
         }
     }
 
-    // MARK: - Option A: paragraph list with toggle dividers
+    // MARK: - Option A: two-panel layout (sidebar + paragraph list)
 
     private var paragraphSplitterView: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                // Index-based ForEach avoids Array(enumerated()) allocation on every render.
-                ForEach(0..<paragraphsCache.count, id: \.self) { i in
-                    Text(AttributedString(paragraphsCache[i]))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .textSelection(.enabled)
-                        .background(Color(nsColor: .textBackgroundColor))
+        HStack(spacing: 0) {
+            segmentSidebar
+            Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(0..<paragraphsCache.count, id: \.self) { i in
+                            Text(AttributedString(paragraphsCache[i]))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .textSelection(.enabled)
+                                .background(
+                                    (!searchMatchIndices.isEmpty
+                                        && searchMatchCursor < searchMatchIndices.count
+                                        && searchMatchIndices[searchMatchCursor] == i)
+                                        ? Color.yellow.opacity(0.35)
+                                        : (partCountCache >= 2 && i < paragraphPartIndices.count)
+                                            ? color(forPart: paragraphPartIndices[i]).opacity(0.10)
+                                            : Color(nsColor: .textBackgroundColor)
+                                )
+                                .id(i)
 
-                    if i < paragraphsCache.count - 1 {
-                        toggleDividerRow(after: i)
+                            if i < paragraphsCache.count - 1 {
+                                toggleDividerRow(after: i)
+                            }
+                        }
                     }
+                }
+                .onScrollGeometryChange(for: Int.self) { geo in
+                    let fraction = geo.contentOffset.y / max(1, geo.contentSize.height)
+                    let paraIdx = min(
+                        Int(fraction * CGFloat(max(1, paragraphsCache.count))),
+                        max(0, paragraphsCache.count - 1)
+                    )
+                    return partIndex(for: paraIdx)
+                } action: { _, newPart in
+                    currentVisiblePart = newPart
+                }
+                .background(Color(nsColor: .textBackgroundColor))
+                .onChange(of: scrollTarget) { _, target in
+                    guard let t = target else { return }
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        if t >= 0 {
+                            proxy.scrollTo(t, anchor: .top)
+                        } else {
+                            // Negative encoding: divider after paragraph (-t - 1)
+                            proxy.scrollTo("d\(-t - 1)", anchor: .top)
+                        }
+                    }
+                    scrollTarget = nil
                 }
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    // MARK: - Segment sidebar
+
+    private var segmentSidebar: some View {
+        let activePart = currentVisiblePart
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(0..<partCountCache, id: \.self) { i in
+                        segmentRow(i, isActive: activePart == i)
+                        if i < partCountCache - 1 {
+                            Divider()
+                                .padding(.horizontal, 10)
+                        }
+                    }
+                    if partCountCache == 0 {
+                        Text("Add split points\nto see segments")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .multilineTextAlignment(.center)
+                            .padding()
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+            .onChange(of: activePart) { _, part in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(part, anchor: .center)
+                }
+            }
+        }
+        .frame(width: 148)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func segmentRow(_ i: Int, isActive: Bool) -> some View {
+        let len    = i < partLengthsCache.count ? partLengthsCache[i] : 0
+        let isOver = maxCharsPerSplit > 0 && len > maxCharsPerSplit
+
+        Button {
+            if i == 0 {
+                scrollTarget = 0
+            } else {
+                let sorted = splitAfter.sorted()
+                if i - 1 < sorted.count {
+                    scrollTarget = -(sorted[i - 1] + 1)  // divider encoding
+                }
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(color(forPart: i))
+                        .frame(width: 8, height: 8)
+                    Text("Part \(i + 1)")
+                        .font(.caption.bold())
+                        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+                }
+                HStack(spacing: 4) {
+                    Text(len.formatted())
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(isOver ? Color.orange : Color.secondary)
+                    Text("chars")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    if isOver {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(isActive ? Color.accentColor.opacity(0.1) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isOver ? "Part \(i + 1) has \(len.formatted()) chars — exceeds the \(maxCharsPerSplit.formatted())-char limit" : "")
+        .id(i)
     }
 
     @ViewBuilder
     private func toggleDividerRow(after index: Int) -> some View {
-        let isActive  = splitAfter.contains(index)
-        let isHovered = hoveredDivider == index
+        let isActive    = splitAfter.contains(index)
+        let isSuggested = !isActive && suggestedSplits.contains(index)
+        let isHovered   = hoveredDivider == index
 
         Button {
             withAnimation(.easeInOut(duration: 0.15)) {
-                if isActive { splitAfter.remove(index) } else { splitAfter.insert(index) }
+                if isActive {
+                    splitAfter.remove(index)
+                } else {
+                    splitAfter.insert(index)
+                    suggestedSplits.remove(index)
+                }
             }
         } label: {
             ZStack {
@@ -1108,10 +1298,34 @@ struct SourceSplitSheet: View {
                         Image(systemName: "scissors")
                             .font(.caption2)
                             .foregroundStyle(Color.accentColor)
-                        Text("split — tap to remove")
+                        Text("Part \(partNumberStartingAfter(index)) begins — tap to remove")
                             .font(.caption2)
                             .foregroundStyle(Color.accentColor)
                         Rectangle().fill(Color.accentColor).frame(height: 1.5)
+                    }
+                    .padding(.horizontal, 12)
+                } else if isSuggested && isHovered {
+                    HStack(spacing: 6) {
+                        Rectangle().fill(Color.orange.opacity(0.7)).frame(height: 1.5)
+                        Image(systemName: "scissors")
+                            .font(.caption2)
+                            .foregroundStyle(Color.orange)
+                        Text("suggested — tap to confirm")
+                            .font(.caption2)
+                            .foregroundStyle(Color.orange)
+                        Rectangle().fill(Color.orange.opacity(0.7)).frame(height: 1.5)
+                    }
+                    .padding(.horizontal, 12)
+                } else if isSuggested {
+                    HStack(spacing: 6) {
+                        Rectangle().fill(Color.orange.opacity(0.45)).frame(height: 1)
+                        Image(systemName: "lightbulb.fill")
+                            .font(.caption2)
+                            .foregroundStyle(Color.orange.opacity(0.8))
+                        Text("suggested split")
+                            .font(.caption2)
+                            .foregroundStyle(Color.orange.opacity(0.8))
+                        Rectangle().fill(Color.orange.opacity(0.45)).frame(height: 1)
                     }
                     .padding(.horizontal, 12)
                 } else if isHovered {
@@ -1134,13 +1348,14 @@ struct SourceSplitSheet: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: isActive ? 32 : 22)
+            .frame(height: isActive ? 32 : (isSuggested ? 27 : 22))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(
-            isActive ? Color.accentColor.opacity(0.06) :
-            isHovered ? Color.accentColor.opacity(0.03) :
+            isActive    ? Color.accentColor.opacity(0.06) :
+            isSuggested ? Color.orange.opacity(0.05) :
+            isHovered   ? Color.accentColor.opacity(0.03) :
             Color(nsColor: .textBackgroundColor)
         )
         .onHover { hovering in
@@ -1149,6 +1364,8 @@ struct SourceSplitSheet: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: isActive)
+        .animation(.easeInOut(duration: 0.15), value: isSuggested)
+        .id("d\(index)")
     }
 
     // MARK: - Option B: stepper for text walls
@@ -1212,6 +1429,20 @@ struct SourceSplitSheet: View {
             wallPreviewsCache = builtParts.map { part in
                 part.attributedSubstring(from: NSRange(location: 0, length: min(300, part.length)))
             }
+        } else {
+            // O(n + k) pass: assign each paragraph its part index.
+            let sorted = splitAfter.sorted()
+            var indices = [Int](repeating: 0, count: paragraphsCache.count)
+            var part = 0
+            var splitIdx = 0
+            for i in 0..<paragraphsCache.count {
+                while splitIdx < sorted.count && sorted[splitIdx] < i {
+                    part += 1
+                    splitIdx += 1
+                }
+                indices[i] = part
+            }
+            paragraphPartIndices = indices
         }
     }
 
@@ -1282,6 +1513,93 @@ struct SourceSplitSheet: View {
         return parts.isEmpty ? [attr] : parts
     }
 
+    /// Returns the paragraph index that starts part `partIndex` (0-based).
+    /// Used by the navigation menu to scroll the list to the beginning of a part.
+    private func partStartParagraph(_ partIndex: Int) -> Int {
+        guard !isTextWall, partIndex > 0 else { return 0 }
+        let sorted = splitAfter.sorted()
+        guard partIndex - 1 < sorted.count else { return 0 }
+        return sorted[partIndex - 1] + 1
+    }
+
+    // MARK: - Smart split suggestion
+
+    /// Greedy pass: accumulate paragraph lengths until exceeding targetChars, then split.
+    /// Produces the minimum set of paragraph-boundary indices that keeps every part ≤ target.
+    private func computeSuggestedSplits(_ targetChars: Int) -> Set<Int> {
+        guard targetChars > 0, paragraphsCache.count >= 2 else { return [] }
+        var result = Set<Int>()
+        var accumulated = 0
+        for (i, para) in paragraphsCache.enumerated() {
+            let paraLen = para.length
+            // Split before this sentence if adding it would exceed the limit.
+            // This keeps the current part at or under the limit rather than over.
+            // Exception: if accumulated is 0 the sentence is unavoidably oversized;
+            // include it alone and let the warning icon flag it.
+            if accumulated > 0 && accumulated + paraLen > targetChars {
+                result.insert(i - 1)
+                accumulated = 0
+            }
+            accumulated += paraLen
+        }
+        return result
+    }
+
+    // MARK: - Search bar
+
+    private var searchBarView: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Search paragraphs…", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .font(.callout)
+                .onSubmit { jumpToNextMatch() }
+            if !searchMatchIndices.isEmpty {
+                Text("\(searchMatchCursor + 1) / \(searchMatchIndices.count)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Button(action: jumpToNextMatch) {
+                    Image(systemName: "chevron.down").font(.caption2)
+                }
+                .buttonStyle(.borderless)
+                .disabled(searchMatchIndices.count <= 1)
+                .help("Next match")
+            }
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+    }
+
+    private func updateSearch(query: String) {
+        let q = query.lowercased()
+        guard !q.isEmpty else {
+            searchMatchIndices = []
+            searchMatchCursor  = 0
+            return
+        }
+        searchMatchIndices = paragraphsCache.indices.filter {
+            paragraphsCache[$0].string.lowercased().contains(q)
+        }
+        searchMatchCursor = 0
+        if let first = searchMatchIndices.first { scrollTarget = first }
+    }
+
+    private func jumpToNextMatch() {
+        guard !searchMatchIndices.isEmpty else { return }
+        searchMatchCursor = (searchMatchCursor + 1) % searchMatchIndices.count
+        scrollTarget = searchMatchIndices[searchMatchCursor]
+    }
+
     private func confirmSplit() {
         // Materialise the full attributed strings only at the moment of confirmation.
         let result = buildParts().filter {
@@ -1293,7 +1611,29 @@ struct SourceSplitSheet: View {
 
     // MARK: - Static helpers
 
-    private static func paragraphsOf(_ attr: NSAttributedString) -> [NSAttributedString] {
+    // Splits an attributed string into individual sentences using NLTokenizer,
+    // which correctly handles abbreviations, decimals, and ellipsis.
+    private static func sentencesOf(_ attr: NSAttributedString) -> [NSAttributedString] {
+        let text = attr.string
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
+        var result: [NSAttributedString] = []
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            let nsRange = NSRange(range, in: text)
+            let sub = attr.attributedSubstring(from: nsRange)
+            if !sub.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                result.append(sub)
+            }
+            return true
+        }
+        return result.isEmpty ? [attr] : result
+    }
+
+    // Parses an attributed string into paragraphs. Any paragraph that exceeds
+    // sentenceThreshold chars is further divided into individual sentences so the
+    // user can place split points at sentence granularity, not just paragraph boundaries.
+    private static func paragraphsOf(_ attr: NSAttributedString,
+                                     sentenceThreshold: Int = 1_500) -> [NSAttributedString] {
         var result: [NSAttributedString] = []
         let ns  = attr.string as NSString
         var loc = 0
@@ -1301,7 +1641,11 @@ struct SourceSplitSheet: View {
             let r   = ns.paragraphRange(for: NSRange(location: loc, length: 0))
             let sub = attr.attributedSubstring(from: r)
             if !sub.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                result.append(sub)
+                if sub.length > sentenceThreshold {
+                    result.append(contentsOf: sentencesOf(sub))
+                } else {
+                    result.append(sub)
+                }
             }
             let next = NSMaxRange(r)
             if next <= loc { break }
