@@ -61,6 +61,7 @@ struct SmartVisionInputView: View {
     @State private var showCropView = false
     @State private var capturedDisplays: [(name: String, image: CGImage)] = []
     @State private var showDisplayPicker = false
+    @State private var displayCarouselIndex = 0
 
     // Process
     @State private var processingMode: PictureProcessingMode = .none
@@ -429,54 +430,84 @@ struct SmartVisionInputView: View {
     // MARK: - Display picker sheet
 
     private var displayPickerSheet: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 12) {
             Text("Select Display")
                 .font(.headline)
-                .padding()
-            Divider()
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
-                    ForEach(capturedDisplays.indices, id: \.self) { i in
-                        let display = capturedDisplays[i]
-                        Button {
-                            showDisplayPicker = false
-                            capturedDisplays = []
-                            capturedImage = display.image
-                            showCropView = true
-                        } label: {
-                            VStack(spacing: 8) {
-                                Image(nsImage: NSImage(cgImage: display.image,
-                                      size: NSSize(width: display.image.width, height: display.image.height)))
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 200, height: 120)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                                    .overlay(RoundedRectangle(cornerRadius: 6)
-                                        .stroke(Color.accentColor, lineWidth: 2))
-                                Text(display.name)
-                                    .font(.caption)
-                                    .foregroundStyle(.primary)
-                            }
+                .padding(.top, 24)
+
+            if !capturedDisplays.isEmpty {
+                Text(capturedDisplays[displayCarouselIndex].name)
+                    .font(.subheadline).foregroundStyle(.secondary)
+
+                HStack(spacing: 0) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            displayCarouselIndex = max(displayCarouselIndex - 1, 0)
                         }
-                        .buttonStyle(.plain)
+                    } label: {
+                        Image(systemName: "chevron.left").font(.title2.bold())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(displayCarouselIndex == 0)
+                    .opacity(displayCarouselIndex == 0 ? 0.3 : 1)
+
+                    let img = capturedDisplays[displayCarouselIndex].image
+                    Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.4), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                        .padding(.horizontal, 8)
+                        .id(displayCarouselIndex)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            displayCarouselIndex = min(displayCarouselIndex + 1, capturedDisplays.count - 1)
+                        }
+                    } label: {
+                        Image(systemName: "chevron.right").font(.title2.bold())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(displayCarouselIndex >= capturedDisplays.count - 1)
+                    .opacity(displayCarouselIndex >= capturedDisplays.count - 1 ? 0.3 : 1)
+                }
+
+                HStack(spacing: 8) {
+                    ForEach(capturedDisplays.indices, id: \.self) { i in
+                        Circle()
+                            .fill(i == displayCarouselIndex ? Color.accentColor : Color.secondary.opacity(0.4))
+                            .frame(width: 8, height: 8)
+                            .onTapGesture { withAnimation { displayCarouselIndex = i } }
                     }
                 }
-                .padding(20)
-            }
-            Divider()
-            HStack {
-                Button("Cancel") {
-                    showDisplayPicker = false
-                    capturedDisplays = []
-                    captureSource = nil
+
+                HStack(spacing: 16) {
+                    Button("Cancel") {
+                        showDisplayPicker = false
+                        capturedDisplays = []
+                        displayCarouselIndex = 0
+                        captureSource = nil
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        let selected = capturedDisplays[displayCarouselIndex].image
+                        showDisplayPicker = false
+                        capturedDisplays = []
+                        displayCarouselIndex = 0
+                        capturedImage = selected
+                        showCropView = true
+                    } label: {
+                        Label("Use This Display", systemImage: "crop")
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.bordered)
-                Spacer()
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
         }
-        .frame(minWidth: 480, minHeight: 220)
+        .frame(minWidth: 480, minHeight: 340)
     }
 
     private func captureScreen() async {

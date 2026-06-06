@@ -9,7 +9,7 @@ import TextifyrViewModels
 
 struct SettingsView: View {
     private enum Tab: Hashable {
-        case general, textProcessing, stages, pipelines
+        case general, textProcessing, stages
     }
     @State private var selectedTab: Tab = .general
 
@@ -26,10 +26,6 @@ struct SettingsView: View {
             StagesTab()
                 .tabItem { Label("Stages",          systemImage: "tag.fill") }
                 .tag(Tab.stages)
-
-            PipelinesLinkTab()
-                .tabItem { Label("AI Actions",      systemImage: "wand.and.sparkles") }
-                .tag(Tab.pipelines)
         }
         .frame(minWidth: 740, minHeight: 520)
     }
@@ -437,39 +433,6 @@ private struct StageEditorSheet: View {
     }
 }
 
-// MARK: - Pipelines (link to dedicated window)
-
-private struct PipelinesLinkTab: View {
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "wand.and.sparkles")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
-
-            Text("Action Editor")
-                .font(.title2.bold())
-
-            Text("Create and manage AI actions in the inspector panel alongside your document.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
-
-            Button {
-                NotificationCenter.default.post(name: .openPipelineEditorSheet, object: nil)
-            } label: {
-                Label("Open Action Inspector", systemImage: "sidebar.right")
-            }
-            .buttonStyle(.borderedProminent)
-
-            Text("Also available from Tools → Action Editor  (⇧⌘E)")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
 
 #Preview {
     let c = makePreviewContainer()

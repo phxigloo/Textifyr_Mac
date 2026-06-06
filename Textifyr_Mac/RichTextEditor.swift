@@ -9,6 +9,55 @@ import Combine
 final class TextFormatState: ObservableObject {
     weak var textView: NSTextView?
 
+    private var cancellables = Set<AnyCancellable>()
+
+    // Incremented by the menu's Find & Replace command; FormattingToolbar watches this.
+    @Published var findReplaceRequestCount = 0
+
+    init() { connectMenuObservers() }
+
+    private func connectMenuObservers() {
+        let nc = NotificationCenter.default
+
+        // Format commands — only act when our text view is the first responder.
+        let formatPairs: [(Notification.Name, () -> Void)] = [
+            (.menuFormatBold,          { [weak self] in self?.applyBold() }),
+            (.menuFormatItalic,        { [weak self] in self?.applyItalic() }),
+            (.menuFormatUnderline,     { [weak self] in self?.applyUnderline() }),
+            (.menuFormatStrikethrough, { [weak self] in self?.applyStrikethrough() }),
+            (.menuFormatBigger,        { [weak self] in self?.changeFontSize(by:  1) }),
+            (.menuFormatSmaller,       { [weak self] in self?.changeFontSize(by: -1) }),
+            (.menuFormatAlignLeft,     { [weak self] in self?.applyAlignment(.left) }),
+            (.menuFormatAlignCenter,   { [weak self] in self?.applyAlignment(.center) }),
+            (.menuFormatAlignRight,    { [weak self] in self?.applyAlignment(.right) }),
+            (.menuFormatAlignJustify,  { [weak self] in self?.applyAlignment(.justified) }),
+            (.menuFormatBulletList,    { [weak self] in self?.toggleList(ordered: false) }),
+            (.menuFormatNumberedList,  { [weak self] in self?.toggleList(ordered: true) }),
+            (.menuFormatSuperscript,   { [weak self] in self?.applySuperscript() }),
+            (.menuFormatSubscript,     { [weak self] in self?.applySubscript() }),
+        ]
+        for (name, action) in formatPairs {
+            nc.publisher(for: name)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let tv = self?.textView,
+                          tv.window?.firstResponder === tv else { return }
+                    action()
+                }
+                .store(in: &cancellables)
+        }
+
+        // Find & Replace — act when our text view is in the key window.
+        nc.publisher(for: .showFindReplace)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let tv = self?.textView,
+                      tv.window?.isKeyWindow == true else { return }
+                self?.findReplaceRequestCount += 1
+            }
+            .store(in: &cancellables)
+    }
+
     @Published var isBold          = false
     @Published var isItalic        = false
     @Published var isUnderline     = false
@@ -46,6 +95,65 @@ final class TextFormatState: ObservableObject {
     @Published var isFindBarVisible  = false
     @Published var findMatchCount    = 0
     @Published var findCurrentMatch  = 0
+
+    // MARK: Smart replace (supports \t and \n escape sequences)
+
+    @Published var smartReplaceCount: Int? = nil
+
+    func replaceAll(find: String, replace: String) {
+        guard let tv = textView, !find.isEmpty else { return }
+        let findStr = expandEscapes(find)
+        let replStr = expandEscapes(replace)
+        guard let ts = tv.textStorage else { return }
+
+        let str = tv.string
+        var ranges: [NSRange] = []
+        var start = str.startIndex
+        while start < str.endIndex, let r = str.range(of: findStr, range: start..<str.endIndex) {
+            ranges.append(NSRange(r, in: str))
+            start = r.upperBound
+        }
+        smartReplaceCount = ranges.count
+        guard !ranges.isEmpty else { return }
+
+        tv.undoManager?.beginUndoGrouping()
+        ts.beginEditing()
+        for nsRange in ranges.reversed() {
+            let attrs = nsRange.location < ts.length
+                ? ts.attributes(at: nsRange.location, effectiveRange: nil)
+                : [NSAttributedString.Key: Any]()
+            ts.replaceCharacters(in: nsRange, with: NSAttributedString(string: replStr, attributes: attrs))
+        }
+        ts.endEditing()
+        tv.undoManager?.endUndoGrouping()
+
+        NotificationCenter.default.post(name: NSText.didChangeNotification, object: tv)
+    }
+
+    func expandEscapes(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\t", with: "\t")
+         .replacingOccurrences(of: "\\n", with: "\n")
+    }
+
+    func syncFindPasteboard(_ text: String) {
+        let pb = NSPasteboard(name: .find)
+        pb.clearContents()
+        pb.setString(expandEscapes(text), forType: .string)
+    }
+
+    // Called from the popover — skips makeFirstResponder so the popover stays open.
+    func performFindSilently(_ action: NSTextFinder.Action) {
+        guard let tv = textView else { return }
+        final class TaggedSender: NSObject {
+            private let _tag: Int
+            init(_ t: Int) { _tag = t }
+            @objc var tag: Int { _tag }
+        }
+        tv.performTextFinderAction(TaggedSender(action.rawValue))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            self?.refreshFindCount()
+        }
+    }
 
     func performFind(_ action: NSTextFinder.Action) {
         guard let tv = textView else { return }
@@ -318,6 +426,10 @@ final class TextFormatState: ObservableObject {
 struct FormattingToolbar: View {
     @ObservedObject var fmt: TextFormatState
 
+    @State private var showFindReplace = false
+    @State private var findText    = ""
+    @State private var replaceText = ""
+
     var body: some View {
         HStack(spacing: 6) {
             // Bold / Italic / Underline / Strikethrough
@@ -455,23 +567,21 @@ struct FormattingToolbar: View {
 
             sep
 
-            HStack(spacing: 1) {
-                fmtBtn("magnifyingglass", on: fmt.isFindBarVisible,
-                       tip: fmt.isFindBarVisible ? "Hide Find" : "Find (⌘F)") { fmt.toggleFind() }
-                if fmt.isFindBarVisible && fmt.findMatchCount > 0 {
-                    Text(fmt.findCurrentMatch > 0
-                         ? "\(fmt.findCurrentMatch)/\(fmt.findMatchCount)"
-                         : "\(fmt.findMatchCount)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .frame(minWidth: 34)
-                        .transition(.opacity)
-                }
-                fmtBtn("arrow.up",               tip: "Previous (⇧⌘G)")  { fmt.performFind(.previousMatch) }
-                fmtBtn("arrow.down",             tip: "Next (⌘G)")        { fmt.performFind(.nextMatch) }
-                fmtBtn("arrow.left.arrow.right", tip: "Find & Replace")   { fmt.performFind(.showReplaceInterface) }
+            fmtBtn("magnifyingglass", on: showFindReplace, tip: "Find & Replace") {
+                showFindReplace.toggle()
+                if showFindReplace { fmt.smartReplaceCount = nil }
             }
-            .animation(.easeInOut(duration: 0.15), value: fmt.findMatchCount)
+            .popover(isPresented: $showFindReplace, arrowEdge: .bottom) {
+                FindReplacePopover(fmt: fmt, findText: $findText, replaceText: $replaceText)
+            }
+            .onChange(of: showFindReplace) { _, visible in
+                fmt.isFindBarVisible = visible
+                if !visible { fmt.findMatchCount = 0; fmt.findCurrentMatch = 0 }
+            }
+            .onChange(of: fmt.findReplaceRequestCount) { _, _ in
+                showFindReplace = true
+                fmt.smartReplaceCount = nil
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
@@ -649,5 +759,112 @@ struct RichTextEditor: NSViewRepresentable {
                 }
             }
         }
+    }
+}
+
+// MARK: - Find & Replace Popover
+
+private struct FindReplacePopover: View {
+    @ObservedObject var fmt: TextFormatState
+    @Binding var findText: String
+    @Binding var replaceText: String
+    @FocusState private var focus: FocusField?
+
+    private enum FocusField { case find, replace }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+
+            // MARK: Find section
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Find", text: $findText)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focus, equals: .find)
+                    .onSubmit { fmt.performFindSilently(.nextMatch) }
+
+                HStack(spacing: 8) {
+                    Button {
+                        fmt.performFindSilently(.previousMatch)
+                    } label: {
+                        Label("Previous", systemImage: "chevron.up")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(findText.isEmpty)
+                    .help("Previous match (⇧⌘G)")
+
+                    Button {
+                        fmt.performFindSilently(.nextMatch)
+                    } label: {
+                        Label("Next", systemImage: "chevron.down")
+                            .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(findText.isEmpty)
+                    .help("Next match (⌘G)")
+
+                    Spacer()
+
+                    if !findText.isEmpty {
+                        Group {
+                            if fmt.findMatchCount == 0 {
+                                Text("No matches")
+                            } else if fmt.findCurrentMatch > 0 {
+                                Text("\(fmt.findCurrentMatch) of \(fmt.findMatchCount)")
+                            } else {
+                                Text("\(fmt.findMatchCount) found")
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.1), value: fmt.findMatchCount)
+            }
+            .padding(14)
+
+            Divider()
+
+            // MARK: Replace section
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Replace with", text: $replaceText)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focus, equals: .replace)
+                    .onSubmit { fmt.replaceAll(find: findText, replace: replaceText) }
+
+                Text("Tip: \\t = tab   \\n = new line")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Button("Replace All") {
+                        fmt.replaceAll(find: findText, replace: replaceText)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(findText.isEmpty)
+
+                    if let count = fmt.smartReplaceCount {
+                        Text(count == 0
+                             ? "No matches"
+                             : "\(count) replacement\(count == 1 ? "" : "s") made")
+                            .font(.caption)
+                            .foregroundStyle(count == 0 ? .secondary : Color.accentColor)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.15), value: fmt.smartReplaceCount)
+            }
+            .padding(14)
+        }
+        .frame(minWidth: 300)
+        .onAppear { focus = .find }
+        .onChange(of: findText) { _, _ in
+            fmt.syncFindPasteboard(findText)
+            fmt.refreshFindCount()
+            fmt.smartReplaceCount = nil
+        }
+        .onChange(of: replaceText) { fmt.smartReplaceCount = nil }
     }
 }

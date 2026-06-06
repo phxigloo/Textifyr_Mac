@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppKit
 import TextifyrModels
 import TextifyrServices
 import TextifyrViewModels
@@ -79,9 +80,37 @@ private func prefetchDiarizationModels() async {
 }
 
 extension Notification.Name {
+    // Existing
     static let newDocument             = Notification.Name("TextifyrNewDocument")
     static let openPipelineEditorSheet = Notification.Name("TextifyrOpenPipelineEditor")
     static let openPromptBuilderSheet  = Notification.Name("TextifyrOpenPromptBuilder")
+    // File menu
+    static let exportDocument          = Notification.Name("TextifyrExportDocument")
+    static let printDocument           = Notification.Name("TextifyrPrintDocument")
+    static let openInPages             = Notification.Name("TextifyrOpenInPages")
+    static let openInNumbers           = Notification.Name("TextifyrOpenInNumbers")
+    // Tools menu
+    static let formatDocument          = Notification.Name("TextifyrFormatDocument")
+    // View menu
+    static let toggleSidebar           = Notification.Name("TextifyrToggleSidebar")
+    static let toggleInspector         = Notification.Name("TextifyrToggleInspector")
+    // Edit menu
+    static let showFindReplace         = Notification.Name("TextifyrShowFindReplace")
+    // Format menu
+    static let menuFormatBold          = Notification.Name("TextifyrMenuBold")
+    static let menuFormatItalic        = Notification.Name("TextifyrMenuItalic")
+    static let menuFormatUnderline     = Notification.Name("TextifyrMenuUnderline")
+    static let menuFormatStrikethrough = Notification.Name("TextifyrMenuStrikethrough")
+    static let menuFormatBigger        = Notification.Name("TextifyrMenuBigger")
+    static let menuFormatSmaller       = Notification.Name("TextifyrMenuSmaller")
+    static let menuFormatAlignLeft     = Notification.Name("TextifyrMenuAlignLeft")
+    static let menuFormatAlignCenter   = Notification.Name("TextifyrMenuAlignCenter")
+    static let menuFormatAlignRight    = Notification.Name("TextifyrMenuAlignRight")
+    static let menuFormatAlignJustify  = Notification.Name("TextifyrMenuAlignJustify")
+    static let menuFormatBulletList    = Notification.Name("TextifyrMenuBulletList")
+    static let menuFormatNumberedList  = Notification.Name("TextifyrMenuNumberedList")
+    static let menuFormatSuperscript   = Notification.Name("TextifyrMenuSuperscript")
+    static let menuFormatSubscript     = Notification.Name("TextifyrMenuSubscript")
 }
 
 // MARK: - Commands
@@ -90,67 +119,130 @@ private struct AppCommands: Commands {
     @Environment(\.openWindow) private var openWindow
     let appState: AppState
 
+    private func post(_ name: Notification.Name) {
+        NotificationCenter.default.post(name: name, object: nil)
+    }
+
     var body: some Commands {
+
+        // MARK: App menu
         CommandGroup(replacing: .appInfo) {
-            Button("About Textifyr") {
-                openWindow(id: "about")
-            }
+            Button("About Textifyr") { openWindow(id: "about") }
         }
+
+        // MARK: File — New
         CommandGroup(replacing: .newItem) {
-            Button("New Document") {
-                NotificationCenter.default.post(name: .newDocument, object: nil)
-            }
-            .keyboardShortcut("n", modifiers: .command)
+            Button("New Document") { post(.newDocument) }
+                .keyboardShortcut("n", modifiers: .command)
         }
+
+        // MARK: File — Export / Print / Open in…
+        CommandGroup(after: .newItem) {
+            Divider()
+            Button("Export…")        { post(.exportDocument) }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+            Divider()
+            Button("Open in Pages")  { post(.openInPages) }
+            Button("Open in Numbers"){ post(.openInNumbers) }
+        }
+
+        CommandGroup(replacing: .printItem) {
+            Button("Print…") { post(.printDocument) }
+                .keyboardShortcut("p", modifiers: .command)
+        }
+
+        // MARK: Edit — Find & Replace
+        CommandGroup(after: .pasteboard) {
+            Divider()
+            Button("Find & Replace") { post(.showFindReplace) }
+                .keyboardShortcut("f", modifiers: .command)
+        }
+
+        // MARK: Format menu
+        CommandMenu("Format") {
+            Button("Bold")          { post(.menuFormatBold) }
+                .keyboardShortcut("b", modifiers: .command)
+            Button("Italic")        { post(.menuFormatItalic) }
+                .keyboardShortcut("i", modifiers: .command)
+            Button("Underline")     { post(.menuFormatUnderline) }
+                .keyboardShortcut("u", modifiers: .command)
+            Button("Strikethrough") { post(.menuFormatStrikethrough) }
+            Divider()
+            Button("Bigger")        { post(.menuFormatBigger) }
+                .keyboardShortcut("+", modifiers: .command)
+            Button("Smaller")       { post(.menuFormatSmaller) }
+                .keyboardShortcut("-", modifiers: .command)
+            Divider()
+            Button("Align Left")    { post(.menuFormatAlignLeft) }
+                .keyboardShortcut("{", modifiers: .command)
+            Button("Align Center")  { post(.menuFormatAlignCenter) }
+                .keyboardShortcut("|", modifiers: .command)
+            Button("Align Right")   { post(.menuFormatAlignRight) }
+                .keyboardShortcut("}", modifiers: .command)
+            Button("Justify")       { post(.menuFormatAlignJustify) }
+            Divider()
+            Button("Bullet List")   { post(.menuFormatBulletList) }
+            Button("Numbered List") { post(.menuFormatNumberedList) }
+            Divider()
+            Button("Superscript")   { post(.menuFormatSuperscript) }
+            Button("Subscript")     { post(.menuFormatSubscript) }
+            Divider()
+            Button("Fonts…")        { NSFontManager.shared.orderFrontFontPanel(nil) }
+                .keyboardShortcut("t", modifiers: .command)
+        }
+
+        // MARK: Sources menu
         CommandMenu("Sources") {
-            Button("AI Writer")        { appState.pendingSourceMethod = .appleIntelligence }
+            Button("AI Writer")      { appState.pendingSourceMethod = .appleIntelligence }
                 .keyboardShortcut("i", modifiers: [.command, .option])
-            Button("Screen Capture")   { appState.pendingSourceMethod = .screenCapture }
+            Button("Screen Capture") { appState.pendingSourceMethod = .screenCapture }
                 .keyboardShortcut("s", modifiers: [.command, .option])
-            Button("Microphone")       { appState.pendingSourceMethod = .microphone }
+            Button("Microphone")     { appState.pendingSourceMethod = .microphone }
                 .keyboardShortcut("m", modifiers: [.command, .option])
-            Button("Audio File")       { appState.pendingSourceMethod = .audioFile }
+            Button("Audio File")     { appState.pendingSourceMethod = .audioFile }
                 .keyboardShortcut("a", modifiers: [.command, .option])
-            Button("Video Audio")      { appState.pendingSourceMethod = .videoAudio }
+            Button("Video Audio")    { appState.pendingSourceMethod = .videoAudio }
                 .keyboardShortcut("v", modifiers: [.command, .option])
-            Button("Camera")           { appState.pendingSourceMethod = .camera }
+            Button("Camera")         { appState.pendingSourceMethod = .camera }
                 .keyboardShortcut("c", modifiers: [.command, .option])
-            Button("Photo Library")    { appState.pendingSourceMethod = .photoLibrary }
+            Button("Photo Library")  { appState.pendingSourceMethod = .photoLibrary }
                 .keyboardShortcut("p", modifiers: [.command, .option])
-            Button("Image (OCR)")      { appState.pendingSourceMethod = .imageFile }
+            Button("Image (OCR)")    { appState.pendingSourceMethod = .imageFile }
                 .keyboardShortcut("o", modifiers: [.command, .option])
-            Button("Text Editor")      { appState.pendingSourceMethod = .rtfEditor }
+            Button("Text Editor")    { appState.pendingSourceMethod = .rtfEditor }
                 .keyboardShortcut("t", modifiers: [.command, .option])
-            Button("PDF")              { appState.pendingSourceMethod = .pdf }
+            Button("PDF")            { appState.pendingSourceMethod = .pdf }
                 .keyboardShortcut("d", modifiers: [.command, .option])
-            Button("Web URL")          { appState.pendingSourceMethod = .webURL }
+            Button("Web URL")        { appState.pendingSourceMethod = .webURL }
                 .keyboardShortcut("w", modifiers: [.command, .option])
-            Button("Embed Image")      { appState.pendingSourceMethod = .smartVision }
+            Button("Embed Image")    { appState.pendingSourceMethod = .smartVision }
                 .keyboardShortcut("e", modifiers: [.command, .option])
         }
+
+        // MARK: Tools menu
         CommandMenu("Tools") {
-            Button("Open Main Window") {
-                openWindow(id: "main")
-            }
-            .keyboardShortcut("1", modifiers: .command)
-
+            Button("Format Document") { post(.formatDocument) }
+                .keyboardShortcut("r", modifiers: .command)
             Divider()
-
-            Button("Prompt Builder") {
-                NotificationCenter.default.post(name: .openPromptBuilderSheet, object: nil)
-            }
-            .keyboardShortcut("p", modifiers: [.command, .shift])
-
-            Button("Action Editor") {
-                NotificationCenter.default.post(name: .openPipelineEditorSheet, object: nil)
-            }
-            .keyboardShortcut("e", modifiers: [.command, .shift])
+            Button("Open Main Window") { openWindow(id: "main") }
+                .keyboardShortcut("1", modifiers: .command)
+            Divider()
+            Button("Prompt Builder") { post(.openPromptBuilderSheet) }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+            Button("Action Editor")  { post(.openPipelineEditorSheet) }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
         }
+
+        // MARK: View menu
+        CommandMenu("View") {
+            Button("Show/Hide Sidebar")         { post(.toggleSidebar) }
+            Button("Show/Hide Action Inspector") { post(.toggleInspector) }
+        }
+
+        // MARK: Help menu
         CommandGroup(replacing: .help) {
-            Button("Textifyr Help") {
-                openWindow(id: "help")
-            }
-            .keyboardShortcut("?", modifiers: .command)
+            Button("Textifyr Help") { openWindow(id: "help") }
+                .keyboardShortcut("?", modifiers: .command)
         }
     }
 }

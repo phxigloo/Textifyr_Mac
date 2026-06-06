@@ -13,6 +13,7 @@ struct DocumentEditorView: View {
     @StateObject private var viewModel: DocumentEditorViewModel
     @EnvironmentObject private var appState: AppState
     @State private var selectedTab: DocumentTab = .sources
+    @State private var showExportSheet = false
 
     init(document: TextifyrDocument, context: ModelContext) {
         _viewModel = StateObject(wrappedValue: DocumentEditorViewModel(document: document, context: context))
@@ -34,6 +35,36 @@ struct DocumentEditorView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .sheet(isPresented: $showExportSheet) {
+            ExportFormatSheet(viewModel: viewModel)
+        }
+        // File menu
+        .onReceive(NotificationCenter.default.publisher(for: .exportDocument)) { _ in
+            showExportSheet = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .printDocument)) { _ in
+            showExportSheet = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openInPages)) { _ in
+            showExportSheet = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openInNumbers)) { _ in
+            showExportSheet = true
+        }
+        // Tools menu
+        .onReceive(NotificationCenter.default.publisher(for: .formatDocument)) { _ in
+            selectedTab = .output
+            Task { await viewModel.runFormatting(appState: appState) }
+        }
+        // View menu
+        .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                if !appState.inspectorVisible {
+                    appState.inspectorDefaultScope = selectedTab == .output ? .output : .source
+                }
+                appState.inspectorVisible.toggle()
+            }
         }
     }
 
@@ -109,7 +140,7 @@ struct DocumentEditorView: View {
         case .sources:
             SourcesTabView(document: viewModel.document, viewModel: viewModel)
         case .output:
-            RTFOutputView(viewModel: viewModel)
+            RTFOutputView(viewModel: viewModel, showExportSheet: $showExportSheet)
         }
     }
 }

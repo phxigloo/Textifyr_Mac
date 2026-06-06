@@ -7,13 +7,12 @@ import TextifyrViewModels
 
 struct RTFOutputView: View {
     @ObservedObject var viewModel: DocumentEditorViewModel
+    @Binding var showExportSheet: Bool
     @EnvironmentObject private var appState: AppState
     @StateObject private var formatState = TextFormatState()
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "output" },
            sort: \FormattingPipeline.name) private var outputPipelines: [FormattingPipeline]
-
-    @State private var showExportSheet = false
     @State private var formatBannerDismissed = false
     @State private var isTranslating = false
     @State private var translateTask: Task<Void, Never>? = nil
@@ -64,9 +63,6 @@ struct RTFOutputView: View {
                     formattingOverlay
                 }
             }
-        }
-        .sheet(isPresented: $showExportSheet) {
-            ExportFormatSheet(viewModel: viewModel)
         }
         .overlay(alignment: .top) {
             if let err = translateError {
@@ -599,7 +595,7 @@ private struct RefineResultText: View {
     let c = makePreviewContainer()
     let appState = previewAppState(selectedIn: c)
     let vm = previewDocumentVM(in: c)
-    return RTFOutputView(viewModel: vm)
+    return RTFOutputView(viewModel: vm, showExportSheet: .constant(false))
         .modelContainer(c)
         .environmentObject(appState)
         .frame(width: 580, height: 500)

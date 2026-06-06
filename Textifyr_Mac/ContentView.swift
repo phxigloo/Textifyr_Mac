@@ -56,6 +56,11 @@ private struct MainNavigationView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openPromptBuilderSheet)) { _ in
             appState.showPromptBuilder = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
+            withAnimation {
+                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+            }
+        }
     }
 }
 
