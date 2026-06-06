@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import TextifyrModels
+import TextifyrServices
 import TextifyrViewModels
 
 // Pairs a document with the context snippet that explains why it matched a search.
@@ -113,6 +114,15 @@ struct SidebarView: View {
         .onChange(of: appState.selectedDocument?.id) { _, id in
             if selectedID != id { selectedID = id }
         }
+        .onChange(of: appState.deepLinkDocumentID) { _, id in
+            guard let id else { return }
+            selectedID = id
+            appState.deepLinkDocumentID = nil
+        }
+        .onChange(of: documents.map(\.id)) { _, _ in
+            syncRecentDocumentsToAppGroup()
+        }
+        .task { syncRecentDocumentsToAppGroup() }
         .confirmationDialog("Delete Document", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
                 if let doc = documentToDelete { delete(doc) }
@@ -139,6 +149,13 @@ struct SidebarView: View {
         selectedID = nil
         modelContext.delete(doc)
         try? modelContext.save()
+    }
+
+    private func syncRecentDocumentsToAppGroup() {
+        let recent = documents.prefix(10).map {
+            RecentDocumentInfo(id: $0.id, title: $0.title)
+        }
+        ShareExtensionQueue.updateRecentDocuments(Array(recent))
     }
 }
 

@@ -5,8 +5,13 @@ import TextifyrModels
 import TextifyrServices
 import TextifyrViewModels
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldRestoreApplicationState(_ sender: NSApplication) -> Bool { false }
+}
+
 @main
 struct Textifyr_MacApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     let container: ModelContainer
     @StateObject private var appState = AppState()
 
@@ -50,6 +55,7 @@ struct Textifyr_MacApp: App {
                 .frame(minWidth: 900, minHeight: 600)
                 .task { await prefetchDiarizationModels() }
         }
+        .handlesExternalEvents(matching: ["*"])
         .windowStyle(.hiddenTitleBar)
         .modelContainer(container)
         .commands { AppCommands(appState: appState) }

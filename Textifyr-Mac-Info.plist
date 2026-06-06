@@ -4,5 +4,16 @@
 <dict>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Textifyr needs to use the device Screen Capture System</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.wecandoit.textifyr</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>textifyr</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

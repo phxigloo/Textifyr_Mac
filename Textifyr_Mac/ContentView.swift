@@ -10,11 +10,69 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
-        if hasAcceptedTerms {
-            MainNavigationView()
-        } else {
-            DisclaimerView()
+        Group {
+            if hasAcceptedTerms {
+                MainNavigationView()
+            } else {
+                DisclaimerView()
+            }
         }
+        .onOpenURL { url in
+            appState.handleDeepLink(url)
+        }
+        .task {
+            // Process any items the Share Extension queued while the app was closed.
+            await processShareQueueIfNeeded()
+        }
+        .onChange(of: appState.pendingShareQueueReady) { _, ready in
+            if ready {
+                appState.pendingShareQueueReady = false
+                Task { await processShareQueueIfNeeded() }
+            }
+        }
+    }
+
+    private func processShareQueueIfNeeded() async {
+        guard ShareExtensionQueue.checkHasItems() else { return }
+        do {
+            let items = try ShareExtensionQueue.dequeueAll()
+            for item in items {
+                await consumeShareItem(item)
+            }
+        } catch {
+            appState.showError("Could not read shared items: \(error.localizedDescription)")
+        }
+    }
+
+    private func consumeShareItem(_ item: PendingShareItem) async {
+        let document: TextifyrDocument
+        if let targetID = item.targetDocumentID {
+            let allDocs = (try? modelContext.fetch(FetchDescriptor<TextifyrDocument>())) ?? []
+            document = allDocs.first(where: { $0.id == targetID }) ?? makeNewDocument(title: item.sourceTitle)
+        } else {
+            document = makeNewDocument(title: item.sourceTitle)
+        }
+
+        let method = CaptureMethod(rawValue: item.captureMethodRaw) ?? .rtfEditor
+        let order = (document.sourceSessions ?? []).count
+        let session = SourceSession(captureMethod: method, rawText: item.rawText, sortOrder: order)
+        modelContext.insert(session)
+        document.sourceSessions = (document.sourceSessions ?? []) + [session]
+        document.modificationDate = Date()
+
+        try? modelContext.save()
+        appState.selectedDocument = document
+
+        if item.audioFileName != nil {
+            appState.showError("'\(item.sourceTitle)' was shared as an audio file. Open the session and use Audio File to transcribe it.")
+        }
+    }
+
+    private func makeNewDocument(title: String) -> TextifyrDocument {
+        let trimmed = title.prefix(80).trimmingCharacters(in: .whitespacesAndNewlines)
+        let doc = TextifyrDocument(title: trimmed.isEmpty ? "Shared Content" : trimmed)
+        modelContext.insert(doc)
+        return doc
     }
 }
 

@@ -11,6 +11,8 @@
 		89148FB52F9A894300D354DF /* TextifyrServices in Frameworks */ = {isa = PBXBuildFile; productRef = 89148FB42F9A894300D354DF /* TextifyrServices */; };
 		89148FB72F9A894300D354DF /* TextifyrViewModels in Frameworks */ = {isa = PBXBuildFile; productRef = 89148FB62F9A894300D354DF /* TextifyrViewModels */; };
 		8914901B2F9AE97E00D354DF /* SpeakerKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8914901A2F9AE97E00D354DF /* SpeakerKit */; };
+		89B296EB2FD4BE69000FBDD0 /* TextifyrShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 89B296DF2FD4BE69000FBDD0 /* TextifyrShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		89B296F82FD4C171000FBDD0 /* TextifyrServices in Frameworks */ = {isa = PBXBuildFile; productRef = 89B296F72FD4C171000FBDD0 /* TextifyrServices */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,13 +30,45 @@
 			remoteGlobalIDString = 89625BA22F99434500FACC87;
 			remoteInfo = Textifyr_Mac;
 		};
+		89B296E92FD4BE69000FBDD0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 89625B9B2F99434500FACC87 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 89B296DE2FD4BE69000FBDD0;
+			remoteInfo = TextifyrShareExtension;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		89B296F02FD4BE69000FBDD0 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				89B296EB2FD4BE69000FBDD0 /* TextifyrShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		89625BA32F99434500FACC87 /* Textifyr_Mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Textifyr_Mac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		89625BB02F99434600FACC87 /* Textifyr_MacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Textifyr_MacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		89625BBA2F99434600FACC87 /* Textifyr_MacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Textifyr_MacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		89B296DF2FD4BE69000FBDD0 /* TextifyrShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TextifyrShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		89B296EC2FD4BE69000FBDD0 /* Exceptions for "TextifyrShareExtension" folder in "TextifyrShareExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 89B296DE2FD4BE69000FBDD0 /* TextifyrShareExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		89625BA52F99434500FACC87 /* Textifyr_Mac */ = {
@@ -50,6 +84,14 @@
 		89625BBD2F99434600FACC87 /* Textifyr_MacUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Textifyr_MacUITests;
+			sourceTree = "<group>";
+		};
+		89B296E02FD4BE69000FBDD0 /* TextifyrShareExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				89B296EC2FD4BE69000FBDD0 /* Exceptions for "TextifyrShareExtension" folder in "TextifyrShareExtension" target */,
+			);
+			path = TextifyrShareExtension;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -80,6 +122,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		89B296DC2FD4BE69000FBDD0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				89B296F82FD4C171000FBDD0 /* TextifyrServices in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -89,6 +139,8 @@
 				89625BA52F99434500FACC87 /* Textifyr_Mac */,
 				89625BB32F99434600FACC87 /* Textifyr_MacTests */,
 				89625BBD2F99434600FACC87 /* Textifyr_MacUITests */,
+				89B296E02FD4BE69000FBDD0 /* TextifyrShareExtension */,
+				89B296F62FD4C171000FBDD0 /* Frameworks */,
 				89625BA42F99434500FACC87 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -99,8 +151,16 @@
 				89625BA32F99434500FACC87 /* Textifyr_Mac.app */,
 				89625BB02F99434600FACC87 /* Textifyr_MacTests.xctest */,
 				89625BBA2F99434600FACC87 /* Textifyr_MacUITests.xctest */,
+				89B296DF2FD4BE69000FBDD0 /* TextifyrShareExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		89B296F62FD4C171000FBDD0 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -113,10 +173,12 @@
 				89625B9F2F99434500FACC87 /* Sources */,
 				89625BA02F99434500FACC87 /* Frameworks */,
 				89625BA12F99434500FACC87 /* Resources */,
+				89B296F02FD4BE69000FBDD0 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				89B296EA2FD4BE69000FBDD0 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				89625BA52F99434500FACC87 /* Textifyr_Mac */,
@@ -178,6 +240,29 @@
 			productReference = 89625BBA2F99434600FACC87 /* Textifyr_MacUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		89B296DE2FD4BE69000FBDD0 /* TextifyrShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 89B296ED2FD4BE69000FBDD0 /* Build configuration list for PBXNativeTarget "TextifyrShareExtension" */;
+			buildPhases = (
+				89B296DB2FD4BE69000FBDD0 /* Sources */,
+				89B296DC2FD4BE69000FBDD0 /* Frameworks */,
+				89B296DD2FD4BE69000FBDD0 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				89B296E02FD4BE69000FBDD0 /* TextifyrShareExtension */,
+			);
+			name = TextifyrShareExtension;
+			packageProductDependencies = (
+				89B296F72FD4C171000FBDD0 /* TextifyrServices */,
+			);
+			productName = TextifyrShareExtension;
+			productReference = 89B296DF2FD4BE69000FBDD0 /* TextifyrShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -198,6 +283,9 @@
 					89625BB92F99434600FACC87 = {
 						CreatedOnToolsVersion = 26.3;
 						TestTargetID = 89625BA22F99434500FACC87;
+					};
+					89B296DE2FD4BE69000FBDD0 = {
+						CreatedOnToolsVersion = 26.3;
 					};
 				};
 			};
@@ -222,6 +310,7 @@
 				89625BA22F99434500FACC87 /* Textifyr_Mac */,
 				89625BAF2F99434600FACC87 /* Textifyr_MacTests */,
 				89625BB92F99434600FACC87 /* Textifyr_MacUITests */,
+				89B296DE2FD4BE69000FBDD0 /* TextifyrShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -242,6 +331,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		89625BB82F99434600FACC87 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		89B296DD2FD4BE69000FBDD0 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -272,6 +368,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		89B296DB2FD4BE69000FBDD0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -284,6 +387,11 @@
 			isa = PBXTargetDependency;
 			target = 89625BA22F99434500FACC87 /* Textifyr_Mac */;
 			targetProxy = 89625BBB2F99434600FACC87 /* PBXContainerItemProxy */;
+		};
+		89B296EA2FD4BE69000FBDD0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 89B296DE2FD4BE69000FBDD0 /* TextifyrShareExtension */;
+			targetProxy = 89B296E92FD4BE69000FBDD0 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -411,6 +519,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Textifyr_Mac/Textifyr_Mac.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -428,7 +537,7 @@
 				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
 				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
 				ENABLE_RESOURCE_ACCESS_PRINTING = YES;
-				ENABLE_RESOURCE_ACCESS_USB = NO;
+				ENABLE_RESOURCE_ACCESS_USB = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Textifyr-Mac-Info.plist";
@@ -462,6 +571,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				AUTOMATION_APPLE_EVENTS = NO;
+				CODE_SIGN_ENTITLEMENTS = Textifyr_Mac/Textifyr_Mac.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -590,6 +700,92 @@
 			};
 			name = Release;
 		};
+		89B296EE2FD4BE69000FBDD0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_ENTITLEMENTS[sdk=*]" = TextifyrShareExtension/TextifyrShareExtension.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GDR6PYP3RX;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = YES;
+				ENABLE_RESOURCE_ACCESS_USB = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TextifyrShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TextifyrShareExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.wecandoit.Textifyr-Mac.TextifyrShareExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		89B296EF2FD4BE69000FBDD0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_ENTITLEMENTS[sdk=*]" = TextifyrShareExtension/TextifyrShareExtension.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = GDR6PYP3RX;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
+				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
+				ENABLE_RESOURCE_ACCESS_PRINTING = YES;
+				ENABLE_RESOURCE_ACCESS_USB = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TextifyrShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TextifyrShareExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.wecandoit.Textifyr-Mac.TextifyrShareExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -625,6 +821,15 @@
 			buildConfigurations = (
 				89625BCB2F99434600FACC87 /* Debug */,
 				89625BCC2F99434600FACC87 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		89B296ED2FD4BE69000FBDD0 /* Build configuration list for PBXNativeTarget "TextifyrShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				89B296EE2FD4BE69000FBDD0 /* Debug */,
+				89B296EF2FD4BE69000FBDD0 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -666,6 +871,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 891490192F9AE97E00D354DF /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
 			productName = SpeakerKit;
+		};
+		89B296F72FD4C171000FBDD0 /* TextifyrServices */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 89148FB12F9A894300D354DF /* XCLocalSwiftPackageReference "../TextifyrCore" */;
+			productName = TextifyrServices;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
