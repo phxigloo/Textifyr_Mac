@@ -62,6 +62,9 @@ struct SmartVisionInputView: View {
     @State private var capturedDisplays: [(name: String, image: CGImage)] = []
     @State private var showDisplayPicker = false
     @State private var displayCarouselIndex = 0
+    @State private var showScreenCapturePrepare = false
+    @State private var suppressScreenCapturePrepare = false
+    private static let suppressPrepareKey = "suppressSmartVisionScreenCapturePrepare"
 
     // Process
     @State private var processingMode: PictureProcessingMode = .none
@@ -120,7 +123,14 @@ struct SmartVisionInputView: View {
             }
         }
         .onChange(of: captureSource) { _, src in
-            if src == .screenCapture { Task { await captureScreen() } }
+            if src == .screenCapture {
+                captureSource = nil
+                if UserDefaults.standard.bool(forKey: Self.suppressPrepareKey) {
+                    Task { await captureScreen() }
+                } else {
+                    showScreenCapturePrepare = true
+                }
+            }
         }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
@@ -133,9 +143,6 @@ struct SmartVisionInputView: View {
         ) { result in
             if let url = try? result.get().first { Task { await loadImageFile(url) } }
         }
-        .sheet(isPresented: $showDisplayPicker) {
-            displayPickerSheet
-        }
         .alert("Error", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("OK") { errorText = nil }
         } message: { Text(errorText ?? "") }
@@ -147,13 +154,11 @@ struct SmartVisionInputView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 10) {
             Image(systemName: "photo.badge.plus").foregroundStyle(Color.accentColor)
             Text("Embed Image").font(.title2).bold()
             Spacer()
             stepIndicator
-            Spacer()
-            Button("Cancel") { captureVM.reset(); closeWizard() }.buttonStyle(.borderless)
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
@@ -199,52 +204,194 @@ struct SmartVisionInputView: View {
 
     private var captureStep: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Step 1 — Capture").font(.headline)
-                        Text("Choose an image source. You will be able to crop after capture.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
-                        sourceButton("Camera", icon: "camera.fill", disabled: !appState.canUseCamera) {
-                            captureSource = .camera
-                        }
-                        PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                            sourceButtonLabel("Photo Library", icon: "photo.on.rectangle")
-                        }.buttonStyle(.plain)
-
-                        sourceButton("Screen Capture", icon: "rectangle.dashed") {
-                            captureSource = .screenCapture
-                        }
-                        sourceButton("Image File", icon: "photo") {
-                            showFileImporter = true
-                        }
-                    }
-
-                    if let error = errorText {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                    }
+            Group {
+                if showScreenCapturePrepare {
+                    screenCapturePrepareContent
+                } else if showDisplayPicker {
+                    inlineDisplayPicker
+                } else {
+                    sourceGridContent
                 }
-                .padding(20)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
 
             HStack {
-                Button("Cancel") { captureVM.reset(); closeWizard() }
-                    .buttonStyle(.bordered)
+                Button("Cancel") {
+                    if showScreenCapturePrepare {
+                        showScreenCapturePrepare = false
+                    } else if showDisplayPicker {
+                        showDisplayPicker = false
+                        capturedDisplays = []
+                        displayCarouselIndex = 0
+                    } else {
+                        captureVM.reset(); closeWizard()
+                    }
+                }
+                .buttonStyle(.bordered)
                 Spacer()
+                captureStepTrailingButton
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
+            .background(.bar)
         }
+    }
+
+    @ViewBuilder private var sourceGridContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Step 1 — Capture").font(.headline)
+                    Text("Choose an image source. You will be able to crop after capture.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
+                    sourceButton("Camera", icon: "camera.fill", disabled: !appState.canUseCamera) {
+                        captureSource = .camera
+                    }
+                    PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+                        sourceButtonLabel("Photo Library", icon: "photo.on.rectangle")
+                    }.buttonStyle(.plain)
+
+                    sourceButton("Screen Capture", icon: "rectangle.dashed") {
+                        captureSource = .screenCapture
+                    }
+                    sourceButton("Image File", icon: "photo") {
+                        showFileImporter = true
+                    }
+                }
+
+                if let error = errorText {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
+            }
+            .padding(20)
+        }
+    }
+
+    @ViewBuilder private var screenCapturePrepareContent: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "macwindow.on.rectangle")
+                .font(.system(size: 48)).foregroundStyle(.tint)
+
+            Text("Prepare Your Screen")
+                .font(.title3.bold())
+
+            Text("Arrange the windows you want to capture before proceeding. Textifyr is automatically excluded from the screenshot.")
+                .font(.body).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center).padding(.horizontal, 32)
+
+            Toggle("Don't show this again", isOn: $suppressScreenCapturePrepare)
+                .toggleStyle(.checkbox)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
+    }
+
+    @ViewBuilder private var inlineDisplayPicker: some View {
+        VStack(spacing: 12) {
+            Text("Select Display")
+                .font(.headline)
+
+            if !capturedDisplays.isEmpty {
+                Text(capturedDisplays[displayCarouselIndex].name)
+                    .font(.subheadline).foregroundStyle(.secondary)
+
+                HStack(spacing: 0) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            displayCarouselIndex = max(displayCarouselIndex - 1, 0)
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left").font(.title2.bold())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(displayCarouselIndex == 0)
+                    .opacity(displayCarouselIndex == 0 ? 0.3 : 1)
+
+                    let img = capturedDisplays[displayCarouselIndex].image
+                    Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.4), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                        .padding(.horizontal, 8)
+                        .id(displayCarouselIndex)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            displayCarouselIndex = min(displayCarouselIndex + 1, capturedDisplays.count - 1)
+                        }
+                    } label: {
+                        Image(systemName: "chevron.right").font(.title2.bold())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(displayCarouselIndex >= capturedDisplays.count - 1)
+                    .opacity(displayCarouselIndex >= capturedDisplays.count - 1 ? 0.3 : 1)
+                }
+
+                HStack(spacing: 8) {
+                    ForEach(capturedDisplays.indices, id: \.self) { i in
+                        Circle()
+                            .fill(i == displayCarouselIndex ? Color.accentColor : Color.secondary.opacity(0.4))
+                            .frame(width: 8, height: 8)
+                            .onTapGesture { withAnimation { displayCarouselIndex = i } }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal)
+    }
+
+    @ViewBuilder private var captureStepTrailingButton: some View {
+        if showScreenCapturePrepare {
+            Button("Capture Now") {
+                if suppressScreenCapturePrepare {
+                    UserDefaults.standard.set(true, forKey: Self.suppressPrepareKey)
+                }
+                showScreenCapturePrepare = false
+                Task {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    await captureScreen()
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+        } else if showDisplayPicker {
+            HStack(spacing: 12) {
+                Button("Recapture") {
+                    showDisplayPicker = false
+                    capturedDisplays = []
+                    displayCarouselIndex = 0
+                    Task { await captureScreen() }
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    let selected = capturedDisplays[displayCarouselIndex].image
+                    showDisplayPicker = false
+                    capturedDisplays = []
+                    displayCarouselIndex = 0
+                    capturedImage = selected
+                    showCropView = true
+                } label: {
+                    Label("Use This Display", systemImage: "crop")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        // Source grid: no trailing button (Cancel is the only action)
     }
 
     // MARK: - Step 2: Process
 
     private var processStep: some View {
+        VStack(spacing: 0) {
         VStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Step 2 — Process").font(.headline)
@@ -290,31 +437,35 @@ struct SmartVisionInputView: View {
             if let error = errorText {
                 Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
             }
-
-            HStack {
-                Button("Cancel") { captureVM.reset(); closeWizard() }
-                    .buttonStyle(.bordered)
-                Button("Back") {
-                    capturedImage = nil
-                    processedImage = nil
-                    wizardStep = .capture
-                }
-                .buttonStyle(.bordered)
-                Spacer()
-                Button("Continue") { wizardStep = .annotate }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(processedImage == nil)
-            }
-            .padding(.horizontal)
-            .padding(.bottom)
-            .padding(.top, 8)
         }
         .padding(.top, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+        Divider()
+        HStack {
+            Button("Cancel") { captureVM.reset(); closeWizard() }
+                .buttonStyle(.bordered)
+            Button("Back") {
+                capturedImage = nil
+                processedImage = nil
+                wizardStep = .capture
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+            Button("Continue") { wizardStep = .annotate }
+                .buttonStyle(.borderedProminent)
+                .disabled(processedImage == nil)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.bar)
+        }
     }
 
     // MARK: - Step 3: Annotate
 
     private var annotateStep: some View {
+        VStack(spacing: 0) {
         VStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Step 3 — Description").font(.headline)
@@ -378,22 +529,25 @@ struct SmartVisionInputView: View {
             if let error = errorText {
                 Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
             }
-
-            HStack {
-                Button("Cancel") { captureVM.reset(); closeWizard() }
-                    .buttonStyle(.bordered)
-                Button("Back") { wizardStep = .process }
-                    .buttonStyle(.bordered)
-                Spacer()
-                Button("Insert") { insertPicture() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(processedImage == nil)
-            }
-            .padding(.horizontal)
-            .padding(.bottom)
-            .padding(.top, 8)
         }
         .padding(.top, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+        Divider()
+        HStack {
+            Button("Cancel") { captureVM.reset(); closeWizard() }
+                .buttonStyle(.bordered)
+            Button("Back") { wizardStep = .process }
+                .buttonStyle(.bordered)
+            Spacer()
+            Button("Insert") { insertPicture() }
+                .buttonStyle(.borderedProminent)
+                .disabled(processedImage == nil)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.bar)
+        }
     }
 
     // MARK: - Source button helpers
@@ -426,89 +580,6 @@ struct SmartVisionInputView: View {
     }
 
     // MARK: - Capture actions
-
-    // MARK: - Display picker sheet
-
-    private var displayPickerSheet: some View {
-        VStack(spacing: 12) {
-            Text("Select Display")
-                .font(.headline)
-                .padding(.top, 24)
-
-            if !capturedDisplays.isEmpty {
-                Text(capturedDisplays[displayCarouselIndex].name)
-                    .font(.subheadline).foregroundStyle(.secondary)
-
-                HStack(spacing: 0) {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            displayCarouselIndex = max(displayCarouselIndex - 1, 0)
-                        }
-                    } label: {
-                        Image(systemName: "chevron.left").font(.title2.bold())
-                            .frame(width: 44, height: 44).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(displayCarouselIndex == 0)
-                    .opacity(displayCarouselIndex == 0 ? 0.3 : 1)
-
-                    let img = capturedDisplays[displayCarouselIndex].image
-                    Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
-                        .resizable().aspectRatio(contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.4), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
-                        .padding(.horizontal, 8)
-                        .id(displayCarouselIndex)
-
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            displayCarouselIndex = min(displayCarouselIndex + 1, capturedDisplays.count - 1)
-                        }
-                    } label: {
-                        Image(systemName: "chevron.right").font(.title2.bold())
-                            .frame(width: 44, height: 44).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(displayCarouselIndex >= capturedDisplays.count - 1)
-                    .opacity(displayCarouselIndex >= capturedDisplays.count - 1 ? 0.3 : 1)
-                }
-
-                HStack(spacing: 8) {
-                    ForEach(capturedDisplays.indices, id: \.self) { i in
-                        Circle()
-                            .fill(i == displayCarouselIndex ? Color.accentColor : Color.secondary.opacity(0.4))
-                            .frame(width: 8, height: 8)
-                            .onTapGesture { withAnimation { displayCarouselIndex = i } }
-                    }
-                }
-
-                HStack(spacing: 16) {
-                    Button("Cancel") {
-                        showDisplayPicker = false
-                        capturedDisplays = []
-                        displayCarouselIndex = 0
-                        captureSource = nil
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        let selected = capturedDisplays[displayCarouselIndex].image
-                        showDisplayPicker = false
-                        capturedDisplays = []
-                        displayCarouselIndex = 0
-                        capturedImage = selected
-                        showCropView = true
-                    } label: {
-                        Label("Use This Display", systemImage: "crop")
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .padding(.bottom, 24)
-            }
-        }
-        .frame(minWidth: 480, minHeight: 340)
-    }
 
     private func captureScreen() async {
         do {
@@ -917,11 +988,14 @@ private struct SmartVisionCameraSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 10) {
+                Image(systemName: "camera.fill").foregroundStyle(.tint)
                 Text("Camera").font(.title2).bold()
                 Spacer()
-                Button("Cancel", action: onCancel).buttonStyle(.borderless)
-            }.padding(20)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 14)
             Divider()
             CameraPreviewView(
                 captureTrigger: captureTrigger,
@@ -931,11 +1005,15 @@ private struct SmartVisionCameraSheet: View {
                         onCapture(cg)
                     }
                 },
+                onCaptureError: {
+                    isCapturing = false
+                },
                 onViewCreated: { _ in }
             )
             .frame(minHeight: 340)
             Divider()
             HStack {
+                Button("Cancel", action: onCancel).buttonStyle(.bordered)
                 Spacer()
                 if isCapturing {
                     ProgressView().controlSize(.small)
@@ -948,7 +1026,8 @@ private struct SmartVisionCameraSheet: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.vertical, 14)
+            .background(.bar)
         }
         .frame(width: 520)
         .onAppear    { appState.setCameraInUse(true)  }

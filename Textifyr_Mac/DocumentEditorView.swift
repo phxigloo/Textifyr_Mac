@@ -66,6 +66,21 @@ struct DocumentEditorView: View {
                 appState.inspectorVisible.toggle()
             }
         }
+        // Push output tab / has-output state so menu items can disable themselves
+        .onChange(of: selectedTab) { _, tab in
+            appState.outputTabIsActive = (tab == .output)
+        }
+        .onChange(of: viewModel.document.hasOutput) { _, has in
+            appState.activeDocumentHasOutput = has
+        }
+        .onAppear {
+            appState.outputTabIsActive = (selectedTab == .output)
+            appState.activeDocumentHasOutput = viewModel.document.hasOutput
+        }
+        .onDisappear {
+            appState.outputTabIsActive = false
+            appState.activeDocumentHasOutput = false
+        }
     }
 
     // MARK: - Error banner

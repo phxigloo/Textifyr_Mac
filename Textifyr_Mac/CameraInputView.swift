@@ -224,6 +224,10 @@ struct CameraInputView: View {
                     isCapturing = false
                     showingCropView = true
                 },
+                onCaptureError: {
+                    isCapturing = false
+                    errorText = "Photo capture failed. Please try again."
+                },
                 onViewCreated: { nsView in
                     cameraPreviewRef = nsView
                     availableCameras = nsView.availableCameras
@@ -511,11 +515,13 @@ struct CameraInputView: View {
 struct CameraPreviewView: NSViewRepresentable {
     let captureTrigger: CameraCaptureTrigger
     let onCapture: (NSImage) -> Void
+    var onCaptureError: (() -> Void)? = nil
     let onViewCreated: (CameraPreviewNSView) -> Void
 
     func makeNSView(context: Context) -> CameraPreviewNSView {
         let view = CameraPreviewNSView()
         view.onCapture = onCapture
+        view.onCaptureError = onCaptureError
         captureTrigger.view = view
         onViewCreated(view)
         return view
@@ -523,6 +529,7 @@ struct CameraPreviewView: NSViewRepresentable {
 
     func updateNSView(_ nsView: CameraPreviewNSView, context: Context) {
         nsView.onCapture = onCapture
+        nsView.onCaptureError = onCaptureError
         captureTrigger.view = nsView
     }
 }
@@ -531,6 +538,7 @@ struct CameraPreviewView: NSViewRepresentable {
 
 class CameraPreviewNSView: NSView {
     var onCapture: ((NSImage) -> Void)?
+    var onCaptureError: (() -> Void)?
     private(set) var availableCameras: [AVCaptureDevice] = []
 
     private var session: AVCaptureSession?
@@ -540,11 +548,22 @@ class CameraPreviewNSView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { startSession() }
+        if window != nil { startSession() } else { stopSession() }
+    }
+
+    private func stopSession() {
+        guard let s = session else { return }
+        session = nil
+        previewLayer?.removeFromSuperlayer()
+        previewLayer = nil
+        output = nil
+        currentInput = nil
+        DispatchQueue.global(qos: .userInitiated).async { s.stopRunning() }
     }
 
     private func startSession() {
         var types: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
+        if #available(macOS 14, *) { types.append(.external) } else { types.append(.externalUnknown) }
         if #available(macOS 13, *) { types.append(.continuityCamera) }
         let discovery = AVCaptureDevice.DiscoverySession(
             deviceTypes: types,
@@ -601,8 +620,12 @@ extension CameraPreviewNSView: AVCapturePhotoCaptureDelegate {
     func photoOutput(_ output: AVCapturePhotoOutput,
                      didFinishProcessingPhoto photo: AVCapturePhoto,
                      error: Error?) {
-        guard let data = photo.fileDataRepresentation(),
-              let image = NSImage(data: data) else { return }
+        guard error == nil,
+              let data = photo.fileDataRepresentation(),
+              let image = NSImage(data: data) else {
+            DispatchQueue.main.async { self.onCaptureError?() }
+            return
+        }
         DispatchQueue.main.async { self.onCapture?(image) }
     }
 }

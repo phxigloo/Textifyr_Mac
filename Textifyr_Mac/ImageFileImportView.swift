@@ -41,20 +41,51 @@ struct ImageFileImportView: View {
             if wizardStep == .review {
                 reviewPanel
             } else {
-                VStack(spacing: 20) {
-                    Text("Import Image")
-                        .font(.title2).bold()
-                        .padding(.top, 24)
-
-                    if loadedImages.isEmpty && !isLoadingImages {
-                        selectionContent
-                    } else if isLoadingImages {
-                        loadingContent
-                    } else {
-                        reviewContent
+                VStack(spacing: 0) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "doc.text.image").foregroundStyle(.tint)
+                        Text("Import Image").font(.title2).bold()
+                        Spacer()
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
+                    .padding(.bottom, 14)
+
+                    Divider()
+
+                    Group {
+                        if loadedImages.isEmpty && !isLoadingImages {
+                            selectionContent
+                        } else if isLoadingImages {
+                            loadingContent
+                        } else {
+                            reviewContent
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    Divider()
+
+                    HStack {
+                        Button("Cancel") { captureVM.reset(); closeWizard() }
+                            .buttonStyle(.bordered)
+                        Spacer()
+                        if loadedImages.isEmpty && !isLoadingImages {
+                            Button("Choose Image…") { showFileImporter = true }
+                                .buttonStyle(.borderedProminent)
+                        } else if !isLoadingImages {
+                            Button("Continue") {
+                                proceedToReview(text: recognizedText)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing || isRunningPostCapture)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(.bar)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .fileImporter(
@@ -170,13 +201,6 @@ struct ImageFileImportView: View {
                 .foregroundStyle(.tertiary)
 
             if let error = errorText { errorLabel(error) }
-
-            Button("Choose Image…") { showFileImporter = true }
-                .buttonStyle(.borderedProminent)
-
-            Button("Cancel") { captureVM.reset(); closeWizard() }
-                .buttonStyle(.bordered)
-                .padding(.bottom, 28)
         }
         .padding(.horizontal, 32)
     }
@@ -245,18 +269,7 @@ struct ImageFileImportView: View {
 
             pipelinePickerCard
                 .padding(.horizontal)
-
-            HStack {
-                Button("Cancel") { captureVM.reset(); closeWizard() }
-                    .buttonStyle(.bordered)
-                Spacer()
-                Button("Continue") {
-                    proceedToReview(text: recognizedText)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing || isRunningPostCapture)
-            }
-            .padding([.horizontal, .bottom])
+                .padding(.bottom, 8)
         }
     }
 

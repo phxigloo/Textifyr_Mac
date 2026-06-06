@@ -130,25 +130,31 @@ private struct AppCommands: Commands {
             Button("About Textifyr") { openWindow(id: "about") }
         }
 
-        // MARK: File — New
+        // MARK: File — New + Main Window
         CommandGroup(replacing: .newItem) {
             Button("New Document") { post(.newDocument) }
                 .keyboardShortcut("n", modifiers: .command)
+            Button("New Main Window") { openWindow(id: "main") }
+                .keyboardShortcut("1", modifiers: .command)
         }
 
         // MARK: File — Export / Print / Open in…
         CommandGroup(after: .newItem) {
             Divider()
-            Button("Export…")        { post(.exportDocument) }
+            Button("Export…") { post(.exportDocument) }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(!appState.outputTabIsActive || !appState.activeDocumentHasOutput)
             Divider()
-            Button("Open in Pages")  { post(.openInPages) }
-            Button("Open in Numbers"){ post(.openInNumbers) }
+            Button("Open in Pages")   { post(.openInPages) }
+                .disabled(!appState.outputTabIsActive || !appState.activeDocumentHasOutput)
+            Button("Open in Numbers") { post(.openInNumbers) }
+                .disabled(!appState.outputTabIsActive || !appState.activeDocumentHasOutput)
         }
 
         CommandGroup(replacing: .printItem) {
             Button("Print…") { post(.printDocument) }
                 .keyboardShortcut("p", modifiers: .command)
+                .disabled(!appState.outputTabIsActive || !appState.activeDocumentHasOutput)
         }
 
         // MARK: Edit — Find & Replace
@@ -223,9 +229,7 @@ private struct AppCommands: Commands {
         CommandMenu("Tools") {
             Button("Format Document") { post(.formatDocument) }
                 .keyboardShortcut("r", modifiers: .command)
-            Divider()
-            Button("Open Main Window") { openWindow(id: "main") }
-                .keyboardShortcut("1", modifiers: .command)
+                .disabled(!appState.outputTabIsActive)
             Divider()
             Button("Prompt Builder") { post(.openPromptBuilderSheet) }
                 .keyboardShortcut("p", modifiers: [.command, .shift])

@@ -9,7 +9,7 @@ import TextifyrViewModels
 
 struct SettingsView: View {
     private enum Tab: Hashable {
-        case general, textProcessing, stages
+        case general, textProcessing, stages, windows
     }
     @State private var selectedTab: Tab = .general
 
@@ -26,6 +26,10 @@ struct SettingsView: View {
             StagesTab()
                 .tabItem { Label("Stages",          systemImage: "tag.fill") }
                 .tag(Tab.stages)
+
+            WindowsTab()
+                .tabItem { Label("Windows",         systemImage: "macwindow.on.rectangle") }
+                .tag(Tab.windows)
         }
         .frame(minWidth: 740, minHeight: 520)
     }
@@ -37,7 +41,6 @@ private struct GeneralTab: View {
     @AppStorage(AppConstants.hasAcceptedTermsKey)         private var hasAcceptedTerms        = true
     @AppStorage(AppConstants.hasShownAIPrivacyWarningKey) private var hasShownAIPrivacyWarning = false
     @AppStorage(AppConstants.localProcessingOnlyKey)      private var localProcessingOnly      = false
-    @AppStorage(AppConstants.maxDocumentWindowsKey)       private var maxDocumentWindows       = AppConstants.defaultMaxDocumentWindows
     @State private var showPrivacyPolicy = false
 
     var body: some View {
@@ -60,18 +63,6 @@ private struct GeneralTab: View {
             Section("Network") {
                 Toggle("Block web requests", isOn: $localProcessingOnly)
                 Text("When enabled, the Web URL source cannot fetch pages. All other capture methods remain available.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Document Windows") {
-                Stepper(value: $maxDocumentWindows, in: 1...10) {
-                    LabeledContent("Maximum open documents") {
-                        Text("\(maxDocumentWindows)")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Text("Limits how many document windows can be open at once. Existing windows are not closed when you lower this value.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -433,6 +424,58 @@ private struct StageEditorSheet: View {
     }
 }
 
+
+// MARK: - Windows
+
+private struct WindowsTab: View {
+    @AppStorage(AppConstants.maxDocumentWindowsKey) private var maxDocumentWindows = AppConstants.defaultMaxDocumentWindows
+
+    private func post(_ name: Notification.Name) {
+        NotificationCenter.default.post(name: name, object: nil)
+    }
+
+    var body: some View {
+        Form {
+            Section("Document Windows") {
+                Stepper(value: $maxDocumentWindows, in: 1...10) {
+                    LabeledContent("Maximum open documents") {
+                        Text("\(maxDocumentWindows)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("Limits how many document windows can be open at once. Existing windows are not closed when you lower this value.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Action Editor") {
+                LabeledContent("Open Action Editor") {
+                    Button("Open Action Editor…") {
+                        post(.openPipelineEditorSheet)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Text("The Action Editor lets you create and manage AI formatting actions. Actions are organised by scope: After Capture, Before Combining, and Final Document.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Prompt Builder") {
+                LabeledContent("Open Prompt Builder") {
+                    Button("Open Prompt Builder…") {
+                        post(.openPromptBuilderSheet)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Text("The Prompt Builder lets you write and test AI prompts against sample text before saving them to an action.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
 
 #Preview {
     let c = makePreviewContainer()

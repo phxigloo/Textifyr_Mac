@@ -38,20 +38,57 @@ struct PhotoLibraryInputView: View {
             if wizardStep == .review {
                 reviewPanel
             } else {
-                VStack(spacing: 20) {
-                    Text("Photo Library")
-                        .font(.title2).bold()
-                        .padding(.top, 24)
-
-                    if currentImage == nil && !isLoadingImage {
-                        selectionContent
-                    } else if isLoadingImage {
-                        loadingContent
-                    } else {
-                        reviewContent
+                VStack(spacing: 0) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "photo.on.rectangle.angled").foregroundStyle(.tint)
+                        Text("Photo Library").font(.title2).bold()
+                        Spacer()
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
+                    .padding(.bottom, 14)
+
+                    Divider()
+
+                    Group {
+                        if currentImage == nil && !isLoadingImage {
+                            selectionContent
+                        } else if isLoadingImage {
+                            loadingContent
+                        } else {
+                            reviewContent
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    Divider()
+
+                    HStack {
+                        Button("Cancel") { captureVM.reset(); closeWizard() }
+                            .buttonStyle(.bordered)
+                        Spacer()
+                        if currentImage == nil && !isLoadingImage {
+                            PhotosPicker(
+                                selection: $selectedItem,
+                                matching: .images,
+                                photoLibrary: .shared()
+                            ) {
+                                Label("Choose Photo…", systemImage: "photo.on.rectangle")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        } else if !isLoadingImage {
+                            Button("Continue") {
+                                proceedToReview(text: recognizedText)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing || isRunningPostCapture)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(.bar)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .sheet(isPresented: $showingCropView) {
@@ -157,19 +194,6 @@ struct PhotoLibraryInputView: View {
                 .multilineTextAlignment(.center)
 
             if let error = errorText { errorLabel(error) }
-
-            PhotosPicker(
-                selection: $selectedItem,
-                matching: .images,
-                photoLibrary: .shared()
-            ) {
-                Label("Choose Photo…", systemImage: "photo.on.rectangle")
-            }
-            .buttonStyle(.borderedProminent)
-
-            Button("Cancel") { captureVM.reset(); closeWizard() }
-                .buttonStyle(.bordered)
-                .padding(.bottom, 28)
         }
         .padding(.horizontal, 32)
     }
@@ -235,18 +259,7 @@ struct PhotoLibraryInputView: View {
 
             pipelinePickerCard
                 .padding(.horizontal)
-
-            HStack {
-                Button("Cancel") { captureVM.reset(); closeWizard() }
-                    .buttonStyle(.bordered)
-                Spacer()
-                Button("Continue") {
-                    proceedToReview(text: recognizedText)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing || isRunningPostCapture)
-            }
-            .padding([.horizontal, .bottom])
+                .padding(.bottom, 8)
         }
     }
 

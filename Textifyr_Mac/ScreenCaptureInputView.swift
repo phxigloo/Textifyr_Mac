@@ -31,7 +31,7 @@ struct ScreenCaptureInputView: View {
     @State private var isCapturing = false
     @State private var isProcessing = false
     @State private var showingCropView = false
-    @State private var showPrepareSheet = false
+    @State private var showPrepareStep = true
     @State private var suppressPrepare = false
     @State private var hasTriggeredCapture = false
     @State private var errorText: String?
@@ -44,26 +44,47 @@ struct ScreenCaptureInputView: View {
             if wizardStep == .review {
                 reviewPanel
             } else {
-                VStack(spacing: 20) {
-                    Text("Screen Capture")
-                        .font(.title2).bold()
-                        .padding(.top, 24)
-
-                    if isCapturing {
-                        capturingContent
-                    } else if !capturedDisplays.isEmpty && selectedImage == nil {
-                        carouselContent
-                    } else if selectedImage != nil {
-                        reviewContent
-                    } else {
-                        promptContent
+                VStack(spacing: 0) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "rectangle.dashed.badge.record").foregroundStyle(.tint)
+                        Text("Screen Capture").font(.title2).bold()
+                        Spacer()
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
+                    .padding(.bottom, 14)
+
+                    Divider()
+
+                    Group {
+                        if showPrepareStep {
+                            prepareContent
+                        } else if isCapturing {
+                            capturingContent
+                        } else if !capturedDisplays.isEmpty && selectedImage == nil {
+                            carouselContent
+                        } else if selectedImage != nil {
+                            textReviewContent
+                        } else {
+                            idleContent
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    Divider()
+
+                    HStack {
+                        Button("Cancel") { captureVM.reset(); closeWizard() }
+                            .buttonStyle(.bordered)
+                        Spacer()
+                        acquireTrailingButtons
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(.bar)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
-        .sheet(isPresented: $showPrepareSheet) {
-            prepareSheet
         }
         .sheet(isPresented: $showingCropView) {
             if let image = selectedImage {
@@ -88,10 +109,10 @@ struct ScreenCaptureInputView: View {
             if !hasTriggeredCapture {
                 hasTriggeredCapture = true
                 if UserDefaults.standard.bool(forKey: Self.suppressKey) {
+                    showPrepareStep = false
                     Task { try? await Task.sleep(for: .milliseconds(400)); await captureScreens() }
-                } else {
-                    showPrepareSheet = true
                 }
+                // else: showPrepareStep stays true, inline prepare content shown
             }
         }
         .onChange(of: captureVM.phase) { _, phase in
@@ -162,7 +183,28 @@ struct ScreenCaptureInputView: View {
 
     // MARK: - Content states
 
-    @ViewBuilder private var promptContent: some View {
+    // Prepare step shown inline (replaces the old prepare sheet popup)
+    @ViewBuilder private var prepareContent: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "macwindow.on.rectangle")
+                .font(.system(size: 48)).foregroundStyle(.tint)
+
+            Text("Prepare Your Screen")
+                .font(.title3.bold())
+
+            Text("Arrange the windows you want to capture before proceeding. Textifyr is automatically excluded from the screenshot.")
+                .font(.body).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center).padding(.horizontal, 32)
+
+            Toggle("Don't show this again", isOn: $suppressPrepare)
+                .toggleStyle(.checkbox)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
+    }
+
+    // Idle — ready to capture (shown after prepare is dismissed, when suppress is on)
+    @ViewBuilder private var idleContent: some View {
         VStack(spacing: 16) {
             Image(systemName: "rectangle.dashed.badge.record")
                 .font(.system(size: 56))
@@ -174,23 +216,60 @@ struct ScreenCaptureInputView: View {
 
             if permissionDenied {
                 permissionDeniedView
-            } else {
-                if let error = errorText { Text(error).font(.caption).foregroundStyle(.red) }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 
-                Button("Capture Screen") {
-                    if UserDefaults.standard.bool(forKey: Self.suppressKey) {
-                        Task { await captureScreens() }
-                    } else {
-                        showPrepareSheet = true
-                    }
+    // Trailing toolbar buttons for the acquire step
+    @ViewBuilder private var acquireTrailingButtons: some View {
+        if showPrepareStep {
+            Button("Capture Now") {
+                if suppressPrepare { UserDefaults.standard.set(true, forKey: Self.suppressKey) }
+                showPrepareStep = false
+                Task { try? await Task.sleep(for: .milliseconds(300)); await captureScreens() }
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+        } else if isCapturing {
+            EmptyView()
+        } else if !capturedDisplays.isEmpty && selectedImage == nil {
+            HStack(spacing: 12) {
+                Button("Recapture") {
+                    capturedDisplays = []; carouselIndex = 0
+                    Task { await captureScreens() }
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    selectedImage = capturedDisplays[carouselIndex].image
+                    showingCropView = true
+                } label: {
+                    Label("Use This Display", systemImage: "crop")
                 }
                 .buttonStyle(.borderedProminent)
             }
-
-            Button("Cancel") { captureVM.reset(); closeWizard() }
-                .buttonStyle(.bordered).padding(.bottom, 28)
+        } else if selectedImage != nil {
+            Button("Continue") {
+                proceedToReview(text: recognizedText)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing || isRunningPostCapture)
+        } else {
+            // idle
+            if permissionDenied {
+                Button("Try Again") {
+                    permissionDenied = false
+                    errorText = nil
+                    Task { await captureScreens() }
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Button("Capture Screen") {
+                    Task { await captureScreens() }
+                }
+                .buttonStyle(.borderedProminent)
+            }
         }
-        .padding(.horizontal, 32)
     }
 
     @ViewBuilder private var capturingContent: some View {
@@ -250,30 +329,13 @@ struct ScreenCaptureInputView: View {
                         .onTapGesture { withAnimation { carouselIndex = i } }
                 }
             }
-
-            HStack(spacing: 16) {
-                Button("Recapture") {
-                    capturedDisplays = []; carouselIndex = 0
-                    Task { await captureScreens() }
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    selectedImage = capturedDisplays[carouselIndex].image
-                    showingCropView = true
-                } label: {
-                    Label("Use This Display", systemImage: "crop")
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .padding(.bottom, 12)
         }
         .padding(.horizontal)
     }
 
-    // MARK: - Acquire review (crop + text)
+    // MARK: - Text review (crop + OCR result)
 
-    @ViewBuilder private var reviewContent: some View {
+    @ViewBuilder private var textReviewContent: some View {
         VStack(spacing: 8) {
             HStack {
                 Label("Recognised Text", systemImage: "text.viewfinder")
@@ -320,17 +382,7 @@ struct ScreenCaptureInputView: View {
 
             pipelinePickerCard
                 .padding(.horizontal)
-
-            HStack {
-                Button("Cancel") { captureVM.reset(); closeWizard() }.buttonStyle(.bordered)
-                Spacer()
-                Button("Continue") {
-                    proceedToReview(text: recognizedText)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing || isRunningPostCapture)
-            }
-            .padding([.horizontal, .bottom])
+                .padding(.bottom, 8)
         }
     }
 
@@ -351,58 +403,13 @@ struct ScreenCaptureInputView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
 
-            HStack(spacing: 12) {
-                Button("Open Privacy Settings") {
-                    NSWorkspace.shared.open(
-                        URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture")!
-                    )
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button("Try Again") {
-                    permissionDenied = false
-                    errorText = nil
-                    Task { await captureScreens() }
-                }
-                .buttonStyle(.bordered)
+            Button("Open Privacy Settings") {
+                NSWorkspace.shared.open(
+                    URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture")!
+                )
             }
+            .buttonStyle(.bordered)
         }
-    }
-
-    // MARK: - Prepare sheet
-
-    @ViewBuilder private var prepareSheet: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "macwindow.on.rectangle")
-                .font(.system(size: 40)).foregroundStyle(.tint)
-
-            Text("Prepare Your Screen")
-                .font(.title3.bold())
-
-            Text("Arrange the windows you want to capture before proceeding. Textifyr is automatically excluded from the screenshot.")
-                .font(.body).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).padding(.horizontal, 20)
-
-            Toggle("Don't show this again", isOn: $suppressPrepare)
-                .toggleStyle(.checkbox).padding(.top, 4)
-
-            HStack(spacing: 12) {
-                Button("Cancel") { showPrepareSheet = false }
-                    .buttonStyle(.bordered).keyboardShortcut(.cancelAction)
-
-                Button("Capture Now") {
-                    if suppressPrepare { UserDefaults.standard.set(true, forKey: Self.suppressKey) }
-                    showPrepareSheet = false
-                    Task {
-                        try? await Task.sleep(for: .milliseconds(300))
-                        await captureScreens()
-                    }
-                }
-                .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-            }
-            .padding(.top, 4)
-        }
-        .padding(24).frame(width: 380)
     }
 
     // MARK: - Pipeline picker card

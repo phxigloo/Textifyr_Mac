@@ -231,10 +231,6 @@ struct PDFInputView: View {
             }
 
             Spacer()
-
-            Button("Choose PDF…") { showFilePicker = true }
-                .buttonStyle(.bordered)
-                .disabled(isExtracting)
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))

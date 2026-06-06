@@ -14,12 +14,28 @@ struct HelpTopic: Identifiable, Hashable {
 
 struct HelpContent {
     let sections: [HelpSection]
+    let uiViews: [HelpUIView]
+    init(sections: [HelpSection] = [], uiViews: [HelpUIView] = []) {
+        self.sections = sections
+        self.uiViews = uiViews
+    }
 }
 
 struct HelpSection: Identifiable {
     let id = UUID()
     let heading: String?
     let body: String
+}
+
+struct HelpUIView: Identifiable {
+    let id = UUID()
+    let name: String
+    let icon: String
+    let function: String
+    let howItWorks: String
+    let appFlow: String
+    let buttons: String
+    let tips: String
 }
 
 // MARK: - Help window
@@ -81,11 +97,52 @@ private struct HelpDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+
+                if !topic.content.uiViews.isEmpty {
+                    ForEach(topic.content.uiViews) { view in
+                        HelpUIViewRow(entry: view)
+                    }
+                }
             }
             .padding(32)
             .frame(maxWidth: 680, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct HelpUIViewRow: View {
+    let entry: HelpUIView
+    @State private var isExpanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 16) {
+                uiSection("Purpose", body: entry.function)
+                uiSection("How it works", body: entry.howItWorks)
+                uiSection("Where it fits", body: entry.appFlow)
+                uiSection("Controls & buttons", body: entry.buttons)
+                uiSection("Tips", body: entry.tips)
+            }
+            .padding(.top, 10)
+            .padding(.leading, 4)
+        } label: {
+            Label(entry.name, systemImage: entry.icon)
+                .font(.headline)
+        }
+        .padding(.vertical, 6)
+        Divider()
+    }
+
+    private func uiSection(_ heading: String, body: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(heading)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(body)
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -104,6 +161,82 @@ let helpTopics: [HelpTopic] = [
             HelpSection(heading: "Documents",
                 body: "Each document has its own Sources and output. Use the sidebar to switch between documents, or tap + to create a new one."),
         ])
+    ),
+    HelpTopic(
+        id: "user-interface",
+        title: "User Interface",
+        icon: "rectangle.on.rectangle",
+        content: HelpContent(
+            sections: [
+                HelpSection(heading: nil,
+                    body: "Tap any view below to learn what it does, how to use it, and how it connects to the rest of Textifyr."),
+            ],
+            uiViews: [
+                HelpUIView(
+                    name: "Main Window",
+                    icon: "doc.richtext",
+                    function: "The main window is your document workspace. It shows all your open documents in a sidebar on the left, the source list for the selected document in the centre, and the formatted output on the right.",
+                    howItWorks: "Each document holds one or more Sources — pieces of captured text or images. When you run a Final Document action, all sources are combined and processed by Apple Intelligence to produce the formatted output shown on the right side of the window.",
+                    appFlow: "The main window is the hub of Textifyr. You start here to create documents and add sources. Sources feed into the Action Editor (for custom formatting) and the output is exported from here. The sidebar and inspector panels can be shown or hidden using the View menu.",
+                    buttons: "• + (toolbar) — Creates a new document.\n• Sources button — Opens the source picker to add a new source.\n• Format (⌘R) — Runs the selected Final Document action on all sources.\n• Export (⌘⇧S) — Opens the export sheet to save the output.\n• Show/Hide Sidebar — Toggles the document list on the left.\n• Show/Hide Inspector — Toggles the action inspector panel on the right.\n• Stage badge — Tap on a source row's stage badge to change its workflow stage.",
+                    tips: "• Drag sources up and down in the list to change the order they are combined.\n• You can have multiple document windows open — use ⌘N to create a new one.\n• The Inspector on the right lets you assign Before Combining actions to each source without opening the Action Editor."
+                ),
+                HelpUIView(
+                    name: "Source Detail",
+                    icon: "waveform.and.mic",
+                    function: "The Source Detail view opens when you tap any source row. It shows the captured transcript or image content, lets you edit it, and provides tools to run Before Combining actions or chat with Apple Intelligence about the content.",
+                    howItWorks: "Source Detail has two tabs: Text (the transcript) and the action bar at the bottom. You can manually edit the transcript in the text area. Running a Before Combining action sends the transcript to Apple Intelligence and displays the result as a bubble — tap Use This to apply it, or dismiss to keep the original.",
+                    appFlow: "Source Detail sits between capture and the final document. After a source is captured and auto-cleaned (After Capture action), you use Source Detail to apply per-source formatting before the sources are combined. Changes made here only affect this source — not others in the same document.",
+                    buttons: "• Edit area — Click directly in the transcript to make manual edits.\n• Action bar — Buttons for each Before Combining action assigned to this source. Tap one to run it.\n• Undo Replace (↩) — Restores the previous transcript. Available after applying an action result.\n• Split — Opens the Splitter if the transcript is very long.\n• Freeform Prompt — Expand to type a custom instruction and send it to Apple Intelligence.",
+                    tips: "• You can run multiple actions in sequence — each one starts from the current transcript.\n• Use Undo Replace to compare different action results before committing to one.\n• Long transcripts automatically show a character count warning. Use Split to break them into smaller sources before running actions."
+                ),
+                HelpUIView(
+                    name: "Action Editor",
+                    icon: "wand.and.stars",
+                    function: "The Action Editor (Tools → Action Editor, ⌘⇧E) is where you create, edit, and organise AI formatting actions. An action is a named sequence of one or more steps, each with its own AI prompt.",
+                    howItWorks: "Actions are organised into three scopes: After Capture (runs automatically after any source is captured), Before Combining (run manually on a single source), and Final Document (runs on all sources combined). Each action can have multiple steps that run in sequence. You can copy steps from other actions, reorder them by dragging, and hide built-in actions you don't use.",
+                    appFlow: "Actions created in the Action Editor become available throughout the app — in the source detail action bar, in the output pane's action menu, and in the Auto Cleanup settings. The Action Editor is the central place to manage all your AI formatting instructions. When you write a new prompt in the Prompt Builder and save it, it is saved here as a new action step.",
+                    buttons: "• + (footer) — Adds a new action in the selected scope.\n• − (footer) — Deletes the selected action (custom actions only; built-in actions can only be hidden).\n• Show hidden toggle — Reveals built-in actions that have been hidden.\n• Add Step (action detail) — Adds a new prompt step to the selected action.\n• Copy Step from Pipeline — Opens a sheet to copy a step from any other action.\n• Save (⌘S) — Saves unsaved changes. A confirmation dialog appears if you try to navigate away with unsaved changes.\n• Discard — Reverts all unsaved changes to the selected action.\n• Run (step detail) — Tests the step's prompt against the built-in sample text.\n• Prompt Builder (step detail) — Opens the Prompt Builder pre-loaded with this step's prompt.",
+                    tips: "• Use sequential steps for complex tasks: one step to clean up grammar, another to restructure, another to add a summary. Each step's output becomes the next step's input.\n• Give actions descriptive names — they appear as buttons in Source Detail and in the output pane action menu.\n• The After Capture scope is best for light clean-up (filler words, basic punctuation). Save heavy formatting for Before Combining or Final Document where you have more control."
+                ),
+                HelpUIView(
+                    name: "Prompt Builder",
+                    icon: "text.badge.plus",
+                    function: "The Prompt Builder (Tools → Prompt Builder, ⌘⇧P) is an interactive workspace for writing and testing AI prompts. You write a prompt, run it against sample text, and refine it until the output is exactly right — then save it to an action.",
+                    howItWorks: "The Prompt Builder has three columns: Samples (on the left), the Sample Work Area (centre), and the Prompt editor (right). Select a built-in sample or create your own, write a prompt in the right-hand panel, and click Run to see what Apple Intelligence produces. The AI Improvement chat panel slides in from the right to help you refine the prompt through conversation.",
+                    appFlow: "The Prompt Builder is the development environment for your AI prompts. You use it to design and test prompts before saving them to an action step in the Action Editor. It sits outside the main document workflow — changes here do not affect any document until you explicitly save to an action.",
+                    buttons: "• Run ▶ (bottom-right) — Sends the current prompt and sample text to Apple Intelligence and shows the result.\n• Stop — Cancels a running prompt.\n• Load from Action… — Loads an existing action step's prompt into the editor.\n• Save to Action… — Saves the current prompt as a new step in an existing action, or creates a new action.\n• Clear (prompt) — Clears the prompt text.\n• wand.and.sparkles (prompt header) — Opens the AI Improvement chat panel.\n• + (Samples) — Adds a new blank sample.\n• − (Samples) — Deletes the selected sample.\n• Scratchpad — A temporary text area for pasting in real-world text. Not saved.\n• Save / Discard (sample editing) — Appears when you have edited a saved sample's name, scope, or text. Changes are not auto-saved.\n• Use as Prompt ↗ (chat bubble) — Applies an AI-suggested prompt directly to the prompt editor.\n• New Conversation (chat) — Clears the chat history and starts fresh with updated context.",
+                    tips: "• Start with a built-in sample that resembles your real-world source text — this gives you a realistic test environment.\n• Use the Scratchpad for one-off testing with text you've pasted from elsewhere. It is not saved between sessions.\n• In the AI Improvement chat, describe what you expected vs. what you got — the AI will suggest a revised prompt. Use 'Use as Prompt ↗' to apply it instantly.\n• Save the Scope when creating a sample — it controls which actions are visible when you use Load from Action."
+                ),
+                HelpUIView(
+                    name: "Settings",
+                    icon: "gearshape",
+                    function: "Settings (⌘,) is where you configure Textifyr's global behaviour: AI privacy options, network access, filler word lists, find & replace rules, workflow stages, and window management.",
+                    howItWorks: "Settings is divided into four tabs: General (AI and privacy options), Text Processing (filler words, cleanup rules, default action), Stages (workflow stage management), and Windows (document window limits and quick links to the Action Editor and Prompt Builder).",
+                    appFlow: "Settings affects the entire app. Changes take effect immediately — there is no Save button. The Text Processing tab controls what happens automatically when a source is captured (filler word removal, cleanup rules). The Stages tab defines the stage badges you see on source rows in the main window.",
+                    buttons: "• Show AI Privacy Notice Again — Resets the privacy warning so it appears before the next AI operation.\n• Block web requests toggle — Prevents the Web URL source from making network calls.\n• Maximum open documents stepper — Controls how many document windows can be open at once.\n• Filler word Add button — Adds a word to your custom filler word list.\n• Find & Replace Add button — Adds a text substitution rule applied during auto-cleanup.\n• Default Final Document picker — Sets which action runs automatically on new documents.\n• Add Stage / Edit / Delete — Manage the workflow stages available throughout the app.\n• Open Action Editor… — Opens the Action Editor directly from Settings.\n• Open Prompt Builder… — Opens the Prompt Builder directly from Settings.\n• View Privacy Policy — Shows the full privacy policy.\n• Reset and Show Disclaimer — Clears term acceptance and forces the disclaimer on next launch.",
+                    tips: "• Filler word removal runs before any AI action — removing words like 'um' and 'uh' makes the AI's job easier and improves output quality.\n• Keep the Maximum open documents setting low (2–3) if your Mac has limited RAM — each document window holds its sources and output in memory.\n• Custom find & replace rules are powerful for fixing recurring transcription errors. For example, if your microphone always transcribes your name incorrectly, add a rule to fix it automatically."
+                ),
+                HelpUIView(
+                    name: "Sources Tab",
+                    icon: "tray.2",
+                    function: "The Sources Tab (in the main window sidebar) shows the complete list of source sessions across all documents. It is a library view — you can browse, search, and review past captures without having to navigate into each document.",
+                    howItWorks: "Sources are listed with their type icon, date, and a preview of the captured text or image. Tapping a source opens its detail view. The search bar at the top filters by text content across all sources.",
+                    appFlow: "The Sources Tab provides a cross-document view of everything that has been captured. It is most useful when you want to find a past capture and add it to a new document, or review what was captured during a session without opening the document.",
+                    buttons: "• Search bar — Filters the source list by text content.\n• Source row — Tap to open the source in its detail view.\n• + (toolbar) — Adds a new source using the source picker.",
+                    tips: "• Use the Sources Tab to find old captures quickly — it is faster than opening each document individually.\n• The search bar searches the full text of each transcript, not just the title."
+                ),
+                HelpUIView(
+                    name: "Help Window",
+                    icon: "questionmark.circle",
+                    function: "The Help Window (Help → Textifyr Help, ⌘?) provides in-app documentation covering all features. It is organised into topics in a sidebar, with detailed content on the right.",
+                    howItWorks: "Select a topic in the left sidebar to read its content on the right. Topics are self-contained — you can read them in any order. The User Interface section (this page) has collapsible entries for each view — click any heading to expand or collapse its content.",
+                    appFlow: "The Help Window is independent of the main workflow — opening it does not affect any document or capture. It can stay open alongside other windows. It is the first place to check if something is not working as expected, especially the Troubleshooting topic.",
+                    buttons: "• Sidebar topics — Click any topic to navigate to it.\n• Disclosure triangles (User Interface) — Click to expand or collapse each view's documentation.\n• Resize handle — Drag the divider between the sidebar and content to adjust their widths.",
+                    tips: "• The Troubleshooting topic explains the most common errors, including the content filter warning.\n• How the AI Works explains context windows and chunking — understanding this helps you write better prompts."
+                ),
+            ]
+        )
     ),
     HelpTopic(
         id: "sources",
