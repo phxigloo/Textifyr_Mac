@@ -7,6 +7,9 @@ import TextifyrViewModels
 /// shared across all input views and injects `wizardDismiss` into the hierarchy.
 struct InputSourcePickerView: View {
     let document: TextifyrDocument
+    /// When non-nil, the picker opens straight into this method's wizard (used by
+    /// menu commands and the Share Extension handoff).
+    let initialMethod: CaptureMethod?
     let onDismiss: () -> Void
     @EnvironmentObject private var appState: AppState
 
@@ -20,9 +23,13 @@ struct InputSourcePickerView: View {
         .pdf, .webURL, .smartVision
     ]
 
-    init(document: TextifyrDocument, context: ModelContext, onDismiss: @escaping () -> Void) {
-        self.document  = document
-        self.onDismiss = onDismiss
+    init(document: TextifyrDocument,
+         context: ModelContext,
+         initialMethod: CaptureMethod? = nil,
+         onDismiss: @escaping () -> Void) {
+        self.document      = document
+        self.initialMethod = initialMethod
+        self.onDismiss     = onDismiss
         _captureVM = StateObject(wrappedValue: InputCaptureViewModel(
             document: document,
             context: context
@@ -39,11 +46,10 @@ struct InputSourcePickerView: View {
         }
         .environment(\.wizardDismiss, onDismiss)
         .task { captureVM.appState = appState }
-        .onReceive(NotificationCenter.default.publisher(for: .triggerSourceMethod)) { note in
-            guard let name = note.object as? String,
-                  let method = methods.first(where: { $0.displayName == name })
-            else { return }
-            activeMethod = method
+        .onAppear {
+            // Deterministic auto-select: read the method passed in at construction
+            // instead of waiting on a notification that may arrive before mount.
+            if activeMethod == nil { activeMethod = initialMethod }
         }
     }
 

@@ -51,7 +51,13 @@ struct AudioFileWizardView: View {
             stepContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { restorePostCapturePipeline() }
+        .onAppear {
+            restorePostCapturePipeline()
+            if let url = appState.pendingSharedAudioURL {
+                appState.pendingSharedAudioURL = nil
+                Task { await captureVM.processAudioFile(url) }
+            }
+        }
         .onChange(of: captureVM.phase) { _, phase in handlePhaseChange(phase) }
         .onChange(of: postCapturePipelines) { _, pipelines in
             guard selectedPostCapturePipelineID == nil,

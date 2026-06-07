@@ -232,7 +232,7 @@ struct SharePickerView: View {
                 .multilineTextAlignment(.center)
 
             HStack(spacing: 12) {
-                Button("Done") { onComplete(nil) }
+                Button("Close") { onComplete(nil) }
                     .buttonStyle(.bordered)
                 Button("Open Textifyr") {
                     if let url = URL(string: "textifyr://open-share") {
@@ -270,6 +270,18 @@ struct SharePickerView: View {
             if e.isImageShare {
                 if imageMode == .ocr {
                     rawText = await ShareContentHandlers.runOCR(imageData: e.imageData)
+                    // Never enqueue an empty session. If OCR found no text (or the
+                    // image data couldn't be loaded), tell the user instead of
+                    // silently creating a blank document.
+                    if rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        await MainActor.run {
+                            errorMessage = e.imageData == nil
+                                ? "This image couldn't be read. Try sharing it from Finder or Preview instead, or choose Embed Image to add the picture without OCR."
+                                : "No text was found in this image. If it contains text, try a clearer or higher-resolution version, or choose Embed Image to add the picture instead."
+                            phase = .extracting
+                        }
+                        return
+                    }
                     captureMethodRaw = "rtfEditor"
                 } else {
                     sharedImageFileName = ShareContentHandlers.saveToSharedImages(e.imageData)

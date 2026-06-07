@@ -64,19 +64,24 @@ struct ContentView: View {
             return
         }
 
+        // Audio / video path: hand off the file to the Audio File wizard for transcription
+        if item.captureMethodRaw == "audioFile", let audioURL = item.resolvedAudioURL() {
+            appState.selectedDocument = document
+            try? modelContext.save()
+            appState.pendingSharedAudioURL = audioURL
+            appState.pendingSourceMethod = .audioFile
+            return
+        }
+
+        // Text-based content: insert session directly (extraction is already done)
         let method = CaptureMethod(rawValue: item.captureMethodRaw) ?? .rtfEditor
         let order = (document.sourceSessions ?? []).count
         let session = SourceSession(captureMethod: method, rawText: item.rawText, sortOrder: order)
         modelContext.insert(session)
         document.sourceSessions = (document.sourceSessions ?? []) + [session]
         document.modificationDate = Date()
-
         try? modelContext.save()
         appState.selectedDocument = document
-
-        if item.audioFileName != nil {
-            appState.showError("'\(item.sourceTitle)' was shared as an audio file. Open the session and use Audio File to transcribe it.")
-        }
     }
 
     private func makeNewDocument(title: String) -> TextifyrDocument {

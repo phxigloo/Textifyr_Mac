@@ -14,6 +14,10 @@ struct SourcesTabView: View {
     @State private var showingAddSource = false
     @State private var editingSession: SourceSession?
     @State private var editingSmartVision: SourceSession?
+    /// Method to auto-open in the picker (set by menu commands and the Share
+    /// Extension handoff). Passed directly to the picker so there's no
+    /// notification-timing race with the picker's mount.
+    @State private var autoSelectMethod: CaptureMethod?
 
     var body: some View {
         Group {
@@ -21,7 +25,11 @@ struct SourcesTabView: View {
                 InputSourcePickerView(
                     document: document,
                     context: modelContext,
-                    onDismiss: { showingAddSource = false }
+                    initialMethod: autoSelectMethod,
+                    onDismiss: {
+                        showingAddSource = false
+                        autoSelectMethod = nil
+                    }
                 )
                 .transition(.opacity)
             } else if let session = editingSmartVision {
@@ -55,20 +63,18 @@ struct SourcesTabView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: appState.pendingSourceMethod) { _, method in
-            guard let method else { return }
-            appState.pendingSourceMethod = nil
-            withAnimation { showingAddSource = true }
-            // The picker grid will open; InputSourcePickerView reads activeMethod
-            // from the environment. We post a notification so it can auto-select.
-            NotificationCenter.default.post(
-                name: .triggerSourceMethod,
-                object: method.displayName
-            )
-        }
+        // Handle on appear AND on change. The Share Extension handoff sets
+        // pendingSourceMethod while this view is still being mounted (the document
+        // was just created and selected), so onChange alone misses it — onAppear
+        // catches that case. onChange covers menu commands while already visible.
+        .onAppear { handlePendingMethod() }
+        .onChange(of: appState.pendingSourceMethod) { _, _ in handlePendingMethod() }
     }
-}
 
-extension Notification.Name {
-    static let triggerSourceMethod = Notification.Name("TextifyrTriggerSourceMethod")
+    private func handlePendingMethod() {
+        guard let method = appState.pendingSourceMethod else { return }
+        appState.pendingSourceMethod = nil
+        autoSelectMethod = method
+        withAnimation { showingAddSource = true }
+    }
 }

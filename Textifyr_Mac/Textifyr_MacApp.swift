@@ -7,6 +7,18 @@ import TextifyrViewModels
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldRestoreApplicationState(_ sender: NSApplication) -> Bool { false }
+
+    /// Called when the app is re-activated while already running — e.g. the Share
+    /// Extension opens `textifyr://open-share`, or the user clicks the Dock icon.
+    /// Bring an existing window forward instead of letting SwiftUI spawn a
+    /// duplicate Main Window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            sender.windows.first?.makeKeyAndOrderFront(self)
+        }
+        sender.activate(ignoringOtherApps: true)
+        return true
+    }
 }
 
 @main
@@ -55,7 +67,11 @@ struct Textifyr_MacApp: App {
                 .frame(minWidth: 900, minHeight: 600)
                 .task { await prefetchDiarizationModels() }
         }
-        .handlesExternalEvents(matching: ["*"])
+        // NOTE: `handlesExternalEvents` is deliberately omitted. With it set,
+        // opening the `textifyr://` deep link from the Share Extension caused
+        // SwiftUI to spawn a second Main Window. The existing window now receives
+        // the URL via `onOpenURL`; AppDelegate.applicationShouldHandleReopen
+        // brings it to the front.
         .windowStyle(.hiddenTitleBar)
         .modelContainer(container)
         .commands { AppCommands(appState: appState) }

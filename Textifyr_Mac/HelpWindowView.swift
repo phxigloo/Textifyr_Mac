@@ -420,6 +420,23 @@ let helpTopics: [HelpTopic] = [
         ])
     ),
     HelpTopic(
+        id: "sharing",
+        title: "Sharing to Textifyr",
+        icon: "square.and.arrow.up",
+        content: HelpContent(sections: [
+            HelpSection(heading: nil,
+                body: "Textifyr appears in the system Share menu. From most apps and from the Finder, select an item, click the Share button (or right-click → Share), and choose \"Add to Textifyr\". A small panel lets you pick a new or recent document and, for images, whether to extract text or embed the picture. The content is added to Textifyr — click \"Open Textifyr\" to view it."),
+            HelpSection(heading: "What you can share",
+                body: "• Selected text — added as a Rich Text source.\n• Web pages — share a link and Textifyr imports the readable text.\n• Images (PNG, JPEG, HEIC, TIFF, GIF, BMP) — choose Extract Text (OCR) to pull out the words, or Embed Image to place the picture in your document.\n• Screenshots — share from the screenshot thumbnail or the Finder.\n• PDFs — text is extracted automatically; scanned PDFs are run through OCR.\n• Plain text, RTF, CSV, and TSV files — imported as a Rich Text source.\n• Audio and video files (M4A, MP3, WAV, AIFF, MOV, MP4) — handed to the transcription wizard, which transcribes them automatically."),
+            HelpSection(heading: "Best results from the Finder",
+                body: "Sharing the actual file from the Finder is the most reliable path. Some apps share a reference to what they are showing rather than the underlying file — for example, the Music app may share the currently-playing track's details instead of an audio file, and Notes may offer its own collaboration link. If a share doesn't bring in what you expected, locate the file in the Finder and share it from there."),
+            HelpSection(heading: "Files Textifyr can't read directly",
+                body: "Pages, Numbers, Keynote, Word, Excel, and PowerPoint documents can't be read in their native format. When you try to share one, Textifyr tells you the best format to convert to first — usually Plain Text, Rich Text (RTF), PDF, or CSV — which you then share from the Finder. Textifyr does not read .docx or .xlsx directly, so export to one of the suggested formats rather than to Office formats."),
+            HelpSection(heading: "Where shared content goes",
+                body: "Text, web pages, PDFs, and OCR results are added directly as a source. Embedded images open in the Embed Image wizard, and audio/video open in the transcription wizard, so you can adjust settings before the content is finalised. If Textifyr was closed when you shared, the items are queued and added the next time you open the app."),
+        ])
+    ),
+    HelpTopic(
         id: "troubleshooting",
         title: "Troubleshooting",
         icon: "wrench.and.screwdriver",
