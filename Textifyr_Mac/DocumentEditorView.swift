@@ -57,6 +57,10 @@ struct DocumentEditorView: View {
             selectedTab = .output
             Task { await viewModel.runFormatting(appState: appState) }
         }
+        // Audio/video dropped on the Output needs the Sources transcription wizard.
+        .onReceive(NotificationCenter.default.publisher(for: .requestSourcesTab)) { _ in
+            selectedTab = .sources
+        }
         // View menu
         .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
             withAnimation(.easeInOut(duration: 0.15)) {

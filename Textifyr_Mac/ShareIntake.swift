@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import SwiftData
 import TextifyrModels
 import TextifyrServices
@@ -61,26 +62,220 @@ enum ShareIntake {
     }
 }
 
-/// Handles files dropped onto the app (window areas or the Dock icon) by running
-/// them through the shared `FileImportService` and consuming the results.
+/// Serialises all file intake — Share-Extension queue, Dock-icon drops, and
+/// window drops — so files are extracted and added strictly one at a time. When
+/// an item opens an interactive wizard (audio/video transcription, image embed),
+/// the queue pauses until that wizard finishes before starting the next file.
+@MainActor
+final class DropImportCoordinator {
+    static let shared = DropImportCoordinator()
+    private init() {}
+
+    /// Items whose consumption opens a wizard the user must complete/cancel.
+    private enum Work {
+        case url(URL, target: UUID?, groupKey: Int?, imageMode: ImageImportMode)
+        case item(PendingShareItem, groupKey: Int?)
+    }
+
+    /// A batch of images awaiting an OCR/Embed choice. `onResolve` runs with the
+    /// chosen mode (not called on cancel) so different destinations — adding as
+    /// sources vs. inserting into the Output — can share one prompt.
+    private struct PendingImageBatch {
+        let imageCount: Int
+        let appState: AppState
+        let onResolve: (ImageImportMode) -> Void
+    }
+
+    private var queue: [Work] = []
+    private var groupDocuments: [Int: UUID] = [:]   // batch → the document it created
+    private var nextGroupKey = 0
+    private var processing = false
+    private var awaitingWizard = false
+    private var context: ModelContext?
+    private weak var appState: AppState?
+
+    private var pendingImageBatches: [PendingImageBatch] = []
+
+    /// A fresh key so a multi-file drop collapses into one new document.
+    func newGroupKey() -> Int { defer { nextGroupKey += 1 }; return nextGroupKey }
+
+    /// Enqueue file URLs (window/Dock drops) for extraction + consumption.
+    func enqueueURLs(_ urls: [URL], target: UUID?, groupKey: Int?, imageMode: ImageImportMode = .ocr,
+                     context: ModelContext, appState: AppState) {
+        let files = urls.filter { $0.isFileURL }
+        guard !files.isEmpty else { return }
+        self.context = context
+        self.appState = appState
+        queue.append(contentsOf: files.map { .url($0, target: target, groupKey: groupKey, imageMode: imageMode) })
+        pump()
+    }
+
+    // MARK: - Per-drop image OCR/Embed prompt
+
+    /// Handles a drop that may contain image files: if any images are present, asks
+    /// once how to add them, then enqueues the whole batch with that choice.
+    func handleDroppedFiles(_ urls: [URL], target: UUID?, groupKey: Int?, context: ModelContext, appState: AppState) {
+        let files = urls.filter { $0.isFileURL }
+        guard !files.isEmpty else { return }
+        let imageCount = files.filter { FileImportService.imageExtensions.contains($0.pathExtension.lowercased()) }.count
+        guard imageCount > 0 else {
+            enqueueURLs(files, target: target, groupKey: groupKey, imageMode: .ocr, context: context, appState: appState)
+            return
+        }
+        askImageMode(imageCount: imageCount, appState: appState) { [weak self] mode in
+            self?.enqueueURLs(files, target: target, groupKey: groupKey, imageMode: mode, context: context, appState: appState)
+        }
+    }
+
+    /// Presents the one-time OCR/Embed prompt for a batch of images and calls
+    /// `onResolve` with the user's choice. Used by both Sources and Output drops.
+    func askImageMode(imageCount: Int, appState: AppState, onResolve: @escaping (ImageImportMode) -> Void) {
+        pendingImageBatches.append(PendingImageBatch(imageCount: imageCount, appState: appState, onResolve: onResolve))
+        showNextImagePromptIfNeeded()
+    }
+
+    private func showNextImagePromptIfNeeded() {
+        guard let batch = pendingImageBatches.first, batch.appState.imageDropPrompt == nil else { return }
+        batch.appState.imageDropPrompt = ImageDropPrompt(imageCount: batch.imageCount)
+    }
+
+    /// Called by the dialog. nil = cancel the batch.
+    func resolveImageChoice(_ mode: ImageImportMode?) {
+        guard !pendingImageBatches.isEmpty else { return }
+        let batch = pendingImageBatches.removeFirst()
+        batch.appState.imageDropPrompt = nil
+        if let mode { batch.onResolve(mode) }
+        showNextImagePromptIfNeeded()
+    }
+
+    /// Enqueue already-extracted items (Share-Extension queue / Dock-icon drops).
+    func enqueueItems(_ items: [PendingShareItem], groupKey: Int?, context: ModelContext, appState: AppState) {
+        guard !items.isEmpty else { return }
+        self.context = context
+        self.appState = appState
+        queue.append(contentsOf: items.map { .item($0, groupKey: groupKey) })
+        pump()
+    }
+
+    /// Called when an interactive wizard closes so the next file can be processed.
+    func wizardFinished() {
+        guard awaitingWizard else { return }
+        awaitingWizard = false
+        pump()
+    }
+
+    private func pump() {
+        guard !processing, !awaitingWizard, let context, let appState, !queue.isEmpty else { return }
+        processing = true
+        let work = queue.removeFirst()
+
+        Task {
+            var resolved: PendingShareItem?
+            var groupKey: Int?
+            switch work {
+            case .item(let it, let key):
+                resolved = it; groupKey = key
+            case .url(let url, let target, let key, let imageMode):
+                groupKey = key
+                do { resolved = try await FileImportService.makePendingItem(from: url, targetDocumentID: target, imageMode: imageMode) }
+                catch { appState.showError(error.localizedDescription) }
+            }
+            processing = false
+
+            guard var item = resolved else { pump(); return }
+            // Group: reuse the document the first file in this batch created.
+            if let key = groupKey, let docID = groupDocuments[key] {
+                item = item.retargeted(to: docID)
+            }
+            ShareIntake.consume(item, context: context, appState: appState)
+            if let key = groupKey, groupDocuments[key] == nil {
+                groupDocuments[key] = appState.selectedDocument?.id
+            }
+            // Gate on whether consume actually opened a wizard (it sets
+            // pendingSourceMethod for audio/video/embed). This is more robust than
+            // guessing from the method name — a non-interactive fall-through won't stall.
+            if appState.pendingSourceMethod != nil {
+                awaitingWizard = true
+            } else {
+                pump()
+            }
+        }
+    }
+}
+
+/// Thin facade the drop targets call. Window drops onto the sidebar create one new
+/// document for the whole batch; drops onto a document add to that document. Image
+/// files trigger a one-time OCR/Embed prompt for the batch.
 @MainActor
 enum FileDropImporter {
-
-    /// Imports dropped files. When `targetDocumentID` is nil a single new document
-    /// is created and every dropped file is added to it; otherwise the files are
-    /// added to the existing document.
     static func handleDrop(urls: [URL], into targetDocumentID: UUID?, context: ModelContext, appState: AppState) {
-        let fileURLs = urls.filter { $0.isFileURL }
-        guard !fileURLs.isEmpty else { return }
+        // A new-document drop (sidebar) groups the batch; a drop onto an existing
+        // document targets it directly.
+        let groupKey = targetDocumentID == nil ? DropImportCoordinator.shared.newGroupKey() : nil
+        DropImportCoordinator.shared.handleDroppedFiles(
+            urls, target: targetDocumentID, groupKey: groupKey, context: context, appState: appState)
+    }
+}
+
+/// Handles files dropped onto the Output editor by inserting their content at the
+/// caret: text/PDF/RTF insert their text; images insert OCR text or the picture
+/// itself (per the one-time prompt); audio/video can't be inserted inline, so they
+/// are added to the document's Sources instead.
+@MainActor
+enum OutputDropImporter {
+    static func handle(urls: [URL], document: TextifyrDocument, inserter: RichTextInserter,
+                       context: ModelContext, appState: AppState) {
+        let files = urls.filter { $0.isFileURL }
+        guard !files.isEmpty else { return }
+
+        let images   = files.filter { FileImportService.imageExtensions.contains($0.pathExtension.lowercased()) }
+        let nonImage = files.filter { !FileImportService.imageExtensions.contains($0.pathExtension.lowercased()) }
+
+        if !nonImage.isEmpty {
+            insertFiles(nonImage, imageMode: .ocr, document: document, inserter: inserter, context: context, appState: appState)
+        }
+        if !images.isEmpty {
+            DropImportCoordinator.shared.askImageMode(imageCount: images.count, appState: appState) { mode in
+                insertFiles(images, imageMode: mode, document: document, inserter: inserter, context: context, appState: appState)
+            }
+        }
+    }
+
+    private static func insertFiles(_ urls: [URL], imageMode: ImageImportMode, document: TextifyrDocument,
+                                    inserter: RichTextInserter, context: ModelContext, appState: AppState) {
         Task {
-            var target = targetDocumentID
-            for url in fileURLs {
+            for url in urls {
+                let ext = url.pathExtension.lowercased()
+                let isImage = FileImportService.imageExtensions.contains(ext)
+                let isAV = FileImportService.audioExtensions.contains(ext) || FileImportService.videoExtensions.contains(ext)
+
+                // Audio/video can't be inserted inline — add them as sources instead.
+                // Switch to the Sources tab so the transcription wizard is visible
+                // (otherwise the serial queue would wait on a wizard that never shows).
+                if isAV {
+                    NotificationCenter.default.post(name: .requestSourcesTab, object: nil)
+                    DropImportCoordinator.shared.handleDroppedFiles(
+                        [url], target: document.id, groupKey: nil, context: context, appState: appState)
+                    continue
+                }
+
+                // Embed a picture directly into the document.
+                if isImage, imageMode == .embed {
+                    let accessing = url.startAccessingSecurityScopedResource()
+                    defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                    if let image = NSImage(contentsOf: url) {
+                        inserter.insertImage?(image)
+                    } else {
+                        appState.showError("Couldn't read “\(url.lastPathComponent)”.")
+                    }
+                    continue
+                }
+
+                // Everything else (text/PDF/RTF, or image OCR) → insert extracted text.
                 do {
-                    let item = try await FileImportService.makePendingItem(from: url, targetDocumentID: target)
-                    ShareIntake.consume(item, context: context, appState: appState)
-                    // Subsequent files in the same drop join the document the first
-                    // one created (so dropping 3 files makes one document, not three).
-                    if target == nil { target = appState.selectedDocument?.id }
+                    let item = try await FileImportService.makePendingItem(from: url, targetDocumentID: nil, imageMode: .ocr)
+                    let text = item.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty { inserter.insertText?(text) }
                 } catch {
                     appState.showError(error.localizedDescription)
                 }

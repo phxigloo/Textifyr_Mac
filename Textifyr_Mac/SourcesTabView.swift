@@ -38,6 +38,8 @@ struct SourcesTabView: View {
                     onDismiss: {
                         showingAddSource = false
                         autoSelectMethod = nil
+                        // Let the serial drop queue advance once this wizard closes.
+                        DropImportCoordinator.shared.wizardFinished()
                     }
                 )
                 .transition(.opacity)

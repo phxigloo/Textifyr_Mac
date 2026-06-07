@@ -40,18 +40,40 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await processShareQueueIfNeeded() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .fileImportFailed)) { note in
-            if let msg = note.object as? String { appState.showError(msg) }
+        .onReceive(NotificationCenter.default.publisher(for: .filesDropped)) { note in
+            if let urls = note.object as? [URL] {
+                FileDropImporter.handleDrop(urls: urls, into: nil, context: modelContext, appState: appState)
+            }
         }
+        .confirmationDialog(
+            imageDropTitle,
+            isPresented: Binding(
+                // The buttons below are the only resolvers; the setter stays a no-op
+                // so dismissing one prompt doesn't accidentally cancel the next queued batch.
+                get: { appState.imageDropPrompt != nil },
+                set: { _ in }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Extract Text (OCR)") { DropImportCoordinator.shared.resolveImageChoice(.ocr) }
+            Button("Embed Picture")      { DropImportCoordinator.shared.resolveImageChoice(.embed) }
+            Button("Cancel", role: .cancel) { DropImportCoordinator.shared.resolveImageChoice(nil) }
+        }
+    }
+
+    private var imageDropTitle: String {
+        let n = appState.imageDropPrompt?.imageCount ?? 0
+        return n <= 1 ? "How should this image be added?" : "How should these \(n) images be added?"
     }
 
     private func processShareQueueIfNeeded() async {
         guard ShareExtensionQueue.checkHasItems() else { return }
         do {
             let items = try ShareExtensionQueue.dequeueAll()
-            for item in items {
-                ShareIntake.consume(item, context: modelContext, appState: appState)
-            }
+            // Route through the coordinator so audio/video items open their wizard
+            // one at a time instead of clobbering each other.
+            DropImportCoordinator.shared.enqueueItems(
+                items, groupKey: nil, context: modelContext, appState: appState)
         } catch {
             appState.showError("Could not read shared items: \(error.localizedDescription)")
         }

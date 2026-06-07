@@ -9,7 +9,10 @@ struct RTFOutputView: View {
     @ObservedObject var viewModel: DocumentEditorViewModel
     @Binding var showExportSheet: Bool
     @EnvironmentObject private var appState: AppState
+    @Environment(\.modelContext) private var modelContext
     @StateObject private var formatState = TextFormatState()
+    @State private var outputInserter = RichTextInserter()
+    @State private var isOutputDropTargeted = false
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "output" },
            sort: \FormattingPipeline.name) private var outputPipelines: [FormattingPipeline]
@@ -277,8 +280,29 @@ struct RTFOutputView: View {
                         set: { document.outputRTF = $0 }
                     ),
                     isEditable: true,
-                    formatState: formatState
+                    formatState: formatState,
+                    inserter: outputInserter,
+                    onFileDrop: { urls in
+                        OutputDropImporter.handle(urls: urls, document: document,
+                                                  inserter: outputInserter, context: modelContext, appState: appState)
+                    },
+                    onDragTargetingChanged: { isOutputDropTargeted = $0 }
                 )
+                .overlay {
+                    if isOutputDropTargeted {
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6]))
+                            .background(Color.accentColor.opacity(0.05))
+                            .overlay(
+                                Label("Drop to insert into the document", systemImage: "text.insert")
+                                    .font(.callout).foregroundStyle(.secondary)
+                                    .padding(10)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                            )
+                            .padding(6)
+                            .allowsHitTesting(false)
+                    }
+                }
                 if !pictureSessions.isEmpty {
                     Divider()
                     pictureStrip

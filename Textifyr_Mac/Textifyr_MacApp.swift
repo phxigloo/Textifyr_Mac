@@ -9,8 +9,11 @@ extension Notification.Name {
     /// Posted by the AppDelegate's Apple Event URL handler so the running app can
     /// process a `textifyr://` deep link without SwiftUI spawning a new window.
     static let incomingDeepLink = Notification.Name("TextifyrIncomingDeepLink")
-    /// Posted when a Dock-icon file drop couldn't be imported; object is the message.
-    static let fileImportFailed = Notification.Name("TextifyrFileImportFailed")
+    /// Posted with `[URL]` when files are dropped on the Dock icon / opened with Textifyr.
+    static let filesDropped = Notification.Name("TextifyrFilesDropped")
+    /// Posted to switch the focused document to its Sources tab (e.g. audio/video
+    /// dropped on the Output needs to be transcribed in Sources).
+    static let requestSourcesTab = Notification.Name("TextifyrRequestSourcesTab")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -39,29 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Files dropped on the Dock icon (or opened via "Open With → Textifyr").
-    /// We extract each into the shared queue and trigger the app to drain it.
+    /// Hand the URLs to the running window so they go through the same drop path
+    /// (including the image OCR/Embed prompt) as in-window drops.
     func application(_ application: NSApplication, open urls: [URL]) {
         let fileURLs = urls.filter { $0.isFileURL }
         guard !fileURLs.isEmpty else { return }
-        Task {
-            var failures: [String] = []
-            for url in fileURLs {
-                do {
-                    let item = try await FileImportService.makePendingItem(from: url, targetDocumentID: nil)
-                    try ShareExtensionQueue.enqueue(item)
-                } catch {
-                    failures.append(error.localizedDescription)
-                }
-            }
-            await MainActor.run {
-                NSApp.activate(ignoringOtherApps: true)
-                NSApp.windows.first?.makeKeyAndOrderFront(nil)
-                NotificationCenter.default.post(name: .incomingDeepLink, object: URL(string: "textifyr://open-share"))
-                if let first = failures.first {
-                    NotificationCenter.default.post(name: .fileImportFailed, object: first)
-                }
-            }
-        }
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: .filesDropped, object: fileURLs)
     }
 
     /// Called when the app is re-activated while already running — e.g. the user

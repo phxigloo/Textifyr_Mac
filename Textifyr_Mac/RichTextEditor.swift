@@ -606,6 +606,71 @@ struct FormattingToolbar: View {
     }
 }
 
+// MARK: - Rich Text inserter
+
+/// Lets non-AppKit callers (e.g. the Output drop handler) insert content at the
+/// editor's caret. The editor wires these closures to its live NSTextView.
+@MainActor
+final class RichTextInserter {
+    var insertText: ((String) -> Void)?
+    var insertImage: ((NSImage) -> Void)?
+}
+
+// MARK: - File-drop intercepting text view
+
+/// NSTextView subclass that intercepts dropped *file* URLs (which a plain
+/// NSTextView would otherwise insert as their path text) and hands them to a
+/// callback. Non-file drags (text, etc.) keep the default behaviour.
+final class DropInterceptingTextView: NSTextView {
+    var onFileDrop: (([URL]) -> Void)?
+    var onDragTargetingChanged: ((Bool) -> Void)?
+
+    private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
+        let opts: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        return (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: opts) as? [URL]) ?? []
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if onFileDrop != nil, !fileURLs(from: sender).isEmpty {
+            onDragTargetingChanged?(true)
+            return .copy
+        }
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if onFileDrop != nil, !fileURLs(from: sender).isEmpty { return .copy }
+        return super.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onDragTargetingChanged?(false)
+        super.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if onFileDrop != nil, !fileURLs(from: sender).isEmpty { return true }
+        return super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if let onFileDrop {
+            let urls = fileURLs(from: sender)
+            if !urls.isEmpty {
+                onDragTargetingChanged?(false)
+                onFileDrop(urls)
+                return true
+            }
+        }
+        return super.performDragOperation(sender)
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        onDragTargetingChanged?(false)
+        super.concludeDragOperation(sender)
+    }
+}
+
 // MARK: - Rich Text Editor (NSViewRepresentable)
 
 /// An editable or read-only rich-text view backed by NSTextView.
@@ -614,18 +679,110 @@ struct RichTextEditor: NSViewRepresentable {
     @Binding var rtfData: Data?
     var isEditable: Bool = true
     @ObservedObject var formatState: TextFormatState
+    var inserter: RichTextInserter? = nil
+    /// When set, dropped file URLs are routed here instead of being inserted as
+    /// path text. Switches the editor to the DropInterceptingTextView subclass.
+    var onFileDrop: (([URL]) -> Void)? = nil
+    var onDragTargetingChanged: ((Bool) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
-        guard let tv = scrollView.documentView as? NSTextView else { return scrollView }
+        let scrollView: NSScrollView
+        let tv: NSTextView
+        if onFileDrop != nil {
+            (scrollView, tv) = Self.makeInterceptingScrollView()
+        } else {
+            scrollView = NSTextView.scrollableTextView()
+            guard let stockTV = scrollView.documentView as? NSTextView else { return scrollView }
+            tv = stockTV
+        }
 
         configure(tv, coordinator: context.coordinator)
         loadContent(into: tv, data: rtfData)
         context.coordinator.lastKnownData = rtfData
+        wireInserter(coordinator: context.coordinator)
+
+        if let interceptor = tv as? DropInterceptingTextView {
+            interceptor.onFileDrop = onFileDrop
+            interceptor.onDragTargetingChanged = onDragTargetingChanged
+        }
 
         return scrollView
+    }
+
+    /// Builds an NSScrollView hosting a DropInterceptingTextView, mirroring the
+    /// layout that NSTextView.scrollableTextView() produces.
+    private static func makeInterceptingScrollView() -> (NSScrollView, NSTextView) {
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autoresizingMask = [.width, .height]
+
+        let contentSize = scrollView.contentSize
+        let textStorage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        textStorage.addLayoutManager(layoutManager)
+        let textContainer = NSTextContainer(containerSize: NSSize(width: contentSize.width,
+                                                                  height: CGFloat.greatestFiniteMagnitude))
+        textContainer.widthTracksTextView = true
+        layoutManager.addTextContainer(textContainer)
+
+        let tv = DropInterceptingTextView(frame: NSRect(origin: .zero, size: contentSize),
+                                          textContainer: textContainer)
+        tv.autoresizingMask = [.width]
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.minSize = NSSize(width: 0, height: 0)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+
+        scrollView.documentView = tv
+        return (scrollView, tv)
+    }
+
+    /// Points the inserter at the (persistent) coordinator's current text view.
+    private func wireInserter(coordinator: Coordinator) {
+        guard let inserter else { return }
+        inserter.insertText = { [weak coordinator] text in
+            guard let tv = coordinator?.textView else { return }
+            Self.insert(NSAttributedString(string: text, attributes: tv.typingAttributes), into: tv)
+        }
+        inserter.insertImage = { [weak coordinator] image in
+            guard let tv = coordinator?.textView else { return }
+            Self.insert(Self.attachmentString(for: image, in: tv), into: tv)
+        }
+    }
+
+    /// Inserts attributed content at the caret (or appends to the end when the
+    /// editor isn't focused), preserving undo and triggering the save-back.
+    static func insert(_ attr: NSAttributedString, into tv: NSTextView) {
+        let isFocused = (tv.window?.firstResponder === tv)
+        let docLength = tv.textStorage?.length ?? 0
+        let range = isFocused ? tv.selectedRange() : NSRange(location: docLength, length: 0)
+        guard tv.shouldChangeText(in: range, replacementString: attr.string) else { return }
+        tv.textStorage?.replaceCharacters(in: range, with: attr)
+        tv.didChangeText()
+        tv.setSelectedRange(NSRange(location: range.location + attr.length, length: 0))
+        tv.scrollRangeToVisible(tv.selectedRange())
+    }
+
+    /// Builds an inline image attachment, scaled to fit the editor's width.
+    static func attachmentString(for image: NSImage, in tv: NSTextView) -> NSAttributedString {
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        let available = (tv.textContainer?.size.width ?? 480) - tv.textContainerInset.width * 2
+        let maxW = max(available, 80)
+        var size = image.size
+        if size.width > maxW, size.width > 0 {
+            size = NSSize(width: maxW, height: size.height * (maxW / size.width))
+        }
+        attachment.bounds = NSRect(origin: .zero, size: size)
+        // Surround with newlines so the picture sits on its own line.
+        let result = NSMutableAttributedString(string: "\n", attributes: tv.typingAttributes)
+        result.append(NSAttributedString(attachment: attachment))
+        result.append(NSAttributedString(string: "\n", attributes: tv.typingAttributes))
+        return result
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
