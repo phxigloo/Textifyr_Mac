@@ -5,13 +5,68 @@ import TextifyrModels
 import TextifyrServices
 import TextifyrViewModels
 
+extension Notification.Name {
+    /// Posted by the AppDelegate's Apple Event URL handler so the running app can
+    /// process a `textifyr://` deep link without SwiftUI spawning a new window.
+    static let incomingDeepLink = Notification.Name("TextifyrIncomingDeepLink")
+    /// Posted when a Dock-icon file drop couldn't be imported; object is the message.
+    static let fileImportFailed = Notification.Name("TextifyrFileImportFailed")
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldRestoreApplicationState(_ sender: NSApplication) -> Bool { false }
 
-    /// Called when the app is re-activated while already running — e.g. the Share
-    /// Extension opens `textifyr://open-share`, or the user clicks the Dock icon.
-    /// Bring an existing window forward instead of letting SwiftUI spawn a
-    /// duplicate Main Window.
+    /// Install our own GetURL Apple Event handler. SwiftUI's WindowGroup otherwise
+    /// responds to a `textifyr://` URL by opening a *second* Main Window. By
+    /// handling the event ourselves we keep a single window: we bring the existing
+    /// one forward and post the URL for the app to act on. (ContentView no longer
+    /// uses onOpenURL, so this is the sole deep-link path.)
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+    }
+
+    @objc func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent: NSAppleEventDescriptor) {
+        guard let urlString = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: urlString) else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first?.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.post(name: .incomingDeepLink, object: url)
+    }
+
+    /// Files dropped on the Dock icon (or opened via "Open With → Textifyr").
+    /// We extract each into the shared queue and trigger the app to drain it.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let fileURLs = urls.filter { $0.isFileURL }
+        guard !fileURLs.isEmpty else { return }
+        Task {
+            var failures: [String] = []
+            for url in fileURLs {
+                do {
+                    let item = try await FileImportService.makePendingItem(from: url, targetDocumentID: nil)
+                    try ShareExtensionQueue.enqueue(item)
+                } catch {
+                    failures.append(error.localizedDescription)
+                }
+            }
+            await MainActor.run {
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.windows.first?.makeKeyAndOrderFront(nil)
+                NotificationCenter.default.post(name: .incomingDeepLink, object: URL(string: "textifyr://open-share"))
+                if let first = failures.first {
+                    NotificationCenter.default.post(name: .fileImportFailed, object: first)
+                }
+            }
+        }
+    }
+
+    /// Called when the app is re-activated while already running — e.g. the user
+    /// clicks the Dock icon. Bring an existing window forward rather than letting
+    /// SwiftUI spawn a duplicate Main Window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             sender.windows.first?.makeKeyAndOrderFront(self)

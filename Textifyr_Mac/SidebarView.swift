@@ -20,6 +20,7 @@ struct SidebarView: View {
     @State private var selectedID: UUID?
     @State private var showDeleteConfirmation = false
     @State private var documentToDelete: TextifyrDocument?
+    @State private var isDropTargeted = false
 
     private var filteredDocs: [FilteredDoc] {
         guard !searchText.isEmpty else {
@@ -72,6 +73,26 @@ struct SidebarView: View {
             .searchable(text: $searchText, placement: .sidebar)
             .listStyle(.sidebar)
             .navigationTitle("")
+            // Drop files here to create a new document from them.
+            .dropDestination(for: URL.self) { urls, _ in
+                FileDropImporter.handleDrop(urls: urls, into: nil, context: modelContext, appState: appState)
+                return true
+            } isTargeted: { isDropTargeted = $0 }
+            .overlay {
+                if isDropTargeted {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6]))
+                        .background(Color.accentColor.opacity(0.06))
+                        .overlay(
+                            Label("Drop to add as a new document", systemImage: "doc.badge.plus")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .padding(8)
+                                .background(.ultraThinMaterial, in: Capsule())
+                        )
+                        .padding(6)
+                        .allowsHitTesting(false)
+                }
+            }
 
             Divider()
 

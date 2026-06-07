@@ -421,11 +421,13 @@ let helpTopics: [HelpTopic] = [
     ),
     HelpTopic(
         id: "sharing",
-        title: "Sharing to Textifyr",
+        title: "Sharing & Dropping Files",
         icon: "square.and.arrow.up",
         content: HelpContent(sections: [
             HelpSection(heading: nil,
                 body: "Textifyr appears in the system Share menu. From most apps and from the Finder, select an item, click the Share button (or right-click → Share), and choose \"Add to Textifyr\". A small panel lets you pick a new or recent document and, for images, whether to extract text or embed the picture. The content is added to Textifyr — click \"Open Textifyr\" to view it."),
+            HelpSection(heading: "Drag and drop",
+                body: "You can also drag files straight into Textifyr — the same file types listed below are supported:\n• Onto the document list (left sidebar) — creates a new document from the dropped file(s). Dropping several at once puts them all in one new document.\n• Onto the Sources area of an open document — adds the file(s) as sources to that document.\n• Onto the Textifyr icon in the Dock — creates a new document for each dropped file.\n\nDropped images run through OCR to extract their text. If an image has no readable text, Textifyr will tell you — use the Share sheet or the Embed Image source if you want to keep the picture itself. Dropped audio and video open in the transcription wizard."),
             HelpSection(heading: "What you can share",
                 body: "• Selected text — added as a Rich Text source.\n• Web pages — share a link and Textifyr imports the readable text.\n• Images (PNG, JPEG, HEIC, TIFF, GIF, BMP) — choose Extract Text (OCR) to pull out the words, or Embed Image to place the picture in your document.\n• Screenshots — share from the screenshot thumbnail or the Finder.\n• PDFs — text is extracted automatically; scanned PDFs are run through OCR.\n• Plain text, RTF, CSV, and TSV files — imported as a Rich Text source.\n• Audio and video files (M4A, MP3, WAV, AIFF, MOV, MP4) — handed to the transcription wizard, which transcribes them automatically."),
             HelpSection(heading: "Best results from the Finder",

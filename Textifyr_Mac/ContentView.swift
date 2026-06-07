@@ -17,8 +17,13 @@ struct ContentView: View {
                 DisclaimerView()
             }
         }
-        .onOpenURL { url in
-            appState.handleDeepLink(url)
+        // Deep links arrive via the AppDelegate's Apple Event handler (not
+        // onOpenURL) so SwiftUI doesn't open a duplicate window for them.
+        .onReceive(NotificationCenter.default.publisher(for: .incomingDeepLink)) { note in
+            if let url = note.object as? URL {
+                appState.handleDeepLink(url)
+                Task { await processShareQueueIfNeeded() }
+            }
         }
         .task {
             // Process any items the Share Extension queued while the app was closed.
@@ -30,6 +35,14 @@ struct ContentView: View {
                 Task { await processShareQueueIfNeeded() }
             }
         }
+        // Belt-and-suspenders: the Share Extension activates this app, so also
+        // drain the queue whenever the app becomes active.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await processShareQueueIfNeeded() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .fileImportFailed)) { note in
+            if let msg = note.object as? String { appState.showError(msg) }
+        }
     }
 
     private func processShareQueueIfNeeded() async {
@@ -37,58 +50,11 @@ struct ContentView: View {
         do {
             let items = try ShareExtensionQueue.dequeueAll()
             for item in items {
-                await consumeShareItem(item)
+                ShareIntake.consume(item, context: modelContext, appState: appState)
             }
         } catch {
             appState.showError("Could not read shared items: \(error.localizedDescription)")
         }
-    }
-
-    private func consumeShareItem(_ item: PendingShareItem) async {
-        let document: TextifyrDocument
-        if let targetID = item.targetDocumentID {
-            let allDocs = (try? modelContext.fetch(FetchDescriptor<TextifyrDocument>())) ?? []
-            document = allDocs.first(where: { $0.id == targetID }) ?? makeNewDocument(title: item.sourceTitle)
-        } else {
-            document = makeNewDocument(title: item.sourceTitle)
-        }
-
-        // Embed Image path: load from App Group SharedImages and hand off to SmartVision wizard
-        if item.captureMethodRaw == "imageFile", let fileName = item.sharedImageFileName {
-            appState.selectedDocument = document
-            try? modelContext.save()
-            if let dir = ShareExtensionQueue.sharedImagesDirectory {
-                appState.pendingSharedImageData = try? Data(contentsOf: dir.appendingPathComponent(fileName))
-            }
-            appState.pendingSourceMethod = .smartVision
-            return
-        }
-
-        // Audio / video path: hand off the file to the Audio File wizard for transcription
-        if item.captureMethodRaw == "audioFile", let audioURL = item.resolvedAudioURL() {
-            appState.selectedDocument = document
-            try? modelContext.save()
-            appState.pendingSharedAudioURL = audioURL
-            appState.pendingSourceMethod = .audioFile
-            return
-        }
-
-        // Text-based content: insert session directly (extraction is already done)
-        let method = CaptureMethod(rawValue: item.captureMethodRaw) ?? .rtfEditor
-        let order = (document.sourceSessions ?? []).count
-        let session = SourceSession(captureMethod: method, rawText: item.rawText, sortOrder: order)
-        modelContext.insert(session)
-        document.sourceSessions = (document.sourceSessions ?? []) + [session]
-        document.modificationDate = Date()
-        try? modelContext.save()
-        appState.selectedDocument = document
-    }
-
-    private func makeNewDocument(title: String) -> TextifyrDocument {
-        let trimmed = title.prefix(80).trimmingCharacters(in: .whitespacesAndNewlines)
-        let doc = TextifyrDocument(title: trimmed.isEmpty ? "Shared Content" : trimmed)
-        modelContext.insert(doc)
-        return doc
     }
 }
 

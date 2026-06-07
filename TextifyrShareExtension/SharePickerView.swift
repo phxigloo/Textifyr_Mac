@@ -235,9 +235,7 @@ struct SharePickerView: View {
                 Button("Close") { onComplete(nil) }
                     .buttonStyle(.bordered)
                 Button("Open Textifyr") {
-                    if let url = URL(string: "textifyr://open-share") {
-                        NSWorkspace.shared.open(url)
-                    }
+                    openMainApp()
                     onComplete(nil)
                 }
                 .buttonStyle(.borderedProminent)
@@ -269,7 +267,7 @@ struct SharePickerView: View {
 
             if e.isImageShare {
                 if imageMode == .ocr {
-                    rawText = await ShareContentHandlers.runOCR(imageData: e.imageData)
+                    rawText = await FileImportService.runOCR(imageData: e.imageData)
                     // Never enqueue an empty session. If OCR found no text (or the
                     // image data couldn't be loaded), tell the user instead of
                     // silently creating a blank document.
@@ -284,7 +282,7 @@ struct SharePickerView: View {
                     }
                     captureMethodRaw = "rtfEditor"
                 } else {
-                    sharedImageFileName = ShareContentHandlers.saveToSharedImages(e.imageData)
+                    sharedImageFileName = FileImportService.saveSharedImage(e.imageData)
                     captureMethodRaw = "imageFile"
                 }
             }
@@ -303,6 +301,18 @@ struct SharePickerView: View {
     }
 
     // MARK: - Helpers
+
+    /// Activates the main app via its custom URL scheme. App-extension sandboxes
+    /// forbid launching another app by its bundle file URL (that produced a
+    /// "does not have permission to open" error), but opening a registered
+    /// custom-scheme URL is permitted. The app side suppresses the WindowGroup's
+    /// duplicate-window behaviour by handling this URL through an Apple Event
+    /// handler in its AppDelegate instead of SwiftUI's onOpenURL.
+    private func openMainApp() {
+        if let url = URL(string: "textifyr://open-share") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 
     private func iconName(for captureMethodRaw: String) -> String {
         switch captureMethodRaw {

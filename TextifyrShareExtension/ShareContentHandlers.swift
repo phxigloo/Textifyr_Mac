@@ -58,7 +58,7 @@ enum ShareContentHandlers {
                     return result(method: "pdf", text: text, title: fileURL.lastPathComponent)
                 }
                 // Scanned/image PDF: OCR every page via PDFKit render + Vision
-                let ocrText = await ocrPDFPages(at: fileURL)
+                let ocrText = await FileImportService.ocrPDFPages(at: fileURL)
                 if !ocrText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return result(method: "pdf", text: ocrText, title: fileURL.lastPathComponent)
                 }
@@ -137,7 +137,7 @@ enum ShareContentHandlers {
                         }
                     }
                     if let img = nsImage {
-                        imageData = jpegData(from: img)
+                        imageData = FileImportService.jpegData(from: img)
                     }
                 }
 
@@ -148,7 +148,7 @@ enum ShareContentHandlers {
                 // Final guarantee: if we have any NSImage but still no bytes,
                 // rasterise it so OCR/embed always has data to work with.
                 if imageData == nil, let img = nsImage {
-                    imageData = jpegData(from: img)
+                    imageData = FileImportService.jpegData(from: img)
                 }
 
                 let title = provider.suggestedName ?? "Image"
@@ -175,17 +175,16 @@ enum ShareContentHandlers {
             let audioTypes: [UTType] = [.audio, .mpeg4Audio, .mp3, .wav, .aiff, .movie, .mpeg4Movie, .quickTimeMovie]
             for audioType in audioTypes where provider.hasItemConformingToTypeIdentifier(audioType.identifier) {
                 let fileURL = try await copyToTemp(provider, type: audioType)
-                let destFileName = fileURL.lastPathComponent
-                if let audioDir = ShareExtensionQueue.sharedAudioDirectory {
-                    let dest = audioDir.appendingPathComponent(destFileName)
-                    try? FileManager.default.removeItem(at: dest)
-                    try FileManager.default.copyItem(at: fileURL, to: dest)
-                }
+                let destFileName = FileImportService.copyAudioToAppGroup(fileURL) ?? fileURL.lastPathComponent
+                // Route movies to the Video wizard so the header reads "Import Video".
+                let isVideo = audioType.conforms(to: .movie)
                 return ShareExtractionResult(
-                    captureMethodRaw: "audioFile", rawText: "",
+                    captureMethodRaw: isVideo ? "videoAudio" : "audioFile", rawText: "",
                     audioFileName: destFileName,
                     sourceTitle: fileURL.lastPathComponent,
-                    previewText: "Audio/video — will open in transcription wizard",
+                    previewText: isVideo
+                        ? "Video — will open in the transcription wizard"
+                        : "Audio — will open in the transcription wizard",
                     previewImage: nil,
                     imageData: nil,
                     isImageShare: false
@@ -201,110 +200,20 @@ enum ShareContentHandlers {
         throw ShareExtractionError.unsupported(hint: firstUnsupportedHint)
     }
 
-    // MARK: - OCR
-
-    /// Runs Vision OCR directly on image data (bypasses VisionTextService which may be unavailable in the extension sandbox).
-    static func runOCR(imageData: Data?) async -> String {
-        guard let data = imageData else { return "" }
-        let ciCtx = CIContext(options: [.useSoftwareRenderer: false])
-        guard let ci = CIImage(data: data, options: [.applyOrientationProperty: true]),
-              let cg = ciCtx.createCGImage(ci, from: ci.extent) else { return "" }
-        return await withCheckedContinuation { cont in
-            let req = VNRecognizeTextRequest { request, _ in
-                let obs = request.results as? [VNRecognizedTextObservation] ?? []
-                let text = obs.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-                cont.resume(returning: text)
-            }
-            req.recognitionLevel = .accurate
-            req.usesLanguageCorrection = true
-            try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
-        }
-    }
-
-    /// Rasterises an NSImage to JPEG data, falling back to TIFF. Reliable for the
-    /// CIImage-backed images that Photos vends, where cgImage(forProposedRect:) fails.
-    private static func jpegData(from img: NSImage) -> Data? {
-        if let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) {
-            return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9]) ?? tiff
-        }
-        if let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            let ci = CIImage(cgImage: cg)
-            let ciCtx = CIContext(options: [.useSoftwareRenderer: false])
-            return ciCtx.jpegRepresentation(of: ci, colorSpace: CGColorSpaceCreateDeviceRGB())
-        }
-        return nil
-    }
-
-    // MARK: - Image save (for Embed Image path)
-
-    static func saveToSharedImages(_ data: Data?) -> String? {
-        guard let data, let dir = ShareExtensionQueue.sharedImagesDirectory else { return nil }
-        let name = UUID().uuidString + ".jpg"
-        let dest = dir.appendingPathComponent(name)
-        let writeData: Data
-        if let rep = NSBitmapImageRep(data: data),
-           let jpg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) {
-            writeData = jpg
-        } else {
-            writeData = data
-        }
-        return (try? writeData.write(to: dest, options: .atomic)) != nil ? name : nil
-    }
-
-    // MARK: - PDF OCR (scanned pages)
-
-    private static func ocrPDFPages(at url: URL) async -> String {
-        guard let document = PDFDocument(url: url) else { return "" }
-        let pageCount = min(document.pageCount, AppConstants.maxPDFPages)
-        var pages: [String] = []
-        for i in 0..<pageCount {
-            guard let cg = PDFTextService.renderPage(from: url, pageIndex: i) else { continue }
-            let text: String = await withCheckedContinuation { cont in
-                let req = VNRecognizeTextRequest { request, _ in
-                    let obs = request.results as? [VNRecognizedTextObservation] ?? []
-                    cont.resume(returning: obs.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n"))
-                }
-                req.recognitionLevel = .accurate
-                req.usesLanguageCorrection = true
-                try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
-            }
-            if !text.isEmpty { pages.append(text) }
-        }
-        return pages.joined(separator: "\n\n")
-    }
-
     // MARK: - Unsupported type hint
 
+    /// Delegates to the shared `FileImportService` hint, deriving a file extension
+    /// from the provider's suggested name or iWork type identifiers.
     private static func conversionHint(for provider: NSItemProvider) -> String? {
         let ids = Set(provider.registeredTypeIdentifiers)
         let name = provider.suggestedName ?? ""
-        let ext = (name as NSString).pathExtension.lowercased()
-
-        if ids.contains("com.apple.iwork.numbers.numbers") || ext == "numbers" {
-            return "In Numbers, choose File → Export To → CSV (or TSV), then share from Finder."
+        var ext = (name as NSString).pathExtension.lowercased()
+        if ext.isEmpty {
+            if ids.contains("com.apple.iwork.pages.pages")     { ext = "pages" }
+            else if ids.contains("com.apple.iwork.numbers.numbers") { ext = "numbers" }
+            else if ids.contains("com.apple.iwork.keynote.key")     { ext = "key" }
         }
-        if ids.contains("com.apple.iwork.pages.pages") || ext == "pages" {
-            return "In Pages, choose File → Export To → Plain Text, Rich Text (RTF), or PDF, then share from Finder."
-        }
-        if ids.contains("com.apple.iwork.keynote.key") || ext == "key" {
-            return "In Keynote, choose File → Export To → PDF, then share from Finder."
-        }
-        if ["xlsx", "xls"].contains(ext) {
-            return "In Excel (or Numbers), export as CSV or TSV, then share from Finder."
-        }
-        if ["docx", "doc"].contains(ext) {
-            return "In Word (or Pages), export as Plain Text, Rich Text (RTF), or PDF, then share from Finder."
-        }
-        if ["pptx", "ppt"].contains(ext) {
-            return "In PowerPoint (or Keynote), export as PDF, then share from Finder."
-        }
-        if ext == "sketch" {
-            return "In Sketch, export individual artboards as PNG or PDF, then share from Finder."
-        }
-        if !name.isEmpty {
-            return "Convert \"\(name)\" to plain text, RTF, PDF, an image, or audio and share from Finder."
-        }
-        return nil
+        return FileImportService.conversionHint(ext: ext, name: name)
     }
 
     // MARK: - Private helpers
