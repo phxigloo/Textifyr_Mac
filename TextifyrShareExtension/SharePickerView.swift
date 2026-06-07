@@ -13,8 +13,10 @@ struct SharePickerView: View {
     @State private var selectedDocumentID: UUID? = nil    // nil = New Document
     @State private var recentDocs: [RecentDocumentInfo] = []
     @State private var errorMessage: String?
+    @State private var imageMode: ImageMode = .ocr
 
     enum Phase { case extracting, picking, confirming, done }
+    enum ImageMode { case ocr, embed }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,7 +35,6 @@ struct SharePickerView: View {
             }
         }
         .frame(width: 400)
-        .fixedSize(horizontal: false, vertical: true)
         .task { await runExtraction() }
     }
 
@@ -57,54 +58,87 @@ struct SharePickerView: View {
 
     private var extractingContent: some View {
         VStack(spacing: 14) {
-            ProgressView("Extracting content…")
-                .controlSize(.regular)
-            if let error = errorMessage {
-                Text(error).font(.caption).foregroundStyle(.red).multilineTextAlignment(.center)
+            if errorMessage == nil {
+                ProgressView("Extracting content…")
+                    .controlSize(.regular)
+            } else {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.red)
+                Text(errorMessage!)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                Button("Close") { onComplete(nil) }
+                    .buttonStyle(.bordered)
+                    .padding(.top, 4)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(24)
     }
 
     // MARK: - Phase: picking
+    // ScrollView fills all available height; buttons are pinned outside it so
+    // they remain visible regardless of how tall the host app makes the panel.
 
     private var pickingContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let e = extraction {
-                previewCard(e)
-                    .padding(16)
-            }
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let e = extraction {
+                        previewCard(e)
+                            .padding(16)
+                    }
 
-            Divider()
+                    // Image mode picker — only shown for image shares
+                    if extraction?.isImageShare == true {
+                        Picker("", selection: $imageMode) {
+                            Text("Extract Text (OCR)").tag(ImageMode.ocr)
+                            Text("Embed Image").tag(ImageMode.embed)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 10)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Add to")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
+                        Text(imageMode == .ocr
+                             ? "OCR runs on the image and the text is added to your document."
+                             : "The image opens in the Embed Image wizard in Textifyr.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 8)
+                    }
 
-                List(selection: Binding(
-                    get: { selectedDocumentID as AnyHashable? },
-                    set: { selectedDocumentID = $0 as? UUID }
-                )) {
-                    Label("New Document", systemImage: "doc.badge.plus")
-                        .tag(nil as UUID?)
+                    Divider()
+
+                    Text("Add to")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
+                        .padding(.bottom, 4)
+
+                    docRow(id: nil, title: "New Document", icon: "doc.badge.plus")
+
                     if !recentDocs.isEmpty {
-                        Section("Recent") {
-                            ForEach(recentDocs) { doc in
-                                Label(doc.title, systemImage: "doc.text")
-                                    .tag(doc.id as UUID?)
-                            }
+                        Text("Recent")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 10)
+                            .padding(.bottom, 2)
+
+                        ForEach(recentDocs) { doc in
+                            docRow(id: doc.id, title: doc.title, icon: "doc.text")
                         }
                     }
                 }
-                .listStyle(.inset)
-                .frame(height: min(44 + CGFloat(recentDocs.count) * 30 + (recentDocs.isEmpty ? 0 : 22), 200))
             }
 
             Divider()
 
+            // Fixed bottom toolbar — always visible
             HStack {
                 Button("Cancel") { onComplete(nil) }
                     .buttonStyle(.bordered)
@@ -117,6 +151,28 @@ struct SharePickerView: View {
             .padding(.vertical, 14)
             .background(.bar)
         }
+    }
+
+    @ViewBuilder
+    private func docRow(id: UUID?, title: String, icon: String) -> some View {
+        let isSelected = selectedDocumentID == id
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+            Text(title)
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+            Spacer()
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(Color.white)
+                    .font(.caption.bold())
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 9)
+        .background(isSelected ? Color.accentColor : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { selectedDocumentID = id }
     }
 
     @ViewBuilder
@@ -148,13 +204,14 @@ struct SharePickerView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
-    // MARK: - Phase: confirming (quick spinner while writing queue)
+    // MARK: - Phase: confirming
 
     private var confirmingContent: some View {
         HStack(spacing: 10) {
             ProgressView().controlSize(.small)
             Text("Adding…")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(24)
     }
 
@@ -186,6 +243,7 @@ struct SharePickerView: View {
                 .buttonStyle(.borderedProminent)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(24)
     }
 
@@ -205,10 +263,25 @@ struct SharePickerView: View {
         guard let e = extraction else { return }
         phase = .confirming
         Task {
+            var captureMethodRaw = e.captureMethodRaw
+            var rawText = e.rawText
+            var sharedImageFileName: String? = nil
+
+            if e.isImageShare {
+                if imageMode == .ocr {
+                    rawText = await ShareContentHandlers.runOCR(imageData: e.imageData)
+                    captureMethodRaw = "rtfEditor"
+                } else {
+                    sharedImageFileName = ShareContentHandlers.saveToSharedImages(e.imageData)
+                    captureMethodRaw = "imageFile"
+                }
+            }
+
             let item = PendingShareItem(
-                captureMethodRaw: e.captureMethodRaw,
-                rawText: e.rawText,
+                captureMethodRaw: captureMethodRaw,
+                rawText: rawText,
                 audioFileName: e.audioFileName,
+                sharedImageFileName: sharedImageFileName,
                 sourceTitle: e.sourceTitle,
                 targetDocumentID: selectedDocumentID
             )

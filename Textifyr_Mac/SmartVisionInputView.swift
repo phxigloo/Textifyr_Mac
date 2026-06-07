@@ -89,6 +89,19 @@ struct SmartVisionInputView: View {
             stepContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            // Pre-load image passed from the Share Extension "Embed Image" path
+            if let data = appState.pendingSharedImageData {
+                appState.pendingSharedImageData = nil
+                let ciCtx = CIContext(options: [.useSoftwareRenderer: false])
+                if let ci = CIImage(data: data, options: [.applyOrientationProperty: true]),
+                   let cg = ciCtx.createCGImage(ci, from: ci.extent) {
+                    capturedImage = cg
+                    applyPictureProcessing(to: cg)
+                    wizardStep = .process
+                }
+            }
+        }
         .sheet(isPresented: $showCropView) {
             if let img = capturedImage {
                 NavigationStack {

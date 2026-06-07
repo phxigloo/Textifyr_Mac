@@ -53,6 +53,17 @@ struct ContentView: View {
             document = makeNewDocument(title: item.sourceTitle)
         }
 
+        // Embed Image path: load from App Group SharedImages and hand off to SmartVision wizard
+        if item.captureMethodRaw == "imageFile", let fileName = item.sharedImageFileName {
+            appState.selectedDocument = document
+            try? modelContext.save()
+            if let dir = ShareExtensionQueue.sharedImagesDirectory {
+                appState.pendingSharedImageData = try? Data(contentsOf: dir.appendingPathComponent(fileName))
+            }
+            appState.pendingSourceMethod = .smartVision
+            return
+        }
+
         let method = CaptureMethod(rawValue: item.captureMethodRaw) ?? .rtfEditor
         let order = (document.sourceSessions ?? []).count
         let session = SourceSession(captureMethod: method, rawText: item.rawText, sortOrder: order)

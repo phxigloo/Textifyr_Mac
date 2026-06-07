@@ -30,6 +30,6 @@ final class ShareViewController: NSViewController {
             host.view.topAnchor.constraint(equalTo: view.topAnchor),
             host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        preferredContentSize = NSSize(width: 400, height: 340)
+        preferredContentSize = NSSize(width: 400, height: 440)
     }
 }
