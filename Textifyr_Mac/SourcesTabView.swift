@@ -40,6 +40,8 @@ struct SourcesTabView: View {
                         autoSelectMethod = nil
                         // Let the serial drop queue advance once this wizard closes.
                         DropImportCoordinator.shared.wizardFinished()
+                        // Resume a live-capture workflow once its capture completes.
+                        resumeLiveWorkflowIfNeeded()
                     }
                 )
                 .transition(.opacity)
@@ -108,5 +110,15 @@ struct SourcesTabView: View {
         appState.pendingSourceMethod = nil
         autoSelectMethod = method
         withAnimation { showingAddSource = true }
+    }
+
+    /// When a live-capture workflow's wizard closes, resume the chain if a source
+    /// was actually captured into this document (otherwise treat it as cancelled).
+    private func resumeLiveWorkflowIfNeeded() {
+        guard let pending = appState.liveWorkflowPending, pending.documentID == document.id else { return }
+        appState.liveWorkflowPending = nil
+        if !(document.sourceSessions ?? []).isEmpty {
+            appState.liveWorkflowResume = pending
+        }
     }
 }

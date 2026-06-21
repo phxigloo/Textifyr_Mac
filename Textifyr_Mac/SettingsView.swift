@@ -118,9 +118,11 @@ private struct TextProcessingTab: View {
 
     @State private var customFillerWords: [String] = []
     @State private var cleanupRules: [CleanupRule] = []
+    @State private var glossaryTerms: [String] = []
     @State private var newFillerWord = ""
     @State private var newFind       = ""
     @State private var newReplace    = ""
+    @State private var newGlossaryTerm = ""
     @State private var defaultPipelineID = ""
 
     var body: some View {
@@ -206,6 +208,37 @@ private struct TextProcessingTab: View {
                 }
             }
 
+            Section("Glossary — Protected Names") {
+                Text("Names and terms the AI must never change — useful for proper names, brands, or drug names it tends to “correct”. These are passed to every AI action so it keeps them exactly as written. (To auto-fix a mishearing like “Apple Bee” → “Applebee”, use a Find & Replace rule above.)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !glossaryTerms.isEmpty {
+                    ForEach(glossaryTerms, id: \.self) { term in
+                        HStack {
+                            Text(term)
+                            Spacer()
+                            Button {
+                                glossaryTerms.removeAll { $0 == term }
+                                saveGlossary()
+                            } label: {
+                                Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+
+                HStack {
+                    TextField("Add a name to protect…", text: $newGlossaryTerm)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addGlossaryTerm() }
+                    Button("Add") { addGlossaryTerm() }
+                        .disabled(newGlossaryTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
             Section("Default Final Document Action") {
                 Picker("Default Final Document", selection: $defaultPipelineID) {
                     Text("None").tag("")
@@ -251,6 +284,18 @@ private struct TextProcessingTab: View {
         UserDefaults.standard.set(raw, forKey: AppConstants.cleanupRulesKey)
     }
 
+    private func addGlossaryTerm() {
+        let term = newGlossaryTerm.trimmingCharacters(in: .whitespaces)
+        guard !term.isEmpty, !glossaryTerms.contains(term) else { return }
+        glossaryTerms.append(term)
+        newGlossaryTerm = ""
+        saveGlossary()
+    }
+
+    private func saveGlossary() {
+        UserDefaults.standard.set(glossaryTerms, forKey: AppConstants.glossaryTermsKey)
+    }
+
     private func loadSettings() {
         customFillerWords = UserDefaults.standard.array(forKey: AppConstants.customFillerWordsKey) as? [String] ?? []
         let raw = UserDefaults.standard.array(forKey: AppConstants.cleanupRulesKey) as? [[String: String]] ?? []
@@ -258,6 +303,7 @@ private struct TextProcessingTab: View {
             guard let find = dict["find"] else { return nil }
             return CleanupRule(find: find, replace: dict["replace"] ?? "")
         }
+        glossaryTerms = UserDefaults.standard.array(forKey: AppConstants.glossaryTermsKey) as? [String] ?? []
         defaultPipelineID = UserDefaults.standard.string(forKey: AppConstants.defaultPipelineIDKey) ?? ""
     }
 }

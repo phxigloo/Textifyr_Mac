@@ -59,6 +59,21 @@ struct ContentView: View {
             Button("Embed Picture")      { DropImportCoordinator.shared.resolveImageChoice(.embed) }
             Button("Cancel", role: .cancel) { DropImportCoordinator.shared.resolveImageChoice(nil) }
         }
+        .confirmationDialog(
+            "Add \(appState.largeBatchPrompt?.fileCount ?? 0) files?",
+            isPresented: Binding(
+                get: { appState.largeBatchPrompt != nil },
+                set: { _ in }
+            ),
+            titleVisibility: .visible,
+            presenting: appState.largeBatchPrompt
+        ) { prompt in
+            Button("Add \(prompt.fileCount) Files") { DropImportCoordinator.shared.resolveLargeBatch(proceed: true, suppress: false) }
+            Button("Don't Warn Me Again") { DropImportCoordinator.shared.resolveLargeBatch(proceed: true, suppress: true) }
+            Button("Cancel", role: .cancel) { DropImportCoordinator.shared.resolveLargeBatch(proceed: false, suppress: false) }
+        } message: { prompt in
+            Text("You dropped \(prompt.fileCount) files. Each is extracted/transcribed and added as a source — that can take a while and use significant on-device processing.")
+        }
     }
 
     private var imageDropTitle: String {
@@ -112,11 +127,18 @@ private struct MainNavigationView: View {
         .sheet(isPresented: $appState.showPromptBuilder) {
             PromptBuilderView()
         }
+        .sheet(isPresented: $appState.showWorkflowManager) {
+            WorkflowManagerView()
+        }
+        .workflowLaunchHost()
         .onReceive(NotificationCenter.default.publisher(for: .openPipelineEditorSheet)) { _ in
             appState.inspectorVisible = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .openPromptBuilderSheet)) { _ in
             appState.showPromptBuilder = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openWorkflowManager)) { _ in
+            appState.showWorkflowManager = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
             withAnimation {

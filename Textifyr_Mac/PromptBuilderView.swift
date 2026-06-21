@@ -1,6 +1,5 @@
 import SwiftUI
 import SwiftData
-import FoundationModels
 import TextifyrModels
 import TextifyrServices
 
@@ -35,7 +34,7 @@ struct PromptBuilderView: View {
     @State private var chatInput: String = ""
     @State private var isChatting = false
     @State private var chatTask: Task<Void, Never>? = nil
-    @State private var chatSession: LanguageModelSession? = nil
+    @State private var chatSession: (any ModelSession)? = nil
     @State private var chatNeedsContextRefresh = false
 
     @State private var editingName: String = ""
@@ -753,7 +752,7 @@ struct PromptBuilderView: View {
         }
     }
 
-    private func makeSession() -> LanguageModelSession {
+    private func makeSession() -> any ModelSession {
         var instructions = """
         You are an AI prompt engineering assistant inside an app called Textifyr. \
         Prompts in this app are system instructions given to Apple Intelligence to \
@@ -785,14 +784,14 @@ struct PromptBuilderView: View {
         [the complete improved prompt, nothing else]
         """
 
-        return LanguageModelSession(instructions: instructions)
+        return ModelProviderRegistry.current.makeSession(instructions: instructions)
     }
 
     private func sendChatMessage() {
         let trimmed = chatInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isChatting else { return }
 
-        guard SystemLanguageModel.default.isAvailable else {
+        guard ModelProviderRegistry.current.isAvailable else {
             chatMessages.append(PromptChatMessage(role: .assistant, rawContent:
                 "Apple Intelligence is not available on this device or is not enabled in Settings."))
             return
@@ -809,7 +808,7 @@ struct PromptBuilderView: View {
             do {
                 let response = try await session.respond(to: trimmed)
                 if !Task.isCancelled {
-                    chatMessages.append(PromptChatMessage(role: .assistant, rawContent: response.content))
+                    chatMessages.append(PromptChatMessage(role: .assistant, rawContent: response))
                 }
             } catch is CancellationError {
             } catch {
@@ -1270,8 +1269,7 @@ private struct SaveToPipelineSheet: View {
         case .newPipeline:
             let pipeline = FormattingPipeline(
                 name: newPipelineName.trimmingCharacters(in: .whitespaces),
-                mode: .sequential,
-                isBuiltIn: false
+                mode: .sequential
             )
             pipeline.scope = scope
             modelContext.insert(pipeline)

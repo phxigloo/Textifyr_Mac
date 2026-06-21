@@ -160,18 +160,15 @@ struct PipelineEditorWindowView: View {
                         .tag(pipeline.id)
                         .contextMenu {
                             Button("Duplicate") { duplicate(pipeline) }
-                            Divider()
-                            if pipeline.isBuiltIn {
-                                if pipeline.isHidden {
-                                    Button("Show") { setHidden(false, pipeline: pipeline) }
-                                } else {
-                                    Button("Hide") { setHidden(true, pipeline: pipeline) }
-                                }
+                            if pipeline.isHidden {
+                                Button("Show") { setHidden(false, pipeline: pipeline) }
                             } else {
-                                Button("Delete", role: .destructive) {
-                                    pipelineToDelete = pipeline
-                                    showDeleteConfirmation = true
-                                }
+                                Button("Hide") { setHidden(true, pipeline: pipeline) }
+                            }
+                            Divider()
+                            Button("Delete", role: .destructive) {
+                                pipelineToDelete = pipeline
+                                showDeleteConfirmation = true
                             }
                         }
                 }
@@ -201,7 +198,7 @@ struct PipelineEditorWindowView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(selectedPipeline == nil || selectedPipeline?.isBuiltIn == true)
+                    .disabled(selectedPipeline == nil)
                     .help("Delete selected action")
 
                     Spacer()
@@ -307,8 +304,7 @@ struct PipelineEditorWindowView: View {
     private func duplicate(_ pipeline: FormattingPipeline) {
         let copy = FormattingPipeline(
             name: pipeline.name + " Copy",
-            mode: pipeline.mode,
-            isBuiltIn: false
+            mode: pipeline.mode
         )
         copy.scope = pipeline.scope
         modelContext.insert(copy)

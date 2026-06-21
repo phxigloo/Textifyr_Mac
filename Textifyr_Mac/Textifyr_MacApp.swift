@@ -149,6 +149,7 @@ extension Notification.Name {
     static let newDocument             = Notification.Name("TextifyrNewDocument")
     static let openPipelineEditorSheet = Notification.Name("TextifyrOpenPipelineEditor")
     static let openPromptBuilderSheet  = Notification.Name("TextifyrOpenPromptBuilder")
+    static let openWorkflowManager     = Notification.Name("TextifyrOpenWorkflowManager")
     // File menu
     static let exportDocument          = Notification.Name("TextifyrExportDocument")
     static let printDocument           = Notification.Name("TextifyrPrintDocument")
@@ -300,6 +301,9 @@ private struct AppCommands: Commands {
                 .keyboardShortcut("p", modifiers: [.command, .shift])
             Button("Action Editor")  { post(.openPipelineEditorSheet) }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+            Divider()
+            Button("Workflows…")     { post(.openWorkflowManager) }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
         }
 
         // MARK: View menu

@@ -112,11 +112,27 @@ final class DropImportCoordinator {
 
     // MARK: - Per-drop image OCR/Embed prompt
 
-    /// Handles a drop that may contain image files: if any images are present, asks
-    /// once how to add them, then enqueues the whole batch with that choice.
+    static let largeBatchThreshold = 15
+    private static let suppressLargeBatchKey = "suppressLargeBatchWarning"
+
+    /// Handles a drop: warns for large batches, then (if images are present) asks how
+    /// to add them, then enqueues with that choice.
     func handleDroppedFiles(_ urls: [URL], target: UUID?, groupKey: Int?, context: ModelContext, appState: AppState) {
         let files = urls.filter { $0.isFileURL }
         guard !files.isEmpty else { return }
+        if files.count >= Self.largeBatchThreshold,
+           !UserDefaults.standard.bool(forKey: Self.suppressLargeBatchKey) {
+            askLargeBatch(count: files.count, appState: appState) { [weak self] proceed in
+                if proceed {
+                    self?.continueDroppedFiles(files, target: target, groupKey: groupKey, context: context, appState: appState)
+                }
+            }
+            return
+        }
+        continueDroppedFiles(files, target: target, groupKey: groupKey, context: context, appState: appState)
+    }
+
+    private func continueDroppedFiles(_ files: [URL], target: UUID?, groupKey: Int?, context: ModelContext, appState: AppState) {
         let imageCount = files.filter { FileImportService.imageExtensions.contains($0.pathExtension.lowercased()) }.count
         guard imageCount > 0 else {
             enqueueURLs(files, target: target, groupKey: groupKey, imageMode: .ocr, context: context, appState: appState)
@@ -125,6 +141,35 @@ final class DropImportCoordinator {
         askImageMode(imageCount: imageCount, appState: appState) { [weak self] mode in
             self?.enqueueURLs(files, target: target, groupKey: groupKey, imageMode: mode, context: context, appState: appState)
         }
+    }
+
+    // MARK: - Large-batch confirmation
+
+    private struct PendingLargeBatch {
+        let count: Int
+        let appState: AppState
+        let onResolve: (Bool) -> Void   // true = proceed
+    }
+    private var pendingLargeBatches: [PendingLargeBatch] = []
+
+    func askLargeBatch(count: Int, appState: AppState, onResolve: @escaping (Bool) -> Void) {
+        pendingLargeBatches.append(PendingLargeBatch(count: count, appState: appState, onResolve: onResolve))
+        showNextLargeBatchPromptIfNeeded()
+    }
+
+    private func showNextLargeBatchPromptIfNeeded() {
+        guard let batch = pendingLargeBatches.first, batch.appState.largeBatchPrompt == nil else { return }
+        batch.appState.largeBatchPrompt = LargeBatchPrompt(fileCount: batch.count)
+    }
+
+    /// Called by the dialog. `suppress` persists "Don't Warn Me Again".
+    func resolveLargeBatch(proceed: Bool, suppress: Bool) {
+        if suppress { UserDefaults.standard.set(true, forKey: Self.suppressLargeBatchKey) }
+        guard !pendingLargeBatches.isEmpty else { return }
+        let batch = pendingLargeBatches.removeFirst()
+        batch.appState.largeBatchPrompt = nil
+        batch.onResolve(proceed)
+        showNextLargeBatchPromptIfNeeded()
     }
 
     /// Presents the one-time OCR/Embed prompt for a batch of images and calls
@@ -178,7 +223,7 @@ final class DropImportCoordinator {
             case .url(let url, let target, let key, let imageMode):
                 groupKey = key
                 do { resolved = try await FileImportService.makePendingItem(from: url, targetDocumentID: target, imageMode: imageMode) }
-                catch { appState.showError(error.localizedDescription) }
+                catch { appState.showError("“\(url.lastPathComponent)”: \(error.localizedDescription)") }
             }
             processing = false
 
@@ -277,7 +322,7 @@ enum OutputDropImporter {
                     let text = item.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !text.isEmpty { inserter.insertText?(text) }
                 } catch {
-                    appState.showError(error.localizedDescription)
+                    appState.showError("“\(url.lastPathComponent)”: \(error.localizedDescription)")
                 }
             }
         }

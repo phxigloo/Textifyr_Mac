@@ -9,8 +9,6 @@ struct PipelineDetailView: View {
     @State private var showWizard = false
     @State private var showCopyStep = false
 
-    private var isBuiltIn: Bool { viewModel.pipeline.isBuiltIn }
-
     private var scopeExplanation: String {
         switch viewModel.pipeline.scope {
         case .postCapture:
@@ -39,7 +37,6 @@ struct PipelineDetailView: View {
                     TextField("Action name", text: $viewModel.pipelineName)
                         .font(.title2.bold())
                         .textFieldStyle(.plain)
-                        .disabled(isBuiltIn)
                         .onSubmit { viewModel.saveName() }
                         .onChange(of: viewModel.pipelineName) { _, _ in viewModel.saveName() }
 
@@ -52,34 +49,32 @@ struct PipelineDetailView: View {
                 }
 
                 // Row 2: mode + save/discard
-                if !isBuiltIn {
-                    HStack(spacing: 8) {
-                        Picker("", selection: Binding(
-                            get: { viewModel.pipeline.mode },
-                            set: { newMode in
-                                viewModel.pipeline.modeRawValue = newMode.rawValue
-                                viewModel.isDirty = true
-                            }
-                        )) {
-                            ForEach(PipelineMode.allCases, id: \.self) { mode in
-                                Text(mode.displayName).tag(mode)
-                            }
+                HStack(spacing: 8) {
+                    Picker("", selection: Binding(
+                        get: { viewModel.pipeline.mode },
+                        set: { newMode in
+                            viewModel.pipeline.modeRawValue = newMode.rawValue
+                            viewModel.isDirty = true
                         }
-                        .pickerStyle(.segmented)
-                        .fixedSize()
-
-                        Spacer()
-
-                        if viewModel.isDirty {
-                            Button("Discard") { viewModel.discardChanges() }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-
-                            Button("Save") { viewModel.commitSave() }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
-                                .keyboardShortcut("s", modifiers: .command)
+                    )) {
+                        ForEach(PipelineMode.allCases, id: \.self) { mode in
+                            Text(mode.displayName).tag(mode)
                         }
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+
+                    Spacer()
+
+                    if viewModel.isDirty {
+                        Button("Discard") { viewModel.discardChanges() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                        Button("Save") { viewModel.commitSave() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .keyboardShortcut("s", modifiers: .command)
                     }
                 }
 
@@ -87,12 +82,6 @@ struct PipelineDetailView: View {
                 Text(viewModel.pipeline.mode.description)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
-                if isBuiltIn {
-                    Label("Built-in actions cannot be edited. Duplicate to customise.", systemImage: "lock.fill")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
 
                 Label(scopeExplanation, systemImage: scopeIcon)
                     .font(.caption)
@@ -109,15 +98,13 @@ struct PipelineDetailView: View {
                 ContentUnavailableView(
                     "No Steps",
                     systemImage: "list.bullet",
-                    description: Text(isBuiltIn
-                        ? "Duplicate this action to add steps."
-                        : "Tap + to add a step, or use Load Template… to start from a preset.")
+                    description: Text("Tap + to add a step, or use Load Template… to start from a preset.")
                 )
                 .frame(maxHeight: .infinity)
             } else {
                 List {
                     ForEach(viewModel.steps, id: \.id) { step in
-                        PipelineStepRow(viewModel: viewModel, step: step, isLocked: isBuiltIn)
+                        PipelineStepRow(viewModel: viewModel, step: step)
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                     }
@@ -132,40 +119,38 @@ struct PipelineDetailView: View {
             Divider()
 
             // Footer
-            if !isBuiltIn {
-                HStack {
-                    Button {
-                        viewModel.addStep()
-                    } label: {
-                        Label("Add Step", systemImage: "plus")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Button {
-                        showWizard = true
-                    } label: {
-                        Label("Apply Preset…", systemImage: "sparkles.rectangle.stack")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Replace all steps with a built-in preset (Meeting Minutes, Grammar Cleanup, etc.)")
-
-                    Button {
-                        showCopyStep = true
-                    } label: {
-                        Label("Copy Step from Pipeline…", systemImage: "doc.on.doc")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Browse steps in other pipelines and copy them here")
-
-                    Spacer()
+            HStack {
+                Button {
+                    viewModel.addStep()
+                } label: {
+                    Label("Add Step", systemImage: "plus")
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(.bar)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button {
+                    showWizard = true
+                } label: {
+                    Label("Apply Preset…", systemImage: "sparkles.rectangle.stack")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Replace all steps with a built-in preset (Meeting Minutes, Grammar Cleanup, etc.)")
+
+                Button {
+                    showCopyStep = true
+                } label: {
+                    Label("Copy Step from Pipeline…", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Browse steps in other pipelines and copy them here")
+
+                Spacer()
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(.bar)
         }
         .sheet(isPresented: $showWizard) {
             PipelineWizardView(viewModel: viewModel)

@@ -115,29 +115,20 @@ struct PipelineInspectorView: View {
                             .font(.callout)
                             .lineLimit(1)
                         Spacer()
-                        if pipeline.isBuiltIn {
-                            Image(systemName: "lock.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
                     }
                     .tag(pipeline.id)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        if !pipeline.isBuiltIn {
-                            Button(role: .destructive) {
-                                selectedPipelineID = pipeline.id
-                                showDeleteConfirmation = true
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
+                        Button(role: .destructive) {
+                            selectedPipelineID = pipeline.id
+                            showDeleteConfirmation = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
                         }
                     }
                     .contextMenu {
-                        if !pipeline.isBuiltIn {
-                            Button("Delete", role: .destructive) {
-                                selectedPipelineID = pipeline.id
-                                showDeleteConfirmation = true
-                            }
+                        Button("Delete", role: .destructive) {
+                            selectedPipelineID = pipeline.id
+                            showDeleteConfirmation = true
                         }
                     }
                 }
@@ -164,12 +155,7 @@ struct PipelineInspectorView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled({
-                    guard let id = selectedPipelineID,
-                          let p = allPipelines.first(where: { $0.id == id })
-                    else { return true }
-                    return p.isBuiltIn
-                }())
+                .disabled(selectedPipelineID == nil)
                 .help("Delete selected action")
 
                 Spacer()
@@ -241,27 +227,19 @@ private struct InspectorStepsView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                if !vm.pipeline.isBuiltIn {
-                    TextField("Action name", text: $vm.pipelineName)
-                        .font(.subheadline.bold())
-                        .textFieldStyle(.plain)
-                        .focused($nameFieldFocused)
-                        .onSubmit { vm.saveName() }
-                } else {
-                    Text(vm.pipeline.name)
-                        .font(.subheadline.bold())
-                        .lineLimit(1)
-                }
+                TextField("Action name", text: $vm.pipelineName)
+                    .font(.subheadline.bold())
+                    .textFieldStyle(.plain)
+                    .focused($nameFieldFocused)
+                    .onSubmit { vm.saveName() }
                 Spacer()
-                if !vm.pipeline.isBuiltIn {
-                    Button { vm.addStep() } label: { Image(systemName: "plus") }
-                        .buttonStyle(.borderless)
-                        .help("Add step")
-                    Button("Save") { vm.commitSave() }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .help("Save changes")
-                }
+                Button { vm.addStep() } label: { Image(systemName: "plus") }
+                    .buttonStyle(.borderless)
+                    .help("Add step")
+                Button("Save") { vm.commitSave() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .help("Save changes")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -271,9 +249,7 @@ private struct InspectorStepsView: View {
 
             if vm.steps.isEmpty {
                 VStack(spacing: 6) {
-                    Text(vm.pipeline.isBuiltIn
-                         ? "Duplicate this action to add steps."
-                         : "Tap + to add a step.")
+                    Text("Tap + to add a step.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -283,12 +259,11 @@ private struct InspectorStepsView: View {
             } else {
                 List {
                     ForEach(vm.steps) { step in
-                        PipelineStepRow(viewModel: vm, step: step, isLocked: vm.pipeline.isBuiltIn)
+                        PipelineStepRow(viewModel: vm, step: step)
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
                     }
                     .onDelete { offsets in
-                        guard !vm.pipeline.isBuiltIn else { return }
                         offsets.map { vm.steps[$0] }.forEach { vm.deleteStep($0) }
                     }
                 }

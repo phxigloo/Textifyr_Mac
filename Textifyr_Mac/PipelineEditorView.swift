@@ -41,7 +41,6 @@ struct PipelineEditorView: View {
                                     pipelineToDelete = pipeline
                                     showDeleteConfirmation = true
                                 }
-                                .disabled(pipeline.isBuiltIn)
                             }
                     }
                 }
@@ -67,7 +66,7 @@ struct PipelineEditorView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(selected == nil || selected?.isBuiltIn == true)
+                    .disabled(selected == nil)
                     .help("Delete selected pipeline")
 
                     Spacer()
@@ -124,7 +123,7 @@ struct PipelineEditorView: View {
     }
 
     private func duplicate(_ pipeline: FormattingPipeline) {
-        let copy = FormattingPipeline(name: pipeline.name + " Copy", mode: pipeline.mode, isBuiltIn: false)
+        let copy = FormattingPipeline(name: pipeline.name + " Copy", mode: pipeline.mode)
         copy.scope = pipeline.scope
         modelContext.insert(copy)
         for step in pipeline.sortedSteps {
@@ -155,15 +154,6 @@ struct PipelineListRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if pipeline.isBuiltIn {
-                Text("Built-in")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary)
-                    .clipShape(Capsule())
-            }
         }
         .padding(.vertical, 2)
         .opacity(pipeline.isHidden ? 0.5 : 1)

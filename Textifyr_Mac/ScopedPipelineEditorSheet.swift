@@ -69,7 +69,6 @@ struct ScopedPipelineEditorSheet: View {
                                         pipelineToDelete = pipeline
                                         showDeleteConfirmation = true
                                     }
-                                    .disabled(pipeline.isBuiltIn)
                                 }
                         }
                     }
@@ -95,7 +94,7 @@ struct ScopedPipelineEditorSheet: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .disabled(selectedID == nil || pipelines.first(where: { $0.id == selectedID })?.isBuiltIn == true)
+                        .disabled(selectedID == nil)
                         .help("Delete selected pipeline")
 
                         Spacer()
@@ -163,7 +162,7 @@ struct ScopedPipelineEditorSheet: View {
     }
 
     private func duplicate(_ pipeline: FormattingPipeline) {
-        let copy = FormattingPipeline(name: pipeline.name + " Copy", mode: pipeline.mode, isBuiltIn: false)
+        let copy = FormattingPipeline(name: pipeline.name + " Copy", mode: pipeline.mode)
         copy.scope = pipeline.scope
         modelContext.insert(copy)
         for step in pipeline.sortedSteps {

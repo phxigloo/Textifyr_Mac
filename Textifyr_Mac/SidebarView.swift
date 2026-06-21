@@ -121,6 +121,8 @@ struct SidebarView: View {
                 .help("Delete selected document")
 
                 Spacer()
+
+                WorkflowRunMenu()
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
@@ -177,6 +179,39 @@ struct SidebarView: View {
             RecentDocumentInfo(id: $0.id, title: $0.title)
         }
         ShareExtensionQueue.updateRecentDocuments(Array(recent))
+    }
+}
+
+// MARK: - Run Workflow pulldown
+
+/// Always-visible "Run Workflow ▾" control in the sidebar footer. (The app hides
+/// the system toolbar via `collapseWindowToolbar()`, so the footer controls area
+/// is the top-level action surface — HIG-appropriate for an action.)
+private struct WorkflowRunMenu: View {
+    @EnvironmentObject private var appState: AppState
+    @Query(sort: \WorkflowPreset.sortOrder) private var workflows: [WorkflowPreset]
+
+    var body: some View {
+        Menu {
+            if workflows.isEmpty {
+                Text("No workflows yet")
+            } else {
+                ForEach(workflows) { wf in
+                    Button(wf.name.isEmpty ? "Untitled Workflow" : wf.name) {
+                        appState.workflowToLaunch = wf
+                    }
+                }
+            }
+            Divider()
+            Button("Manage Workflows…") { appState.showWorkflowManager = true }
+        } label: {
+            Label("Run Workflow", systemImage: "wand.and.rays")
+                .labelStyle(.titleAndIcon)
+                .font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Run a saved workflow")
     }
 }
 
