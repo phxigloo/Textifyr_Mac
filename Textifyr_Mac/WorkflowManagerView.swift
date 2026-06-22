@@ -27,7 +27,6 @@ struct WorkflowManagerView: View {
             HStack {
                 Text("Workflows").font(.headline)
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20).padding(.vertical, 14)
             Divider()
@@ -65,6 +64,7 @@ struct WorkflowManagerView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
+            // Source-list add/remove controls live at the bottom-left (HIG).
             Button { newWorkflow() } label: {
                 Image(systemName: "plus").font(.system(size: 15, weight: .semibold))
             }
@@ -83,6 +83,12 @@ struct WorkflowManagerView: View {
                 Label("Run", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent).disabled(selected == nil)
+
+            // Dismiss lives in the bottom bar with the other controls (not the header).
+            // It's "Done", not "Cancel": add/delete/reorder are committed live, so
+            // there's nothing to cancel. Esc also closes.
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(.bar)

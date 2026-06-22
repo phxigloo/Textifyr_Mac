@@ -12,12 +12,11 @@ struct PipelineStepRow: View {
     @State private var kind: PipelineStepKind
     @State private var config: TextTransformConfig
     @State private var verify: StepVerifyConfig
-    @State private var showImproveSheet  = false
     @State private var showPromptBuilder = false
-    @State private var feedbackText = ""
+    @State private var promptBuilderSeed: PromptBuilderSeed?
 
-    private var isImprovingThis: Bool {
-        viewModel.isImprovingPrompt && viewModel.improvingStepID == step.id
+    private var stepIndex: Int {
+        viewModel.steps.firstIndex(where: { $0.id == step.id }) ?? 0
     }
 
     init(viewModel: PipelineEditorViewModel, step: PipelineStep) {
@@ -74,24 +73,20 @@ struct PipelineStepRow: View {
             if newValue != prompt { prompt = newValue }
         }
         .sheet(isPresented: $showPromptBuilder) {
-            PromptBuilderView()
+            PromptBuilderView(seed: promptBuilderSeed)
         }
-        .sheet(isPresented: $showImproveSheet) {
-            ImprovePromptSheet(
-                feedbackText: $feedbackText,
-                isImproving: isImprovingThis,
-                onImprove: {
-                    let fb = feedbackText
-                    showImproveSheet = false
-                    feedbackText = ""
-                    Task { await viewModel.improvePrompt(step: step, feedback: fb) }
-                },
-                onCancel: {
-                    showImproveSheet = false
-                    feedbackText = ""
-                }
-            )
-        }
+    }
+
+    /// Opens the Prompt Builder pre-loaded with this step's prompt and the improve
+    /// panel open. For a mid-chain step, "Run up to here" there stages this step's
+    /// real input (output of the prior steps) into the Scratchpad.
+    private func openImproveInBuilder() {
+        promptBuilderSeed = PromptBuilderSeed(
+            prompt: prompt,
+            openImprove: true,
+            actionID: viewModel.pipeline.id,
+            stepIndex: stepIndex)
+        showPromptBuilder = true
     }
 
     // MARK: - Type menu
@@ -149,6 +144,7 @@ struct PipelineStepRow: View {
                     .foregroundStyle(prompt.count > AppConstants.maxPromptCharacters ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
                 Spacer()
                 Button {
+                    promptBuilderSeed = nil
                     showPromptBuilder = true
                 } label: {
                     Label("Prompt Builder", systemImage: "text.bubble")
@@ -157,29 +153,15 @@ struct PipelineStepRow: View {
                 .buttonStyle(.borderless)
                 .help("Actions are made of one or more prompts. Use the Prompt Builder to write and test individual prompts before adding them here.")
 
-                TranslateButton(helpText: "Replace this step's prompt with a translation instruction") { lang in
-                    prompt = lang.promptText
-                    savePrompt()
+                Button {
+                    openImproveInBuilder()
+                } label: {
+                    Label("Improve Prompt", systemImage: "wand.and.stars")
+                        .font(.caption)
                 }
-
-                if isImprovingThis {
-                    HStack(spacing: 4) {
-                        ProgressView().controlSize(.small)
-                        Text("Improving…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Button {
-                        showImproveSheet = true
-                    } label: {
-                        Label("Improve Prompt", systemImage: "wand.and.stars")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(viewModel.isImprovingPrompt)
-                    .help("Use Apple Intelligence to rewrite this prompt based on your feedback")
-                }
+                .buttonStyle(.borderless)
+                .disabled(prompt.isEmpty)
+                .help("Open the Prompt Builder to test this prompt and improve it with AI")
             }
 
             verifyEditor
@@ -391,77 +373,6 @@ private enum StepUIKind: String, CaseIterable, Identifiable {
 
     var icon: String {
         self == .aiPrompt ? "sparkles" : (transformType?.icon ?? "sparkles")
-    }
-}
-
-// MARK: - Improve Prompt Sheet
-
-private struct ImprovePromptSheet: View {
-    @Binding var feedbackText: String
-    let isImproving: Bool
-    let onImprove: () -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Improve Prompt")
-                    .font(.headline)
-                Spacer()
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(.borderless)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(.bar)
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("What would you like to improve?")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Text("Describe what went wrong with the output, or what you'd like the prompt to do differently. Apple Intelligence will rewrite the prompt for you.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                TextEditor(text: $feedbackText)
-                    .frame(minHeight: 100)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
-                    )
-
-                if isImproving {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        Text("Apple Intelligence is rewriting the prompt…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(20)
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button("Improve with AI") {
-                    onImprove()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(feedbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isImproving)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(.bar)
-        }
-        .frame(width: 420, height: 340)
     }
 }
 

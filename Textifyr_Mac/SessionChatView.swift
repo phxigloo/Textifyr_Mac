@@ -10,11 +10,19 @@ struct SessionChatView: View {
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "source" },
            sort: \FormattingPipeline.name) private var sourcePipelines: [FormattingPipeline]
+    @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "postCapture" },
+           sort: \FormattingPipeline.name) private var postCapturePipelines: [FormattingPipeline]
 
     @State private var showReplaceConfirmation = false
 
+    /// Both per-source scopes can be re-run on a single captured session: After Capture
+    /// (`.postCapture`) and Before Combining (`.source`). Both transform one session's text.
+    private var sessionActions: [FormattingPipeline] {
+        sourcePipelines + postCapturePipelines
+    }
+
     private var pipelinePrompts: [(name: String, prompt: String)] {
-        sourcePipelines.compactMap { pipeline in
+        sessionActions.compactMap { pipeline in
             guard let firstStep = pipeline.sortedSteps.first else { return nil }
             return (name: pipeline.name, prompt: firstStep.prompt)
         }
@@ -31,7 +39,7 @@ struct SessionChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Pipeline runner bar
-            if !sourcePipelines.isEmpty {
+            if !sessionActions.isEmpty {
                 pipelineBar
                 Divider()
             }
@@ -149,7 +157,7 @@ struct SessionChatView: View {
     // MARK: - Action bar (top-3 by usage, then More…)
 
     private var pipelineBar: some View {
-        let sorted = sourcePipelines.sorted { $0.usageCount > $1.usageCount }
+        let sorted = sessionActions.sorted { $0.usageCount > $1.usageCount }
         let top    = Array(sorted.prefix(3))
         let rest   = sorted.count > 3 ? Array(sorted.dropFirst(3)) : []
 
@@ -179,12 +187,24 @@ struct SessionChatView: View {
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                             .disabled(viewModel.session.rawText.isEmpty)
+                            .help("\(p.scope.displayName) action — runs on this session")
                         }
                         if !rest.isEmpty {
                             Menu {
-                                ForEach(rest) { p in
-                                    Button(p.name) {
-                                        Task { await viewModel.runPipeline(p) }
+                                let before = rest.filter { $0.scope == .source }
+                                let after  = rest.filter { $0.scope == .postCapture }
+                                if !before.isEmpty {
+                                    Section("Before Combining") {
+                                        ForEach(before) { p in
+                                            Button(p.name) { Task { await viewModel.runPipeline(p) } }
+                                        }
+                                    }
+                                }
+                                if !after.isEmpty {
+                                    Section("After Capture") {
+                                        ForEach(after) { p in
+                                            Button(p.name) { Task { await viewModel.runPipeline(p) } }
+                                        }
                                     }
                                 }
                             } label: {

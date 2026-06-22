@@ -12,7 +12,19 @@ private enum SampleSelection: Hashable {
 
 // MARK: - Main view
 
+/// Optional initial state when the Prompt Builder is opened from an Action step's
+/// "Improve" button — pre-loads the prompt, opens the improve panel, and (for a
+/// mid-chain step) enables "Run up to here" to stage that step's real input.
+struct PromptBuilderSeed: Equatable {
+    var prompt: String
+    var openImprove: Bool = false
+    var actionID: UUID? = nil
+    var stepIndex: Int? = nil
+}
+
 struct PromptBuilderView: View {
+    var seed: PromptBuilderSeed? = nil
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
@@ -44,6 +56,17 @@ struct PromptBuilderView: View {
     @State private var showingLoadSheet = false
     @State private var showingSaveSheet = false
 
+    // "Run up to here" context (set from a seed when improving a mid-chain step).
+    @State private var rthActionID: UUID? = nil
+    @State private var rthStepIndex: Int? = nil
+
+    // Provenance of the Scratchpad text (22.0e) — set when populated by run-to-here.
+    @State private var scratchpadProvenance: String? = nil
+    @State private var settingScratchpadProgrammatically = false
+
+    // The originating step's "Check the result" settings, when seeded from a step (22.0c).
+    @State private var stepVerify: StepVerifyConfig? = nil
+
     private static let draftPromptKey     = "promptBuilder.draftText"
     private static let draftScratchpadKey = "promptBuilder.scratchpadText"
     private let sampleLimit = AppConstants.maxPromptSamples
@@ -71,6 +94,36 @@ struct PromptBuilderView: View {
         }
     }
 
+    /// Where the text being tested comes from — shown so the user is never guessing
+    /// whether the Scratchpad holds captured input, a sample, or a run-to-here result.
+    private var inputProvenance: String {
+        switch sampleSelection {
+        case .saved(let id):
+            return "Sample: \(allSamples.first { $0.id == id }?.name ?? "Untitled")"
+        default:
+            return scratchpadProvenance ?? "Scratchpad"
+        }
+    }
+
+    /// One-line summary of the seeded step's verify ("Check the result") settings.
+    private func verifySummary(_ c: StepVerifyConfig) -> String {
+        let check: String
+        switch c.check {
+        case .notEmpty:       check = "result is not empty"
+        case .lineColumns:    check = "every line has \(c.expectedColumns) tab-separated column\(c.expectedColumns == 1 ? "" : "s")"
+        case .containsWords:  check = "contains: \(c.words)"
+        case .matchesPattern: check = "matches a pattern"
+        }
+        return "Checks \(check) · up to \(c.attempts) tr\(c.attempts == 1 ? "y" : "ies")"
+    }
+
+    /// Pass/fail of the current result against the seeded step's check (nil if no check / no result).
+    private var verifyOutcome: (passed: Bool, reason: String?)? {
+        guard let v = stepVerify, v.enabled, let result = testResult else { return nil }
+        let reason = StepVerifier.validate(v, output: result)
+        return (reason == nil, reason)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HSplitView {
@@ -95,6 +148,29 @@ struct PromptBuilderView: View {
             HStack(spacing: 12) {
                 Button("Cancel") { dismiss() }
                     .buttonStyle(.bordered)
+                if let idx = rthStepIndex, idx > 0 {
+                    Button { runUpToHere() } label: {
+                        Label("Load step input", systemImage: "arrow.down.to.line")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isRunning || activeText.isEmpty)
+                    .help("Run the earlier steps of this action on the selected sample and put the result in the Scratchpad — that is the real input to the step you're improving.")
+                }
+
+                Label(inputProvenance, systemImage: "arrow.right.to.line")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help("The text the prompt will run on.")
+
+                if let v = stepVerify, v.enabled {
+                    Label(verifySummary(v), systemImage: "checkmark.shield")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help("This step's “Check the result” settings from the Action Editor.")
+                }
+
                 Spacer()
                 runToolbarContent
             }
@@ -103,9 +179,16 @@ struct PromptBuilderView: View {
             .background(.bar)
         }
         .frame(minWidth: 1000, minHeight: 580)
-        .onAppear { restoreDraft() }
+        .onAppear { restoreDraft(); applySeed() }
         .onChange(of: promptText)     { _, t in UserDefaults.standard.set(t, forKey: Self.draftPromptKey) }
-        .onChange(of: scratchpadText) { _, t in UserDefaults.standard.set(t, forKey: Self.draftScratchpadKey) }
+        .onChange(of: scratchpadText) { _, t in
+            UserDefaults.standard.set(t, forKey: Self.draftScratchpadKey)
+            if settingScratchpadProgrammatically {
+                settingScratchpadProgrammatically = false   // keep the run-to-here provenance
+            } else {
+                scratchpadProvenance = nil                  // hand-edited → plain Scratchpad
+            }
+        }
         .onChange(of: testResult) { _, _ in
             if showImprovePanel { resetChat() } else { chatNeedsContextRefresh = true }
         }
@@ -432,6 +515,18 @@ struct PromptBuilderView: View {
                 .controlSize(.small)
             }
 
+            if let outcome = verifyOutcome {
+                HStack(spacing: 6) {
+                    Image(systemName: outcome.passed ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                    Text(outcome.passed
+                         ? "Passed the check"
+                         : "Failed the check — \(outcome.reason ?? "")")
+                        .font(.caption)
+                }
+                .foregroundStyle(outcome.passed ? Color.green : Color.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             PromptBuilderResultText(result)
                 .font(.body)
                 .textSelection(.enabled)
@@ -597,10 +692,25 @@ struct PromptBuilderView: View {
                             Image(systemName: "wand.and.sparkles")
                                 .font(.system(size: 28))
                                 .foregroundStyle(.tertiary)
-                            Text("Ask why your prompt produced this output, request improvements, or describe what you wanted instead.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
+                            if testResult == nil {
+                                Text("Run the prompt first so the assistant can see the output it produced — then ask what went wrong.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                Button {
+                                    runPrompt()
+                                } label: {
+                                    Label("Run Prompt", systemImage: "play.fill")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(promptText.isEmpty || activeText.isEmpty || isRunning)
+                            } else {
+                                Text("Ask why your prompt produced this output, request improvements, or describe what you wanted instead.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
@@ -835,6 +945,67 @@ struct PromptBuilderView: View {
     private func restoreDraft() {
         promptText     = UserDefaults.standard.string(forKey: Self.draftPromptKey) ?? ""
         scratchpadText = UserDefaults.standard.string(forKey: Self.draftScratchpadKey) ?? ""
+    }
+
+    /// Applies an optional seed (from an Action step's "Improve" button): loads the
+    /// step's prompt, opens the improve panel, and records run-to-here context.
+    private func applySeed() {
+        guard let seed else { return }
+        if !seed.prompt.isEmpty { promptText = seed.prompt }
+        rthActionID  = seed.actionID
+        rthStepIndex = seed.stepIndex
+
+        // Load the originating step's "Check the result" settings so the test surface
+        // can show the criteria and report pass/fail (22.0c).
+        if let id = seed.actionID, let idx = seed.stepIndex,
+           let pipeline = ((try? modelContext.fetch(FetchDescriptor<FormattingPipeline>())) ?? [])
+                .first(where: { $0.id == id }) {
+            let steps = pipeline.sortedSteps
+            if idx >= 0, idx < steps.count {
+                let vc = steps[idx].verifyConfig
+                if vc.enabled { stepVerify = vc }
+            }
+        }
+
+        if seed.openImprove {
+            chatNeedsContextRefresh = true
+            showImprovePanel = true
+        }
+    }
+
+    /// Runs steps 0..<stepIndex of the originating action on the active sample text
+    /// and loads the result into the Scratchpad — the true input to the step being
+    /// improved (Phase 21.4 `textEnteringStep`).
+    private func runUpToHere() {
+        guard let id = rthActionID, let idx = rthStepIndex, idx > 0 else { return }
+        let source = activeText
+        guard !source.isEmpty else { return }
+        let pipelines = (try? modelContext.fetch(FetchDescriptor<FormattingPipeline>())) ?? []
+        guard let pipeline = pipelines.first(where: { $0.id == id }) else {
+            testError = "Couldn't find the action to run the earlier steps."
+            return
+        }
+        testError = nil
+        runProgress = nil
+        isRunning = true
+        runTask = Task { @MainActor in
+            do {
+                let input = try await DocumentFormattingService().textEnteringStep(
+                    pipeline: pipeline, sourceText: source, index: idx) { p in runProgress = p }
+                if !Task.isCancelled {
+                    settingScratchpadProgrammatically = true
+                    scratchpadText = input
+                    scratchpadProvenance = "Step \(idx + 1) input (after step\(idx == 1 ? " 1" : "s 1…\(idx)"))"
+                    sampleSelection = .scratchpad
+                }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { testError = error.localizedDescription }
+            }
+            isRunning = false
+            runProgress = nil
+            runTask = nil
+        }
     }
 }
 

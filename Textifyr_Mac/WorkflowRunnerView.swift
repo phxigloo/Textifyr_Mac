@@ -27,11 +27,24 @@ struct WorkflowRunnerView: View {
             header
             Divider()
             content
-            Divider()
-            footer
+            // The verify-review editor carries its own button bar.
+            if vm.verifyReview == nil {
+                Divider()
+                footer
+            }
         }
         .frame(width: 540, height: 460)
         .onAppear(perform: startIfNeeded)
+        .alert(
+            "Couldn't process “\(vm.errorReview?.sourceName ?? "a file")”",
+            isPresented: Binding(get: { vm.errorReview != nil }, set: { _ in }),
+            presenting: vm.errorReview
+        ) { _ in
+            Button("Continue") { vm.resolveError(continue: true) }
+            Button("Stop Processing", role: .cancel) { vm.resolveError(continue: false) }
+        } message: { req in
+            Text("\(req.message)\n\nThis file was kept as-is. Continue with the remaining files, or stop here?")
+        }
     }
 
     // MARK: - Header
@@ -71,7 +84,12 @@ struct WorkflowRunnerView: View {
 
     @ViewBuilder
     private var content: some View {
-        if vm.isPausedForReview {
+        if let req = vm.verifyReview {
+            VerifyReviewEditor(
+                request: req,
+                onContinue: { vm.resolveVerifyReview($0) },
+                onStop: { vm.cancelVerifyReview() })
+        } else if vm.isPausedForReview {
             reviewContent
         } else if vm.stage == .done {
             doneContent
@@ -296,5 +314,64 @@ private struct ReviewSourceEditor: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                 .findNavigator(isPresented: $showFind)
         }
+    }
+}
+
+// MARK: - Verify-and-retry review (a step's check failed mid-run)
+
+/// Shown when a step's check fails after all retries and its policy is
+/// "Pause and let me look." The user can edit the failing output, then continue
+/// the run with it — or stop. Owns its own button bar.
+private struct VerifyReviewEditor: View {
+    let request: WorkflowPresetViewModel.VerifyReviewRequest
+    let onContinue: (String) -> Void
+    let onStop: () -> Void
+    @State private var text: String
+    @State private var showFind = false
+
+    init(request: WorkflowPresetViewModel.VerifyReviewRequest,
+         onContinue: @escaping (String) -> Void,
+         onStop: @escaping () -> Void) {
+        self.request = request
+        self.onContinue = onContinue
+        self.onStop = onStop
+        _text = State(initialValue: request.text)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("“\(request.stepName)” needs a look", systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout.bold()).foregroundStyle(.orange)
+                Text("The check didn't pass: \(request.reason).")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Text("Edit the result if needed, then continue.")
+                        .font(.caption).foregroundStyle(.tertiary)
+                    Spacer()
+                    Button { showFind.toggle() } label: { Image(systemName: "magnifyingglass") }
+                        .buttonStyle(.borderless).controlSize(.small)
+                        .help("Find & Replace (⌘F)")
+                }
+                TextEditor(text: $text)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                    .findNavigator(isPresented: $showFind)
+            }
+            .padding(20)
+
+            Divider()
+            HStack {
+                Button("Stop") { onStop() }.buttonStyle(.bordered)
+                Spacer()
+                Button("Use This & Continue") { onContinue(text) }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14)
+            .background(.bar)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }

@@ -38,7 +38,10 @@ struct WorkflowSetupSheet: View {
 
             Form {
                 Section("Name") {
-                    TextField("e.g. Weekly Meeting Notes", text: $name)
+                    // Use `prompt:` (not the title) so the hint is in-field placeholder
+                    // text that clears as you type — not a permanent left-side label.
+                    TextField("Name", text: $name, prompt: Text("e.g. Weekly Meeting Notes"))
+                        .labelsHidden()
                 }
 
                 Section("Input") {

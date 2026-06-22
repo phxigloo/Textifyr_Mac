@@ -263,6 +263,7 @@ private struct InspectorStepsView: View {
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
                     }
+                    .onMove { vm.moveSteps(from: $0, to: $1) }
                     .onDelete { offsets in
                         offsets.map { vm.steps[$0] }.forEach { vm.deleteStep($0) }
                     }

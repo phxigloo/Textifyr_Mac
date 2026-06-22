@@ -131,6 +131,16 @@ struct Textifyr_MacApp: App {
         .windowResizability(.contentMinSize)
         .defaultSize(width: 820, height: 600)
 
+        // The Action Editor as a standalone window so it opens from the Tools menu
+        // (and Settings) even when no document is selected on the main screen.
+        Window("Action Editor", id: "pipeline-editor") {
+            PipelineEditorWindowView()
+                .environmentObject(appState)
+        }
+        .modelContainer(container)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 860, height: 560)
+
         Settings {
             SettingsView()
         }
@@ -299,7 +309,7 @@ private struct AppCommands: Commands {
             Divider()
             Button("Prompt Builder") { post(.openPromptBuilderSheet) }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
-            Button("Action Editor")  { post(.openPipelineEditorSheet) }
+            Button("Action Editor")  { openWindow(id: "pipeline-editor") }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             Divider()
             Button("Workflows…")     { post(.openWorkflowManager) }

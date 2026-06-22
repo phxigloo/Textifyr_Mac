@@ -475,6 +475,7 @@ private struct StageEditorSheet: View {
 
 private struct WindowsTab: View {
     @AppStorage(AppConstants.maxDocumentWindowsKey) private var maxDocumentWindows = AppConstants.defaultMaxDocumentWindows
+    @Environment(\.openWindow) private var openWindow
 
     private func post(_ name: Notification.Name) {
         NotificationCenter.default.post(name: name, object: nil)
@@ -497,7 +498,7 @@ private struct WindowsTab: View {
             Section("Action Editor") {
                 LabeledContent("Open Action Editor") {
                     Button("Open Action Editor…") {
-                        post(.openPipelineEditorSheet)
+                        openWindow(id: "pipeline-editor")
                     }
                     .buttonStyle(.bordered)
                 }
