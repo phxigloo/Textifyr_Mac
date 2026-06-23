@@ -11,6 +11,10 @@ import TextifyrViewModels
 /// Pipeline Editor / Prompt Builder), not in the document sidebar (HIG: sidebars
 /// are for content, not actions). Running is delegated to the launch host.
 struct WorkflowManagerView: View {
+    /// When true the view fills its container (it's the Workflows workspace mode)
+    /// rather than sizing as a sheet, and omits the Done/dismiss button.
+    var isEmbedded: Bool = false
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appState: AppState
@@ -54,7 +58,7 @@ struct WorkflowManagerView: View {
             Divider()
             footer
         }
-        .frame(width: 580, height: 480)
+        .modifier(ManagerFrame(isEmbedded: isEmbedded))
         .sheet(isPresented: $showEditor) {
             WorkflowSetupSheet(preset: editing)
         }
@@ -86,9 +90,12 @@ struct WorkflowManagerView: View {
 
             // Dismiss lives in the bottom bar with the other controls (not the header).
             // It's "Done", not "Cancel": add/delete/reorder are committed live, so
-            // there's nothing to cancel. Esc also closes.
-            Button("Done") { dismiss() }
-                .keyboardShortcut(.cancelAction)
+            // there's nothing to cancel. Esc also closes. Omitted when embedded as a
+            // workspace mode (there's no sheet to dismiss).
+            if !isEmbedded {
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(.bar)
@@ -115,7 +122,7 @@ struct WorkflowManagerView: View {
     private func edit(_ wf: WorkflowPreset) { editing = wf; showEditor = true }
 
     private func run(_ wf: WorkflowPreset) {
-        dismiss()
+        if !isEmbedded { dismiss() }
         appState.workflowToLaunch = wf
     }
 
@@ -145,6 +152,20 @@ struct WorkflowManagerView: View {
         if selectedID == wf.id { selectedID = nil }
         modelContext.delete(wf)
         try? modelContext.save()
+    }
+}
+
+// MARK: - Frame modifier
+
+/// Fixed sheet size when presented modally; fills the container when embedded as a mode.
+private struct ManagerFrame: ViewModifier {
+    let isEmbedded: Bool
+    func body(content: Content) -> some View {
+        if isEmbedded {
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            content.frame(width: 580, height: 480)
+        }
     }
 }
 

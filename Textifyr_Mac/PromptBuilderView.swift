@@ -10,6 +10,12 @@ private enum SampleSelection: Hashable {
     case saved(UUID)
 }
 
+/// Selection in the Prompt Builder scopes master ("All" + each pipeline scope).
+private enum ScopeChoice: Hashable {
+    case all
+    case scope(PipelineScope)
+}
+
 // MARK: - Main view
 
 /// Optional initial state when the Prompt Builder is opened from an Action step's
@@ -24,6 +30,8 @@ struct PromptBuilderSeed: Equatable {
 
 struct PromptBuilderView: View {
     var seed: PromptBuilderSeed? = nil
+    /// True when shown as the Prompt Builder workspace mode (fills the window, no Cancel).
+    var isEmbedded: Bool = false
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -128,13 +136,15 @@ struct PromptBuilderView: View {
         VStack(spacing: 0) {
             HSplitView {
                 HStack(spacing: 0) {
-                    samplesListPanel
+                    scopesMasterPanel
+                    Divider()
+                    samplesSubMasterPanel
                     Divider()
                     sampleWorkArea
                     Divider()
                     promptPanel
                 }
-                .frame(minWidth: 620)
+                .frame(minWidth: 760)
 
                 if showImprovePanel {
                     improvePanel
@@ -146,8 +156,10 @@ struct PromptBuilderView: View {
             Divider()
 
             HStack(spacing: 12) {
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(.bordered)
+                if !isEmbedded {
+                    Button("Cancel") { dismiss() }
+                        .buttonStyle(.bordered)
+                }
                 if let idx = rthStepIndex, idx > 0 {
                     Button { runUpToHere() } label: {
                         Label("Load step input", systemImage: "arrow.down.to.line")
@@ -178,7 +190,10 @@ struct PromptBuilderView: View {
             .padding(.vertical, 12)
             .background(.bar)
         }
-        .frame(minWidth: 1000, minHeight: 580)
+        .frame(minWidth: isEmbedded ? 720 : 1000, minHeight: isEmbedded ? 460 : 580)
+        .background {
+            if isEmbedded { VisualEffectBackground() }
+        }
         .onAppear { restoreDraft(); applySeed() }
         .onChange(of: promptText)     { _, t in UserDefaults.standard.set(t, forKey: Self.draftPromptKey) }
         .onChange(of: scratchpadText) { _, t in
@@ -251,35 +266,63 @@ struct PromptBuilderView: View {
         return ""
     }
 
-    // MARK: - Samples list panel (left, ~200 pt)
+    // MARK: - Scopes master (left, ~150 pt) — mirrors the Actions scope column
 
-    private var samplesListPanel: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Samples").font(.title3.bold())
-                    Spacer()
+    private func scopeIcon(_ s: PipelineScope) -> String {
+        switch s {
+        case .postCapture: return "wand.and.sparkles"
+        case .source:      return "text.document"
+        case .output:      return "doc.on.doc"
+        }
+    }
+
+    private var scopeChoiceBinding: Binding<ScopeChoice?> {
+        Binding(
+            get: { scopeFilter.map(ScopeChoice.scope) ?? .all },
+            set: { choice in
+                switch choice {
+                case .scope(let s): scopeFilter = s
+                default:            scopeFilter = nil
                 }
-                .frame(height: 44)
-                .padding(.horizontal, 12)
-
-                Divider()
-
-                HStack {
-                    Picker("Scope", selection: $scopeFilter) {
-                        Text("All Scopes").tag(nil as PipelineScope?)
-                        ForEach(PipelineScope.allCases, id: \.self) { s in
-                            Text(s.displayName).tag(s as PipelineScope?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .controlSize(.small)
-                    Spacer()
-                }
-                .frame(height: 30)
-                .padding(.horizontal, 12)
             }
+        )
+    }
+
+    private var scopesMasterPanel: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Scopes").font(.title3.bold())
+                Spacer()
+            }
+            .frame(height: 44)
+            .padding(.horizontal, 12)
+            .background(.bar)
+
+            Divider()
+
+            List(selection: scopeChoiceBinding) {
+                Label("All Scopes", systemImage: "square.stack.3d.up")
+                    .tag(ScopeChoice.all)
+                ForEach(PipelineScope.allCases, id: \.self) { s in
+                    Label(s.displayName, systemImage: scopeIcon(s))
+                        .tag(ScopeChoice.scope(s))
+                }
+            }
+            .listStyle(.sidebar)
+        }
+        .frame(width: 158)
+    }
+
+    // MARK: - Samples sub-master (~200 pt, opaque) — like the Actions action list
+
+    private var samplesSubMasterPanel: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Samples").font(.title3.bold())
+                Spacer()
+            }
+            .frame(height: 44)
+            .padding(.horizontal, 12)
             .background(.bar)
 
             Divider()
@@ -306,7 +349,8 @@ struct PromptBuilderView: View {
                     }
                 }
             }
-            .listStyle(.sidebar)
+            .listStyle(.inset)
+            .scrollContentBackground(.visible)   // opaque sub-master
 
             Divider()
 
@@ -388,7 +432,7 @@ struct PromptBuilderView: View {
                         .frame(minHeight: 130, maxHeight: 220)
                         .scrollContentBackground(.hidden)
                         .padding(6)
-                        .background(Color(nsColor: .textBackgroundColor))
+                        .background(.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
@@ -470,7 +514,7 @@ struct PromptBuilderView: View {
                         .frame(minHeight: 130, maxHeight: 220)
                         .scrollContentBackground(.hidden)
                         .padding(6)
-                        .background(Color(nsColor: .textBackgroundColor))
+                        .background(.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
@@ -587,7 +631,7 @@ struct PromptBuilderView: View {
                                 .allowsHitTesting(false)
                         }
                     }
-                    .background(Color(nsColor: .textBackgroundColor))
+                    .background(.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
@@ -1089,7 +1133,7 @@ private struct SampleRowView: View {
                 .lineLimit(1)
             Text(sample.scope.displayName)
                 .font(.caption2)
-                .foregroundStyle(.tint)
+                .foregroundStyle(.primary)
         }
         .padding(.vertical, 2)
     }

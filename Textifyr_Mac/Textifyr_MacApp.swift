@@ -131,15 +131,8 @@ struct Textifyr_MacApp: App {
         .windowResizability(.contentMinSize)
         .defaultSize(width: 820, height: 600)
 
-        // The Action Editor as a standalone window so it opens from the Tools menu
-        // (and Settings) even when no document is selected on the main screen.
-        Window("Action Editor", id: "pipeline-editor") {
-            PipelineEditorWindowView()
-                .environmentObject(appState)
-        }
-        .modelContainer(container)
-        .windowResizability(.contentMinSize)
-        .defaultSize(width: 860, height: 560)
+        // (Phase 22) The Action Editor is no longer a standalone window — it is the
+        // "Actions" mode of the single main window. Same for Prompt Builder / Workflows.
 
         Settings {
             SettingsView()
@@ -307,12 +300,12 @@ private struct AppCommands: Commands {
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(!appState.outputTabIsActive)
             Divider()
-            Button("Prompt Builder") { post(.openPromptBuilderSheet) }
+            Button("Prompt Builder") { appState.workspaceMode = .promptBuilder }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
-            Button("Action Editor")  { openWindow(id: "pipeline-editor") }
+            Button("Action Editor")  { appState.workspaceMode = .actions }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
             Divider()
-            Button("Workflows…")     { post(.openWorkflowManager) }
+            Button("Workflows…")     { appState.workspaceMode = .workflows }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
         }
 

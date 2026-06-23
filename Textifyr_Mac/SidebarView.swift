@@ -52,6 +52,30 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Manual search field. (A `.searchable(.sidebar)` field renders in the
+            // title-bar region, which the Phase 22 mode bar now occupies — so it was
+            // being clipped. A plain field below the mode bar avoids that.)
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Search", text: $searchText)
+                    .textFieldStyle(.plain)
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+
             List(filteredDocs, selection: $selectedID) { item in
                 SidebarRow(document: item.document, snippet: item.snippet)
                     .tag(item.document.id)
@@ -70,7 +94,6 @@ struct SidebarView: View {
                         }
                     }
             }
-            .searchable(text: $searchText, placement: .sidebar)
             .listStyle(.sidebar)
             .navigationTitle("")
             // Drop files here to create a new document from them.
@@ -121,8 +144,6 @@ struct SidebarView: View {
                 .help("Delete selected document")
 
                 Spacer()
-
-                WorkflowRunMenu()
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
@@ -179,39 +200,6 @@ struct SidebarView: View {
             RecentDocumentInfo(id: $0.id, title: $0.title)
         }
         ShareExtensionQueue.updateRecentDocuments(Array(recent))
-    }
-}
-
-// MARK: - Run Workflow pulldown
-
-/// Always-visible "Run Workflow ▾" control in the sidebar footer. (The app hides
-/// the system toolbar via `collapseWindowToolbar()`, so the footer controls area
-/// is the top-level action surface — HIG-appropriate for an action.)
-private struct WorkflowRunMenu: View {
-    @EnvironmentObject private var appState: AppState
-    @Query(sort: \WorkflowPreset.sortOrder) private var workflows: [WorkflowPreset]
-
-    var body: some View {
-        Menu {
-            if workflows.isEmpty {
-                Text("No workflows yet")
-            } else {
-                ForEach(workflows) { wf in
-                    Button(wf.name.isEmpty ? "Untitled Workflow" : wf.name) {
-                        appState.workflowToLaunch = wf
-                    }
-                }
-            }
-            Divider()
-            Button("Manage Workflows…") { appState.showWorkflowManager = true }
-        } label: {
-            Label("Run Workflow", systemImage: "wand.and.rays")
-                .labelStyle(.titleAndIcon)
-                .font(.caption)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Run a saved workflow")
     }
 }
 

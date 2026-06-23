@@ -65,7 +65,7 @@ struct PipelineInspectorView: View {
                 .font(.headline)
             Spacer()
             Button {
-                appState.showPromptBuilder = true
+                appState.workspaceMode = .promptBuilder
             } label: {
                 Label("Prompt Builder", systemImage: "text.bubble")
                     .font(.caption)

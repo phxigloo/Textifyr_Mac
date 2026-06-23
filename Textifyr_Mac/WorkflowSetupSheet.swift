@@ -8,6 +8,11 @@ import TextifyrViewModels
 /// Create/edit a `WorkflowPreset`. `preset == nil` → new.
 struct WorkflowSetupSheet: View {
     let preset: WorkflowPreset?
+    /// True when shown as the detail pane of the Workflows workspace (fills the pane,
+    /// no fixed frame, no Cancel; Save persists without dismissing).
+    var isEmbedded: Bool = false
+    /// Called after a save when embedded, so the workspace can keep selection in sync.
+    var onSaved: (WorkflowPreset) -> Void = { _ in }
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -102,10 +107,13 @@ struct WorkflowSetupSheet: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(isEmbedded ? .hidden : .automatic)
 
             Divider()
             HStack {
-                Button("Cancel") { dismiss() }.buttonStyle(.bordered)
+                if !isEmbedded {
+                    Button("Cancel") { dismiss() }.buttonStyle(.bordered)
+                }
                 Spacer()
                 Button("Save") { save() }
                     .buttonStyle(.borderedProminent)
@@ -113,7 +121,10 @@ struct WorkflowSetupSheet: View {
             }
             .padding(.horizontal, 20).padding(.vertical, 14)
         }
-        .frame(width: 520, height: 560)
+        .modifier(SetupFrame(isEmbedded: isEmbedded))
+        .background {
+            if isEmbedded { VisualEffectBackground() }
+        }
         .onAppear(perform: load)
     }
 
@@ -164,7 +175,11 @@ struct WorkflowSetupSheet: View {
         wf.exportFormatRaw = exportFormat?.rawValue
         wf.exportDestinationBookmark = exportBookmark
         try? modelContext.save()
-        dismiss()
+        if isEmbedded {
+            onSaved(wf)
+        } else {
+            dismiss()
+        }
     }
 
     // MARK: - Folder bookmark
@@ -192,5 +207,17 @@ struct WorkflowSetupSheet: View {
         let url = try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope],
                            relativeTo: nil, bookmarkDataIsStale: &stale)
         return url?.lastPathComponent ?? ""
+    }
+}
+
+/// Fixed sheet size when modal; fills the pane when embedded as the Workflows detail.
+private struct SetupFrame: ViewModifier {
+    let isEmbedded: Bool
+    func body(content: Content) -> some View {
+        if isEmbedded {
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            content.frame(width: 520, height: 560)
+        }
     }
 }

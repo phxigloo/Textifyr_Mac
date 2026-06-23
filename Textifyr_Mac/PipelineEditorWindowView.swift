@@ -75,7 +75,9 @@ struct PipelineEditorWindowView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
         } detail: {
             detailColumn
+                .background(VisualEffectBackground())
         }
+        .navigationSplitViewStyle(.prominentDetail)
         .frame(minWidth: 780, minHeight: 520)
         .confirmationDialog("Delete Action", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
@@ -138,6 +140,15 @@ struct PipelineEditorWindowView: View {
         }
         .navigationTitle("AI Actions")
         .listStyle(.sidebar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Text("PROCESSING STAGE")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+        }
     }
 
     // MARK: - Pipeline list column
@@ -158,6 +169,14 @@ struct PipelineEditorWindowView: View {
                 ForEach(scopedPipelines) { pipeline in
                     PipelineListRow(pipeline: pipeline)
                         .tag(pipeline.id)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                pipelineToDelete = pipeline
+                                showDeleteConfirmation = true
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                         .contextMenu {
                             Button("Duplicate") { duplicate(pipeline) }
                             if pipeline.isHidden {
@@ -173,7 +192,8 @@ struct PipelineEditorWindowView: View {
                         }
                 }
             }
-            .listStyle(.sidebar)
+            .listStyle(.inset)
+            .scrollContentBackground(.visible)   // opaque sub-master (vs. translucent detail)
 
             Divider()
 

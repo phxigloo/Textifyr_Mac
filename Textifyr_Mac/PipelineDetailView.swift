@@ -114,6 +114,7 @@ struct PipelineDetailView: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)   // translucent detail; cards stay solid
             }
 
             Divider()
