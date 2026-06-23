@@ -67,17 +67,20 @@ struct PipelineEditorWindowView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        // Plain HStack of columns (not NavigationSplitView) so the titlebars are flush
+        // like the Prompt Builder / Documents — no inset chrome, displacement, or
+        // sidebar-toggle button. The dividers between columns match the other tools.
+        HStack(spacing: 0) {
             scopeColumn
-                .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
-        } content: {
+                .frame(width: 180)
+            Divider()
             pipelineListColumn
-                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
-        } detail: {
+                .frame(width: 240)
+            Divider()
             detailColumn
-                .background(VisualEffectBackground())
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewStyle(.prominentDetail)
+        .background(VisualEffectBackground())
         .frame(minWidth: 780, minHeight: 520)
         .confirmationDialog("Delete Action", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
@@ -118,43 +121,40 @@ struct PipelineEditorWindowView: View {
     // MARK: - Scope column
 
     private var scopeColumn: some View {
-        List(PipelineScope.allCases, id: \.self, selection: Binding(
-            get: { selectedScope },
-            set: { newScope in
-                if newScope != selectedScope {
-                    if windowState.vmIsDirty {
-                        pendingPipelineID = nil  // scope change clears pipeline too
-                        showDiscardAlert = true
-                        // On Save/Discard, selectedScope changes happen in the dialog handler
-                        // Use a flag to also switch scope
-                    } else {
-                        selectedScope = newScope
-                        selectedPipelineID = nil
-                        Task { @MainActor in windowState.setVM(nil) }
+        VStack(spacing: 0) {
+            ToolColumnHeader("Scopes")
+
+            List(PipelineScope.allCases, id: \.self, selection: Binding(
+                get: { selectedScope },
+                set: { newScope in
+                    if newScope != selectedScope {
+                        if windowState.vmIsDirty {
+                            pendingPipelineID = nil  // scope change clears pipeline too
+                            showDiscardAlert = true
+                        } else {
+                            selectedScope = newScope
+                            selectedPipelineID = nil
+                            Task { @MainActor in windowState.setVM(nil) }
+                        }
                     }
                 }
+            )) { scope in
+                Label(scope.displayName, systemImage: scopeIcon(scope))
+                    .tag(scope)
             }
-        )) { scope in
-            Label(scope.displayName, systemImage: scopeIcon(scope))
-                .tag(scope)
+            .listStyle(.inset)
+            .modifier(MasterListCard())
         }
+        .background(VisualEffectBackground())
         .navigationTitle("AI Actions")
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Text("PROCESSING STAGE")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
-        }
     }
 
     // MARK: - Pipeline list column
 
     private var pipelineListColumn: some View {
         VStack(spacing: 0) {
+            ToolColumnHeader("Actions")
+
             Text(scopeHint(selectedScope))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -162,8 +162,6 @@ struct PipelineEditorWindowView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-            Divider()
 
             List(selection: pipelineSelectionBinding) {
                 ForEach(scopedPipelines) { pipeline in
@@ -193,7 +191,7 @@ struct PipelineEditorWindowView: View {
                 }
             }
             .listStyle(.inset)
-            .scrollContentBackground(.visible)   // opaque sub-master (vs. translucent detail)
+            .modifier(MasterListCard())
 
             Divider()
 
@@ -224,7 +222,7 @@ struct PipelineEditorWindowView: View {
                     Spacer()
                 }
                 .padding(.horizontal, 8)
-                .padding(.vertical, 6)
+                .frame(height: 34)
 
                 if hasHiddenInScope {
                     Divider()
@@ -237,6 +235,7 @@ struct PipelineEditorWindowView: View {
             }
             .background(.bar)
         }
+        .background(VisualEffectBackground())
         .navigationTitle(selectedScope.displayName)
     }
 

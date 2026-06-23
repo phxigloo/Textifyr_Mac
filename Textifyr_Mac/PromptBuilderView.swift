@@ -16,6 +16,7 @@ private enum ScopeChoice: Hashable {
     case scope(PipelineScope)
 }
 
+
 // MARK: - Main view
 
 /// Optional initial state when the Prompt Builder is opened from an Action step's
@@ -308,9 +309,10 @@ struct PromptBuilderView: View {
                         .tag(ScopeChoice.scope(s))
                 }
             }
-            .listStyle(.sidebar)
+            .listStyle(.inset)
+            .modifier(MasterListCard())
         }
-        .frame(width: 158)
+        .frame(width: 168)
     }
 
     // MARK: - Samples sub-master (~200 pt, opaque) — like the Actions action list
@@ -350,7 +352,7 @@ struct PromptBuilderView: View {
                 }
             }
             .listStyle(.inset)
-            .scrollContentBackground(.visible)   // opaque sub-master
+            .modifier(MasterListCard())
 
             Divider()
 

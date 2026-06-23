@@ -35,10 +35,12 @@ struct WorkflowSetupSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(preset == nil ? "New Workflow" : "Edit Workflow").font(.headline)
+                Text(preset == nil ? "New Workflow" : "Edit Workflow").font(.title3.bold())
                 Spacer()
             }
-            .padding(.horizontal, 20).padding(.vertical, 14)
+            .frame(height: 44)
+            .padding(.horizontal, 20)
+            .background(.bar)
             Divider()
 
             Form {
@@ -117,9 +119,13 @@ struct WorkflowSetupSheet: View {
                 Spacer()
                 Button("Save") { save() }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .padding(.horizontal, 20).padding(.vertical, 14)
+            .padding(.horizontal, 20)
+            .padding(.vertical, isEmbedded ? 0 : 14)
+            .frame(height: isEmbedded ? 34 : nil)
+            .background(.bar)
         }
         .modifier(SetupFrame(isEmbedded: isEmbedded))
         .background {

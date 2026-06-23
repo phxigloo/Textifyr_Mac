@@ -126,23 +126,23 @@ struct SourceSessionListView: View {
 
                 Divider()
 
-                HStack {
-                    Text("Total")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Spacer()
                     if totalCharCount > AppConstants.aiAdvisoryChars {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption2)
                             .foregroundStyle(.orange)
                             .help("Large source — AI processing will take longer than usual.")
                     }
-                    Spacer()
+                    Text("Total")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                     Text("\(totalCharCount.formatted()) chars")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .frame(height: 34)          // match the master +/- footer height
                 .background(.bar)
             }
         }

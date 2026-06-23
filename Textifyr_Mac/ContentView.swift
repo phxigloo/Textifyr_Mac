@@ -26,6 +26,43 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 }
 
+// MARK: - Shared tool chrome (the Prompt Builder style, applied across all tools)
+
+/// Opaque, rounded-inset card for a master / sub-master list — reads as a solid panel
+/// floating on the translucent detail.
+struct MasterListCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: .controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1)
+            )
+            .padding(8)
+    }
+}
+
+/// Section titlebar used atop every tool column (bold title on a `.bar` strip + divider).
+struct ToolColumnHeader: View {
+    let title: String
+    init(_ title: String) { self.title = title }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(title).font(.title3.bold())
+                Spacer()
+            }
+            .frame(height: 44)
+            .padding(.horizontal, 12)
+            .background(.bar)
+            Divider()
+        }
+    }
+}
+
 struct ContentView: View {
     @AppStorage(AppConstants.hasAcceptedTermsKey) private var hasAcceptedTerms = false
     @EnvironmentObject private var appState: AppState
@@ -236,25 +273,32 @@ private struct WorkflowRunMenu: View {
 private struct DocumentsWorkspace: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.modelContext) private var modelContext
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var sidebarVisible = true
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 300)
-        } detail: {
-            if let doc = appState.selectedDocument {
-                DocumentEditorView(document: doc, context: modelContext)
-                    .id(doc.id)
-            } else {
-                EmptyStateView()
+        // Plain HStack of columns (not NavigationSplitView) so the column titlebars are
+        // flush/flat like the Prompt Builder — macOS's split-view sidebar otherwise adds
+        // its own inset rounded chrome + top displacement.
+        HStack(spacing: 0) {
+            if sidebarVisible {
+                SidebarView()
+                    .frame(width: 260)
+                Divider()
             }
+
+            Group {
+                if let doc = appState.selectedDocument {
+                    DocumentEditorView(document: doc, context: modelContext)
+                        .id(doc.id)
+                } else {
+                    EmptyStateView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewStyle(.prominentDetail)
+        .background(VisualEffectBackground())
         .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
-            withAnimation {
-                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-            }
+            withAnimation { sidebarVisible.toggle() }
         }
     }
 }
@@ -280,8 +324,10 @@ private struct WorkflowsWorkspace: View {
     private var selected: WorkflowPreset? { workflows.first { $0.id == selectedID } }
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
             VStack(spacing: 0) {
+                ToolColumnHeader("Workflows")
+
                 List(selection: $selectedID) {
                     ForEach(workflows) { wf in
                         WorkflowListRow(workflow: wf).tag(wf.id)
@@ -296,7 +342,8 @@ private struct WorkflowsWorkspace: View {
                     }
                     .onMove(perform: move)
                 }
-                .listStyle(.sidebar)
+                .listStyle(.inset)
+                .modifier(MasterListCard())
 
                 Divider()
 
@@ -313,25 +360,29 @@ private struct WorkflowsWorkspace: View {
 
                     Spacer()
                 }
-                .padding(.horizontal, 10).padding(.vertical, 9)
+                .padding(.horizontal, 10)
+                .frame(height: 34)
                 .background(.bar)
             }
-            .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 330)
-        } detail: {
-            if let wf = selected {
-                WorkflowSetupSheet(preset: wf, isEmbedded: true, onSaved: { selectedID = $0.id })
-                    .id(wf.id)
-            } else {
-                ContentUnavailableView(
-                    "No Workflow Selected",
-                    systemImage: "arrow.triangle.branch",
-                    description: Text("Choose a workflow from the list, or tap + to create one.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(VisualEffectBackground())
+            .frame(width: 260)
+
+            Divider()
+
+            Group {
+                if let wf = selected {
+                    WorkflowSetupSheet(preset: wf, isEmbedded: true, onSaved: { selectedID = $0.id })
+                        .id(wf.id)
+                } else {
+                    ContentUnavailableView(
+                        "No Workflow Selected",
+                        systemImage: "arrow.triangle.branch",
+                        description: Text("Choose a workflow from the list, or tap + to create one.")
+                    )
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewStyle(.prominentDetail)
+        .background(VisualEffectBackground())
     }
 
     private func addWorkflow() {

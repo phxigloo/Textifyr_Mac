@@ -52,50 +52,59 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Manual search field. (A `.searchable(.sidebar)` field renders in the
-            // title-bar region, which the Phase 22 mode bar now occupies — so it was
-            // being clipped. A plain field below the mode bar avoids that.)
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("Search", text: $searchText)
-                    .textFieldStyle(.plain)
-                if !searchText.isEmpty {
-                    Button { searchText = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
-            .padding(.horizontal, 8)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
+            ToolColumnHeader("Documents")
 
-            List(filteredDocs, selection: $selectedID) { item in
-                SidebarRow(document: item.document, snippet: item.snippet)
-                    .tag(item.document.id)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            documentToDelete = item.document
-                            showDeleteConfirmation = true
-                        } label: {
-                            Label("Delete", systemImage: "trash")
+            // Master card: search field + document list together (one rounded card,
+            // like the Prompt Builder columns), floating on the glass background.
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Search", text: $searchText)
+                        .textFieldStyle(.plain)
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
                         }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tertiary)
                     }
-                    .contextMenu {
-                        Button("Delete", role: .destructive) {
-                            documentToDelete = item.document
-                            showDeleteConfirmation = true
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+
+                Divider()
+
+                List(filteredDocs, selection: $selectedID) { item in
+                    SidebarRow(document: item.document, snippet: item.snippet)
+                        .tag(item.document.id)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                documentToDelete = item.document
+                                showDeleteConfirmation = true
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
                         }
-                    }
+                        .contextMenu {
+                            Button("Delete", role: .destructive) {
+                                documentToDelete = item.document
+                                showDeleteConfirmation = true
+                            }
+                        }
+                }
+                .listStyle(.inset)
+                .scrollContentBackground(.hidden)
+                .navigationTitle("")
             }
-            .listStyle(.sidebar)
-            .navigationTitle("")
+            .background(Color(nsColor: .controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1)
+            )
+            .padding(8)
             // Drop files here to create a new document from them.
             .dropDestination(for: URL.self) { urls, _ in
                 FileDropImporter.handleDrop(urls: urls, into: nil, context: modelContext, appState: appState)
@@ -146,9 +155,10 @@ struct SidebarView: View {
                 Spacer()
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 9)
+            .frame(height: 34)
             .background(.bar)
         }
+        .background(VisualEffectBackground())
         .onReceive(NotificationCenter.default.publisher(for: .newDocument)) { _ in
             createDocument()
         }

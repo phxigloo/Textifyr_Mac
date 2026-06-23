@@ -150,7 +150,7 @@ struct PipelineDetailView: View {
                 Spacer()
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .frame(height: 34)
             .background(.bar)
         }
         .sheet(isPresented: $showWizard) {
