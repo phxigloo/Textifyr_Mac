@@ -197,6 +197,14 @@ private struct SessionRowView: View {
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
                     Spacer()
+                    if session.lastRunFailed {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption2)
+                            .help(session.lastRunFailureReason.isEmpty
+                                  ? "This source failed in the last workflow run — its original text is preserved."
+                                  : "Failed: \(session.lastRunFailureReason)")
+                    }
                     if session.containsCopyrightNotice {
                         Image(systemName: "c.circle.fill")
                             .foregroundStyle(.orange)

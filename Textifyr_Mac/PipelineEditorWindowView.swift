@@ -39,6 +39,7 @@ private final class PipelineWindowState: ObservableObject {
 // MARK: - Main view
 
 struct PipelineEditorWindowView: View {
+    @EnvironmentObject private var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \FormattingPipeline.name) private var allPipelines: [FormattingPipeline]
 
@@ -51,6 +52,7 @@ struct PipelineEditorWindowView: View {
     @State private var showHidden = false
     @State private var showDeleteConfirmation = false
     @State private var pipelineToDelete: FormattingPipeline?
+    @State private var dropTargetScope: PipelineScope?
 
     private var scopedPipelines: [FormattingPipeline] {
         allPipelines.filter {
@@ -115,7 +117,37 @@ struct PipelineEditorWindowView: View {
         }
         .onChange(of: selectedScope) { _, _ in
             requestSwitch(to: nil)
+            updateBreadcrumb()
         }
+        .onChange(of: selectedPipelineID) { _, _ in updateBreadcrumb() }
+        .onAppear { updateBreadcrumb() }
+    }
+
+    private func updateBreadcrumb() {
+        var crumbs = [BreadcrumbCrumb("Actions"), BreadcrumbCrumb(selectedScope.displayName)]
+        if let p = selectedPipeline { crumbs.append(BreadcrumbCrumb(p.name)) }
+        appState.breadcrumb = crumbs
+    }
+
+    /// Drop an action onto a scope in the master list to move it to that stage.
+    private func handleScopeDrop(_ items: [String], to scope: PipelineScope) -> Bool {
+        dropTargetScope = nil
+        guard let idString = items.first,
+              let id = UUID(uuidString: idString),
+              let pipeline = allPipelines.first(where: { $0.id == id }),
+              pipeline.scope != scope else { return false }
+
+        // Commit any in-progress edits to the moved action before it leaves the list.
+        if windowState.activeVM?.pipeline.id == pipeline.id {
+            windowState.commitSave()
+        }
+        pipeline.scope = scope
+        if selectedPipelineID == pipeline.id {
+            selectedPipelineID = nil
+            Task { @MainActor in windowState.setVM(nil) }
+        }
+        try? modelContext.save()
+        return true
     }
 
     // MARK: - Scope column
@@ -141,6 +173,15 @@ struct PipelineEditorWindowView: View {
             )) { scope in
                 Label(scope.displayName, systemImage: scopeIcon(scope))
                     .tag(scope)
+                    .listRowBackground(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(dropTargetScope == scope ? Color.accentColor.opacity(0.25) : Color.clear)
+                    )
+                    .dropDestination(for: String.self) { items, _ in
+                        handleScopeDrop(items, to: scope)
+                    } isTargeted: { targeted in
+                        dropTargetScope = targeted ? scope : (dropTargetScope == scope ? nil : dropTargetScope)
+                    }
             }
             .listStyle(.inset)
             .modifier(MasterListCard())
@@ -167,6 +208,10 @@ struct PipelineEditorWindowView: View {
                 ForEach(scopedPipelines) { pipeline in
                     PipelineListRow(pipeline: pipeline)
                         .tag(pipeline.id)
+                        .draggable(pipeline.id.uuidString) {
+                            Label(pipeline.name, systemImage: "wand.and.stars")
+                                .padding(6)
+                        }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 pipelineToDelete = pipeline
@@ -177,6 +222,14 @@ struct PipelineEditorWindowView: View {
                         }
                         .contextMenu {
                             Button("Duplicate") { duplicate(pipeline) }
+                            Menu("Move to") {
+                                ForEach(PipelineScope.allCases, id: \.self) { target in
+                                    Button(target.displayName) {
+                                        _ = handleScopeDrop([pipeline.id.uuidString], to: target)
+                                    }
+                                    .disabled(pipeline.scope == target)
+                                }
+                            }
                             if pipeline.isHidden {
                                 Button("Show") { setHidden(false, pipeline: pipeline) }
                             } else {

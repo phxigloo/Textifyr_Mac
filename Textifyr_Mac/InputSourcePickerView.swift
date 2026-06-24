@@ -57,15 +57,7 @@ struct InputSourcePickerView: View {
 
     private var pickerGrid: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Add Source")
-                    .font(.title2).bold()
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 24)
-            .padding(.bottom, 16)
-
-            Divider()
+            ToolColumnHeader("Add Source")
 
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 16) {
@@ -83,10 +75,11 @@ struct InputSourcePickerView: View {
             HStack {
                 Button("Cancel") { onDismiss() }
                     .buttonStyle(.bordered)
+                    .controlSize(.small)
                 Spacer()
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .frame(height: 34)
             .background(.bar)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

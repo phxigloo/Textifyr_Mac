@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import TextifyrModels
 import TextifyrServices
+import TextifyrViewModels
 
 // MARK: - Selection type
 
@@ -19,21 +20,13 @@ private enum ScopeChoice: Hashable {
 
 // MARK: - Main view
 
-/// Optional initial state when the Prompt Builder is opened from an Action step's
-/// "Improve" button — pre-loads the prompt, opens the improve panel, and (for a
-/// mid-chain step) enables "Run up to here" to stage that step's real input.
-struct PromptBuilderSeed: Equatable {
-    var prompt: String
-    var openImprove: Bool = false
-    var actionID: UUID? = nil
-    var stepIndex: Int? = nil
-}
-
 struct PromptBuilderView: View {
+    /// Optional initial state when opened from an Action step (see `PromptBuilderSeed`).
     var seed: PromptBuilderSeed? = nil
     /// True when shown as the Prompt Builder workspace mode (fills the window, no Cancel).
     var isEmbedded: Bool = false
 
+    @EnvironmentObject private var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
@@ -133,6 +126,33 @@ struct PromptBuilderView: View {
         return (reason == nil, reason)
     }
 
+    /// Feeds the persistent bottom Path Bar. When seeded from an Action step:
+    /// `Actions ▸ <Action> ▸ Step N ▸ Improve` (first crumbs link back to Actions);
+    /// otherwise `Prompt Builder ▸ <Scope> ▸ <Sample>`.
+    private func updateBreadcrumb() {
+        if let seed, let actionID = seed.actionID {
+            let actionName = ((try? modelContext.fetch(FetchDescriptor<FormattingPipeline>())) ?? [])
+                .first(where: { $0.id == actionID })?.name ?? "Action"
+            var crumbs = [
+                BreadcrumbCrumb("Actions", targetMode: .actions),
+                BreadcrumbCrumb(actionName, targetMode: .actions),
+            ]
+            if let idx = seed.stepIndex { crumbs.append(BreadcrumbCrumb("Step \(idx + 1)")) }
+            crumbs.append(BreadcrumbCrumb(seed.openImprove ? "Improve" : "Prompt Builder"))
+            appState.breadcrumb = crumbs
+        } else {
+            var crumbs = [BreadcrumbCrumb("Prompt Builder")]
+            crumbs.append(BreadcrumbCrumb(scopeFilter?.displayName ?? "All Scopes"))
+            switch sampleSelection {
+            case .saved(let id):
+                crumbs.append(BreadcrumbCrumb(allSamples.first { $0.id == id }?.name ?? "Sample"))
+            default:
+                crumbs.append(BreadcrumbCrumb("Scratchpad"))
+            }
+            appState.breadcrumb = crumbs
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HSplitView {
@@ -195,7 +215,7 @@ struct PromptBuilderView: View {
         .background {
             if isEmbedded { VisualEffectBackground() }
         }
-        .onAppear { restoreDraft(); applySeed() }
+        .onAppear { restoreDraft(); applySeed(); updateBreadcrumb() }
         .onChange(of: promptText)     { _, t in UserDefaults.standard.set(t, forKey: Self.draftPromptKey) }
         .onChange(of: scratchpadText) { _, t in
             UserDefaults.standard.set(t, forKey: Self.draftScratchpadKey)
@@ -214,6 +234,7 @@ struct PromptBuilderView: View {
         .onChange(of: scopeFilter) { _, _ in
             if case .saved = sampleSelection { sampleSelection = .scratchpad }
             testResult = nil; testError = nil
+            updateBreadcrumb()
         }
         .onChange(of: sampleSelection) { _, newSelection in
             testResult = nil; testError = nil
@@ -223,6 +244,7 @@ struct PromptBuilderView: View {
                 editingText  = sample.sampleText
                 editingScope = sample.scope
             }
+            updateBreadcrumb()
         }
         .sheet(isPresented: $showingLoadSheet) {
             LoadFromActionSheet { loaded in promptText = loaded }

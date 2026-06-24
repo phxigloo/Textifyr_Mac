@@ -63,6 +63,62 @@ struct ToolColumnHeader: View {
     }
 }
 
+/// The persistent bottom Path Bar (Finder-style). Renders `appState.breadcrumb`;
+/// crumbs with a `targetMode` are clickable hotlinks that switch tools.
+private struct PathBar: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        BreadcrumbBar(crumbs: appState.breadcrumb.map { crumb in
+            BreadcrumbBar.Crumb(crumb.label, action: crumb.targetMode.map { target in
+                {
+                    appState.promptBuilderSeed = nil
+                    appState.workspaceMode = target
+                }
+            })
+        })
+    }
+}
+
+/// A jump-bar breadcrumb (Phase 22.2). Earlier segments are clickable hotlinks; the
+/// last is the current location.
+struct BreadcrumbBar: View {
+    struct Crumb: Identifiable {
+        let id = UUID()
+        let label: String
+        let action: (() -> Void)?
+        init(_ label: String, action: (() -> Void)? = nil) {
+            self.label = label
+            self.action = action
+        }
+    }
+    let crumbs: [Crumb]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(crumbs.enumerated()), id: \.element.id) { idx, crumb in
+                if idx > 0 {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                if let action = crumb.action {
+                    Button(crumb.label, action: action)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tint)
+                } else {
+                    Text(crumb.label).foregroundStyle(.primary)
+                }
+            }
+            Spacer()
+        }
+        .font(.callout)
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(.bar)
+    }
+}
+
 struct ContentView: View {
     @AppStorage(AppConstants.hasAcceptedTermsKey) private var hasAcceptedTerms = false
     @EnvironmentObject private var appState: AppState
@@ -161,17 +217,23 @@ private struct MainNavigationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ModeSelectorBar(mode: $appState.workspaceMode)
+            ModeSelectorBar()
             Divider()
             Group {
                 switch appState.workspaceMode {
                 case .documents:     DocumentsWorkspace()
                 case .actions:       ActionsWorkspace()
-                case .promptBuilder: PromptBuilderView(isEmbedded: true)
+                case .promptBuilder: PromptBuilderView(seed: appState.promptBuilderSeed, isEmbedded: true)
+                                        .id(appState.promptBuilderSeed)
                 case .workflows:     WorkflowsWorkspace()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if !appState.breadcrumb.isEmpty {
+                Divider()
+                PathBar()
+            }
         }
         .collapseWindowToolbar()
         .alert("Error", isPresented: Binding(
@@ -200,24 +262,28 @@ private struct MainNavigationView: View {
 // MARK: - Mode selector bar (Xcode navigator-selector, horizontal, top)
 
 private struct ModeSelectorBar: View {
-    @Binding var mode: AppState.WorkspaceMode
+    @EnvironmentObject private var appState: AppState
 
     var body: some View {
         HStack(spacing: 4) {
             ForEach(AppState.WorkspaceMode.allCases, id: \.self) { m in
-                Button { mode = m } label: {
+                let isSelected = appState.workspaceMode == m
+                Button {
+                    appState.promptBuilderSeed = nil   // a manual tool switch clears any step seed
+                    appState.workspaceMode = m
+                } label: {
                     HStack(spacing: 5) {
                         Image(systemName: m.systemImage)
                             .font(.system(size: 12))
                         Text(m.title)
-                            .font(.system(size: 12, weight: mode == m ? .semibold : .regular))
+                            .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .foregroundStyle(mode == m ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(mode == m ? Color.accentColor.opacity(0.15) : Color.clear)
+                            .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
                     )
                     .contentShape(Rectangle())
                 }
@@ -300,6 +366,14 @@ private struct DocumentsWorkspace: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleSidebar)) { _ in
             withAnimation { sidebarVisible.toggle() }
         }
+        .onAppear { updateBreadcrumb() }
+        .onChange(of: appState.selectedDocument?.id) { _, _ in updateBreadcrumb() }
+    }
+
+    private func updateBreadcrumb() {
+        var crumbs = [BreadcrumbCrumb("Documents")]
+        if let doc = appState.selectedDocument { crumbs.append(BreadcrumbCrumb(doc.title)) }
+        appState.breadcrumb = crumbs
     }
 }
 
@@ -317,6 +391,7 @@ private struct ActionsWorkspace: View {
 // MARK: - Workflows workspace (list + embedded editor — no popup)
 
 private struct WorkflowsWorkspace: View {
+    @EnvironmentObject private var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \WorkflowPreset.sortOrder) private var workflows: [WorkflowPreset]
     @State private var selectedID: UUID?
@@ -383,6 +458,16 @@ private struct WorkflowsWorkspace: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(VisualEffectBackground())
+        .onAppear { updateBreadcrumb() }
+        .onChange(of: selectedID) { _, _ in updateBreadcrumb() }
+    }
+
+    private func updateBreadcrumb() {
+        var crumbs = [BreadcrumbCrumb("Workflows")]
+        if let wf = selected {
+            crumbs.append(BreadcrumbCrumb(wf.name.isEmpty ? "Untitled Workflow" : wf.name))
+        }
+        appState.breadcrumb = crumbs
     }
 
     private func addWorkflow() {

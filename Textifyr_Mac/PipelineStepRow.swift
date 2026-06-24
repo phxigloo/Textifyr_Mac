@@ -6,14 +6,14 @@ import TextifyrViewModels
 
 struct PipelineStepRow: View {
     @ObservedObject var viewModel: PipelineEditorViewModel
+    @EnvironmentObject private var appState: AppState
     let step: PipelineStep
     @State private var name: String
     @State private var prompt: String
     @State private var kind: PipelineStepKind
     @State private var config: TextTransformConfig
     @State private var verify: StepVerifyConfig
-    @State private var showPromptBuilder = false
-    @State private var promptBuilderSeed: PromptBuilderSeed?
+    @State private var extract: ExtractFieldsConfig
 
     private var stepIndex: Int {
         viewModel.steps.firstIndex(where: { $0.id == step.id }) ?? 0
@@ -27,6 +27,7 @@ struct PipelineStepRow: View {
         _kind   = State(initialValue: step.kind)
         _config = State(initialValue: step.transformConfig)
         _verify = State(initialValue: step.verifyConfig)
+        _extract = State(initialValue: step.extractConfig)
     }
 
     var body: some View {
@@ -56,10 +57,10 @@ struct PipelineStepRow: View {
                 .help("Delete this step")
             }
 
-            if kind == .aiPrompt {
-                aiPromptEditor
-            } else {
-                transformEditor
+            switch kind {
+            case .aiPrompt:      aiPromptEditor
+            case .extractFields: extractFieldsEditor
+            case .transform:     transformEditor
             }
         }
         .padding(12)
@@ -68,25 +69,22 @@ struct PipelineStepRow: View {
         .onChange(of: name) { _, _ in saveName() }
         .onChange(of: config) { _, newValue in viewModel.updateStepConfig(step, newValue) }
         .onChange(of: verify) { _, newValue in viewModel.updateStepVerify(step, newValue) }
+        .onChange(of: extract) { _, newValue in viewModel.updateStepExtract(step, newValue) }
         .onChange(of: step.prompt) { _, newValue in
             // Sync back if AI improvement changed the step in the view model
             if newValue != prompt { prompt = newValue }
         }
-        .sheet(isPresented: $showPromptBuilder) {
-            PromptBuilderView(seed: promptBuilderSeed)
-        }
     }
 
-    /// Opens the Prompt Builder pre-loaded with this step's prompt and the improve
-    /// panel open. For a mid-chain step, "Run up to here" there stages this step's
-    /// real input (output of the prior steps) into the Scratchpad.
-    private func openImproveInBuilder() {
-        promptBuilderSeed = PromptBuilderSeed(
+    /// Navigates (in-window, no popup — Phase 22.2) to the Prompt Builder, seeded with
+    /// this step's prompt + position. A breadcrumb there leads back to the action.
+    private func openInBuilder(improve: Bool) {
+        appState.promptBuilderSeed = PromptBuilderSeed(
             prompt: prompt,
-            openImprove: true,
+            openImprove: improve,
             actionID: viewModel.pipeline.id,
             stepIndex: stepIndex)
-        showPromptBuilder = true
+        appState.workspaceMode = .promptBuilder
     }
 
     // MARK: - Type menu
@@ -109,16 +107,23 @@ struct PipelineStepRow: View {
     }
 
     private func applyUIKind(_ newKind: StepUIKind) {
-        if let type = newKind.transformType {
-            kind = .transform
-            config.type = type            // triggers onChange(of: config) → persists
-            viewModel.updateStepKind(step, .transform)
-            if name.isEmpty || name == "New Step" {
-                name = newKind.label       // triggers onChange(of: name) → persists
-            }
-        } else {
+        switch newKind {
+        case .aiPrompt:
             kind = .aiPrompt
             viewModel.updateStepKind(step, .aiPrompt)
+        case .extractFields:
+            kind = .extractFields
+            viewModel.updateStepKind(step, .extractFields)
+            if name.isEmpty || name == "New Step" { name = "Extract Fields" }
+        default:
+            if let type = newKind.transformType {
+                kind = .transform
+                config.type = type            // triggers onChange(of: config) → persists
+                viewModel.updateStepKind(step, .transform)
+                if name.isEmpty || name == "New Step" {
+                    name = newKind.label       // triggers onChange(of: name) → persists
+                }
+            }
         }
     }
 
@@ -144,8 +149,7 @@ struct PipelineStepRow: View {
                     .foregroundStyle(prompt.count > AppConstants.maxPromptCharacters ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
                 Spacer()
                 Button {
-                    promptBuilderSeed = nil
-                    showPromptBuilder = true
+                    openInBuilder(improve: false)
                 } label: {
                     Label("Prompt Builder", systemImage: "text.bubble")
                         .font(.caption)
@@ -154,7 +158,7 @@ struct PipelineStepRow: View {
                 .help("Actions are made of one or more prompts. Use the Prompt Builder to write and test individual prompts before adding them here.")
 
                 Button {
-                    openImproveInBuilder()
+                    openInBuilder(improve: true)
                 } label: {
                     Label("Improve Prompt", systemImage: "wand.and.stars")
                         .font(.caption)
@@ -165,6 +169,68 @@ struct PipelineStepRow: View {
             }
 
             verifyEditor
+        }
+    }
+
+    // MARK: - Extract Fields editor (21.1)
+
+    private var extractFieldsEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("The AI fills these fields, then they're combined deterministically — reliable structured output instead of asking the prompt for delimited text.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach($extract.fields) { $field in
+                HStack(spacing: 6) {
+                    TextField("Field name", text: $field.name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 140)
+                    Picker("", selection: $field.type) {
+                        ForEach(ExtractFieldType.allCases, id: \.self) { t in
+                            Text(t.displayName).tag(t)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    TextField("description (optional)", text: $field.fieldDescription)
+                        .textFieldStyle(.roundedBorder)
+                    Button(role: .destructive) {
+                        extract.fields.removeAll { $0.id == field.id }
+                    } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Remove this field")
+                }
+            }
+
+            Button {
+                extract.fields.append(ExtractField())
+            } label: {
+                Label("Add Field", systemImage: "plus")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Text("Combine with:").font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: $extract.delimiter) {
+                    ForEach(ExtractDelimiter.allCases, id: \.self) { d in
+                        Text(d.displayName).tag(d)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .disabled(!extract.template.isEmpty)
+                Spacer()
+            }
+
+            TextField("Optional template, e.g. {Date}\\t{Payee}\\t{Total}", text: $extract.template)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.caption, design: .monospaced))
+                .help("If set, overrides the delimiter. Use {Field Name} placeholders; \\t = Tab, \\n = newline.")
         }
     }
 
@@ -351,28 +417,39 @@ struct PipelineStepRow: View {
 
 private enum StepUIKind: String, CaseIterable, Identifiable {
     case aiPrompt
+    case extractFields
     case findReplace, delimiter, whitespace, caseTransform, lineOps, homoglyph
 
     var id: String { rawValue }
 
+    private var isNonTransform: Bool { self == .aiPrompt || self == .extractFields }
+
     var transformType: TextTransformType? {
-        self == .aiPrompt ? nil : TextTransformType(rawValue: rawValue)
+        isNonTransform ? nil : TextTransformType(rawValue: rawValue)
     }
 
     init(kind: PipelineStepKind, type: TextTransformType) {
-        if kind == .aiPrompt {
-            self = .aiPrompt
-        } else {
-            self = StepUIKind(rawValue: type.rawValue) ?? .findReplace
+        switch kind {
+        case .aiPrompt:      self = .aiPrompt
+        case .extractFields: self = .extractFields
+        case .transform:     self = StepUIKind(rawValue: type.rawValue) ?? .findReplace
         }
     }
 
     var label: String {
-        self == .aiPrompt ? "AI Prompt" : (transformType?.displayName ?? "AI Prompt")
+        switch self {
+        case .aiPrompt:      return "AI Prompt"
+        case .extractFields: return "Extract Fields"
+        default:             return transformType?.displayName ?? "AI Prompt"
+        }
     }
 
     var icon: String {
-        self == .aiPrompt ? "sparkles" : (transformType?.icon ?? "sparkles")
+        switch self {
+        case .aiPrompt:      return "sparkles"
+        case .extractFields: return "tablecells"
+        default:             return transformType?.icon ?? "sparkles"
+        }
     }
 }
 
