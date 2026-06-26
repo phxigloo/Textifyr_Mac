@@ -73,6 +73,7 @@ private struct PathBar: View {
             BreadcrumbBar.Crumb(crumb.label, action: crumb.targetMode.map { target in
                 {
                     appState.promptBuilderSeed = nil
+                    if target == .documents { appState.editOrigin = nil }
                     appState.workspaceMode = target
                 }
             })
@@ -266,10 +267,14 @@ private struct ModeSelectorBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(AppState.WorkspaceMode.allCases, id: \.self) { m in
+            // Prompt Builder is no longer a co-equal peer (23.6): it's a *step* editor, reached
+            // by drilling into an AI step (or the "Prompt Builder" entry in Actions). The bar
+            // shows only the three top-level surfaces.
+            ForEach(AppState.WorkspaceMode.allCases.filter { $0 != .promptBuilder }, id: \.self) { m in
                 let isSelected = appState.workspaceMode == m
                 Button {
                     appState.promptBuilderSeed = nil   // a manual tool switch clears any step seed
+                    appState.editOrigin = nil          // …and drops the in-context cascade root (23.4)
                     appState.workspaceMode = m
                 } label: {
                     HStack(spacing: 5) {
@@ -463,7 +468,10 @@ private struct WorkflowsWorkspace: View {
     }
 
     private func updateBreadcrumb() {
-        var crumbs = [BreadcrumbCrumb("Workflows")]
+        // Accumulating trail (23.4): the shared root (`🧩 Library` / `📄 doc ▸ source`),
+        // then this tool's location.
+        var crumbs = appState.rootCrumbs
+        crumbs.append(BreadcrumbCrumb("Workflows"))
         if let wf = selected {
             crumbs.append(BreadcrumbCrumb(wf.name.isEmpty ? "Untitled Workflow" : wf.name))
         }

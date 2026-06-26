@@ -71,6 +71,10 @@ struct WorkflowLaunchModifier: ViewModifier {
                 LiveWorkflowResumeView(request: req)
                     .environmentObject(appState)
             }
+            .sheet(item: $appState.rerunFlaggedRequest) { req in
+                RerunFlaggedView(request: req)
+                    .environmentObject(appState)
+            }
     }
 
     private func handleLaunch() {
@@ -114,6 +118,33 @@ private struct LiveWorkflowResumeView: View {
         } else {
             Color.clear.frame(width: 1, height: 1)
                 .onAppear { appState.liveWorkflowResume = nil }
+        }
+    }
+
+    private func resolvePreset() -> WorkflowPreset? {
+        ((try? modelContext.fetch(FetchDescriptor<WorkflowPreset>())) ?? []).first { $0.id == request.presetID }
+    }
+    private func resolveDocument() -> TextifyrDocument? {
+        ((try? modelContext.fetch(FetchDescriptor<TextifyrDocument>())) ?? []).first { $0.id == request.documentID }
+    }
+}
+
+/// Resolves a "re-run flagged sources" request (21.5) to its preset + document and
+/// runs the source chain on only the flagged sources, then re-finalizes + exports.
+private struct RerunFlaggedView: View {
+    let request: LiveWorkflowRequest
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        if let preset = resolvePreset(), let doc = resolveDocument() {
+            WorkflowRunnerView(preset: preset, fileURLs: [], existingDocument: doc, rerunFlagged: true) { _ in
+                appState.rerunFlaggedRequest = nil
+            }
+            .environmentObject(appState)
+        } else {
+            Color.clear.frame(width: 1, height: 1)
+                .onAppear { appState.rerunFlaggedRequest = nil }
         }
     }
 

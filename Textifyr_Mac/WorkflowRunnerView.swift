@@ -15,6 +15,8 @@ struct WorkflowRunnerView: View {
     /// When set, run the chain on this existing document (live-capture resume) and
     /// skip the import step. Otherwise a new document is created from `fileURLs`.
     var existingDocument: TextifyrDocument? = nil
+    /// Re-run only the flagged sources of `existingDocument` (21.5) instead of a full run.
+    var rerunFlagged: Bool = false
     let onClose: (_ openedDocument: Bool) -> Void
 
     @Environment(\.modelContext) private var modelContext
@@ -218,8 +220,13 @@ struct WorkflowRunnerView: View {
         guard !started else { return }
         started = true
         if let existingDocument {
-            // Live-capture resume: sources already captured; run the chain on them.
-            vm.run(preset, in: existingDocument, fileURLs: [], context: modelContext)
+            if rerunFlagged {
+                // 21.5: re-run only the flagged sources, then re-finalize + export.
+                vm.rerunFlagged(preset, in: existingDocument, context: modelContext)
+            } else {
+                // Live-capture resume: sources already captured; run the chain on them.
+                vm.run(preset, in: existingDocument, fileURLs: [], context: modelContext)
+            }
         } else {
             let doc = TextifyrDocument(title: documentTitle())
             doc.sortOrder = ((try? modelContext.fetch(FetchDescriptor<TextifyrDocument>()))?.count) ?? 0
@@ -297,6 +304,10 @@ struct WorkflowRunnerView: View {
 private struct ReviewSourceEditor: View {
     @Bindable var session: SourceSession
     @State private var showFind = false
+    @State private var showTrace = false
+    /// The same trace inspector the source editor uses (23.8) — available at the checkpoint
+    /// so you can see what the completed stages did to this source before continuing.
+    private var trace: RunTrace? { RunTraceStore.read(sourceID: session.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -304,15 +315,28 @@ private struct ReviewSourceEditor: View {
                 Text(session.captureMethod.displayName)
                     .font(.caption.bold()).foregroundStyle(.secondary)
                 Spacer()
+                if trace != nil {
+                    Button { withAnimation { showTrace.toggle() } } label: {
+                        Label("Inspect Run", systemImage: "list.bullet.rectangle")
+                    }
+                    .buttonStyle(.borderless).controlSize(.small)
+                    .help("See what each completed step did to this source.")
+                }
                 Button { showFind.toggle() } label: { Image(systemName: "magnifyingglass") }
                     .buttonStyle(.borderless).controlSize(.small)
                     .help("Find & Replace (⌘F)")
             }
-            TextEditor(text: $session.rawText)
-                .font(.callout)
-                .frame(minHeight: 80, maxHeight: 180)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-                .findNavigator(isPresented: $showFind)
+            if showTrace, let trace {
+                RunTraceInspectorView(trace: trace)
+                    .frame(height: 280)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+            } else {
+                TextEditor(text: $session.rawText)
+                    .font(.callout)
+                    .frame(minHeight: 80, maxHeight: 180)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                    .findNavigator(isPresented: $showFind)
+            }
         }
     }
 }

@@ -201,6 +201,11 @@ struct SidebarView: View {
             appState.selectedDocument = nil
         }
         selectedID = nil
+        // Evict each source's local run-trace cache (23.1) — deleting the document
+        // cascade-deletes its sources but doesn't route through deleteSession.
+        for session in doc.sourceSessions ?? [] {
+            RunTraceStore.delete(sourceID: session.id)
+        }
         modelContext.delete(doc)
         try? modelContext.save()
     }

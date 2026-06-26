@@ -120,11 +120,25 @@ struct PipelineEditorWindowView: View {
             updateBreadcrumb()
         }
         .onChange(of: selectedPipelineID) { _, _ in updateBreadcrumb() }
-        .onAppear { updateBreadcrumb() }
+        .onAppear { updateBreadcrumb(); openRequestedActionIfNeeded() }
+        .onChange(of: appState.actionToOpen) { _, _ in openRequestedActionIfNeeded() }
+    }
+
+    /// Kind-aware remedy routing (23.3): when something asks to open a specific action,
+    /// switch to its scope and select it.
+    private func openRequestedActionIfNeeded() {
+        guard let id = appState.actionToOpen else { return }
+        appState.actionToOpen = nil
+        guard let pipeline = allPipelines.first(where: { $0.id == id }) else { return }
+        if selectedScope != pipeline.scope { selectedScope = pipeline.scope }
+        requestSwitch(to: id)
     }
 
     private func updateBreadcrumb() {
-        var crumbs = [BreadcrumbCrumb("Actions"), BreadcrumbCrumb(selectedScope.displayName)]
+        // Accumulating trail (23.4): `📄 doc ▸ source` (drilled in from a source) or
+        // `🧩 Library` (authoring), then this tool's location.
+        var crumbs = appState.rootCrumbs
+        crumbs.append(BreadcrumbCrumb(selectedScope.displayName))
         if let p = selectedPipeline { crumbs.append(BreadcrumbCrumb(p.name)) }
         appState.breadcrumb = crumbs
     }
@@ -273,6 +287,19 @@ struct PipelineEditorWindowView: View {
                     .help("Delete selected action")
 
                     Spacer()
+
+                    // Prompt Builder's new home (23.6): reached by drilling into an AI step,
+                    // or here for standalone prompt/sample authoring.
+                    Button {
+                        appState.promptBuilderSeed = nil
+                        appState.editOrigin = nil
+                        appState.workspaceMode = .promptBuilder
+                    } label: {
+                        Label("Prompt Builder", systemImage: "text.bubble")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Author and test prompts against samples (no document needed)")
                 }
                 .padding(.horizontal, 8)
                 .frame(height: 34)

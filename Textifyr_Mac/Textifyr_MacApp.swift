@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// one forward and post the URL for the app to act on. (ContentView no longer
     /// uses onOpenURL, so this is the sole deep-link path.)
     func applicationWillFinishLaunching(_ notification: Notification) {
+        RunTraceStore.logLocation()   // print the run-trace cache path for debugging (23.1)
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),

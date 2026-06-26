@@ -130,18 +130,16 @@ struct PromptBuilderView: View {
     /// `Actions ▸ <Action> ▸ Step N ▸ Improve` (first crumbs link back to Actions);
     /// otherwise `Prompt Builder ▸ <Scope> ▸ <Sample>`.
     private func updateBreadcrumb() {
+        // Accumulating trail (23.4): the shared root (`📄 doc ▸ source` or `🧩 Library`),
+        // then either the seeded step cascade or the standalone scope/sample location.
+        var crumbs = appState.rootCrumbs
         if let seed, let actionID = seed.actionID {
             let actionName = ((try? modelContext.fetch(FetchDescriptor<FormattingPipeline>())) ?? [])
                 .first(where: { $0.id == actionID })?.name ?? "Action"
-            var crumbs = [
-                BreadcrumbCrumb("Actions", targetMode: .actions),
-                BreadcrumbCrumb(actionName, targetMode: .actions),
-            ]
+            crumbs.append(BreadcrumbCrumb(actionName, targetMode: .actions))
             if let idx = seed.stepIndex { crumbs.append(BreadcrumbCrumb("Step \(idx + 1)")) }
             crumbs.append(BreadcrumbCrumb(seed.openImprove ? "Improve" : "Prompt Builder"))
-            appState.breadcrumb = crumbs
         } else {
-            var crumbs = [BreadcrumbCrumb("Prompt Builder")]
             crumbs.append(BreadcrumbCrumb(scopeFilter?.displayName ?? "All Scopes"))
             switch sampleSelection {
             case .saved(let id):
@@ -149,8 +147,8 @@ struct PromptBuilderView: View {
             default:
                 crumbs.append(BreadcrumbCrumb("Scratchpad"))
             }
-            appState.breadcrumb = crumbs
         }
+        appState.breadcrumb = crumbs
     }
 
     var body: some View {
@@ -615,12 +613,36 @@ struct PromptBuilderView: View {
 
     // MARK: - Prompt panel (right, fixed 320 pt)
 
+    /// Persistent "Subject:" chip (23.5) — makes clear *what* Run Prompt tests against, and
+    /// that the Prompt Builder is **Test-only** (authoring): `📄 <source>` when drilled in
+    /// from a document, else `🧩 <sample>` (a saved sample or the scratchpad).
+    private var subjectLabel: String {
+        if let origin = appState.editOrigin {
+            return "📄 " + (origin.sourceName.isEmpty ? "source" : origin.sourceName)
+        }
+        if case .saved(let id) = sampleSelection {
+            return "🧩 " + (allSamples.first { $0.id == id }?.name ?? "Sample")
+        }
+        return "🧩 Scratchpad"
+    }
+
+    private var subjectChip: some View {
+        HStack(spacing: 4) {
+            Text("Subject:").font(.caption2).foregroundStyle(.tertiary)
+            Text(subjectLabel).font(.caption2.weight(.medium))
+        }
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .background(Color.secondary.opacity(0.12), in: Capsule())
+        .help("Run Prompt tests against this subject. Results stay here — they don't change your sources.")
+    }
+
     private var promptPanel: some View {
         VStack(spacing: 0) {
             HStack {
                 Label("Prompt", systemImage: "text.bubble")
                     .font(.headline)
                 Spacer()
+                subjectChip
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         showImprovePanel.toggle()
@@ -1022,6 +1044,16 @@ struct PromptBuilderView: View {
         if !seed.prompt.isEmpty { promptText = seed.prompt }
         rthActionID  = seed.actionID
         rthStepIndex = seed.stepIndex
+
+        // Seeded from a source (e.g. a flagged source's "Improve in Prompt Builder"):
+        // stage its text as the Scratchpad sample so the user iterates against the exact
+        // input that failed (21.5/22.9).
+        if !seed.sampleText.isEmpty {
+            settingScratchpadProgrammatically = true
+            scratchpadText = seed.sampleText
+            scratchpadProvenance = seed.sampleName.isEmpty ? "Source" : "Source: \(seed.sampleName)"
+            sampleSelection = .scratchpad
+        }
 
         // Load the originating step's "Check the result" settings so the test surface
         // can show the criteria and report pass/fail (22.0c).
