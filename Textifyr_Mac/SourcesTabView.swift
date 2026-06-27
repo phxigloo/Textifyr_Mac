@@ -16,6 +16,8 @@ struct SourcesTabView: View {
     @State private var showingAddSource = false
     @State private var editingSession: SourceSession?
     @State private var editingSmartVision: SourceSession?
+    /// Restore (24.1): open the editor straight into the Run-Trace view when a trail crumb asks.
+    @State private var pendingShowTrace = false
     /// Method to auto-open in the picker (set by menu commands and the Share
     /// Extension handoff). Passed directly to the picker so there's no
     /// notification-timing race with the picker's mount.
@@ -56,6 +58,7 @@ struct SourcesTabView: View {
                 SessionEditView(
                     session: session,
                     context: modelContext,
+                    initialShowTrace: pendingShowTrace,
                     onDismiss: { editingSession = nil }
                 )
                 .transition(.opacity)
@@ -101,8 +104,28 @@ struct SourcesTabView: View {
         // pendingSourceMethod while this view is still being mounted (the document
         // was just created and selected), so onChange alone misses it — onAppear
         // catches that case. onChange covers menu commands while already visible.
-        .onAppear { handlePendingMethod() }
+        .onAppear { handlePendingMethod(); handleSourceEditorRequest() }
         .onChange(of: appState.pendingSourceMethod) { _, _ in handlePendingMethod() }
+        .onChange(of: appState.sourceEditorRequest) { _, _ in handleSourceEditorRequest() }
+    }
+
+    /// Restores a source editor from a trail crumb (24.1): open the requested source (in Edit
+    /// or Run Trace), or close the editor back to the source list.
+    private func handleSourceEditorRequest() {
+        guard let req = appState.sourceEditorRequest else { return }
+        appState.sourceEditorRequest = nil
+        switch req {
+        case .close:
+            withAnimation { editingSession = nil; editingSmartVision = nil }
+        case .open(let id, let showTrace):
+            guard let session = (document.sourceSessions ?? []).first(where: { $0.id == id }) else { return }
+            pendingShowTrace = showTrace
+            if session.captureMethod == .smartVision {
+                withAnimation { editingSmartVision = session }
+            } else {
+                withAnimation { editingSession = session }
+            }
+        }
     }
 
     private func handlePendingMethod() {

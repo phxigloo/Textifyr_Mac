@@ -26,15 +26,10 @@ struct DocumentEditorView: View {
             errorBanner
             tabBar
             Divider()
-            HSplitView {
-                tabContent
-                    .frame(minWidth: 400, maxWidth: .infinity)
-                if appState.inspectorVisible {
-                    PipelineInspectorView()
-                        .frame(minWidth: 260, idealWidth: 310, maxWidth: 380)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The right-side "AI Actions" inspector was retired (24.5) — it duplicated the
+            // Actions (Library) mode + the per-source drill bar. Edit actions there instead.
+            tabContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .sheet(isPresented: $showExportSheet) {
             ExportFormatSheet(viewModel: viewModel)
@@ -61,14 +56,10 @@ struct DocumentEditorView: View {
         .onReceive(NotificationCenter.default.publisher(for: .requestSourcesTab)) { _ in
             selectedTab = .sources
         }
-        // View menu
+        // View-menu "Show AI Actions Inspector" → now opens the Actions (Library) mode (24.5).
         .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                if !appState.inspectorVisible {
-                    appState.inspectorDefaultScope = selectedTab == .output ? .output : .source
-                }
-                appState.inspectorVisible.toggle()
-            }
+            appState.editOrigin = nil
+            appState.workspaceMode = .actions
         }
         // Push output tab / has-output state so menu items can disable themselves
         .onChange(of: selectedTab) { _, tab in
@@ -130,21 +121,6 @@ struct DocumentEditorView: View {
             }
 
             Spacer()
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    if !appState.inspectorVisible {
-                        appState.inspectorDefaultScope = selectedTab == .output ? .output : .source
-                    }
-                    appState.inspectorVisible.toggle()
-                }
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .foregroundStyle(appState.inspectorVisible ? Color.accentColor : Color.secondary)
-            }
-            .buttonStyle(.borderless)
-            .help(appState.inspectorVisible ? "Hide AI Actions Inspector" : "Show AI Actions Inspector")
-            .padding(.trailing, 14)
         }
         .frame(height: 34)
         .padding(.leading, 8)

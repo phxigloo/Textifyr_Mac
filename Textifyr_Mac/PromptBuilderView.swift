@@ -44,6 +44,7 @@ struct PromptBuilderView: View {
     @State private var testError: String? = nil
 
     @State private var showImprovePanel = false
+    @FocusState private var promptFocused: Bool
     @State private var chatMessages: [PromptChatMessage] = []
     @State private var chatInput: String = ""
     @State private var isChatting = false
@@ -130,8 +131,19 @@ struct PromptBuilderView: View {
     /// `Actions ▸ <Action> ▸ Step N ▸ Improve` (first crumbs link back to Actions);
     /// otherwise `Prompt Builder ▸ <Scope> ▸ <Sample>`.
     private func updateBreadcrumb() {
-        // Accumulating trail (23.4): the shared root (`📄 doc ▸ source` or `🧩 Library`),
-        // then either the seeded step cascade or the standalone scope/sample location.
+        // In-context (drilled from a step): extend the cascade trail *after* its "Prompt Builder"
+        // crumb with this tool's own depth — `Sample: …` (the forwarded text), `Prompt` (when the
+        // prompt editor is focused), and `Improve` (when the improve panel is open). 24.1 A/C.
+        if appState.editOrigin != nil {
+            guard let pbIdx = appState.breadcrumb.firstIndex(where: { $0.label == "Prompt Builder" }) else { return }
+            var crumbs = Array(appState.breadcrumb.prefix(pbIdx + 1))
+            crumbs.append(BreadcrumbCrumb("Sample: \(inContextSampleName)"))
+            if promptFocused || showImprovePanel { crumbs.append(BreadcrumbCrumb("Prompt")) }
+            if showImprovePanel { crumbs.append(BreadcrumbCrumb("Improve")) }
+            appState.breadcrumb = crumbs
+            return
+        }
+        // Standalone authoring: the shared root, then the scope/sample (or seeded step) location.
         var crumbs = appState.rootCrumbs
         if let seed, let actionID = seed.actionID {
             let actionName = ((try? modelContext.fetch(FetchDescriptor<FormattingPipeline>())) ?? [])
@@ -155,15 +167,20 @@ struct PromptBuilderView: View {
         VStack(spacing: 0) {
             HSplitView {
                 HStack(spacing: 0) {
-                    scopesMasterPanel
-                    Divider()
-                    samplesSubMasterPanel
-                    Divider()
+                    // "Test mode" applies only to the *document cascade* (real forwarded source
+                    // text → `editOrigin` set, 24.1b): hide the library browser. The Library drill
+                    // (Actions ▸ Improve) keeps the scope/sample browser — you test against samples.
+                    if appState.editOrigin == nil {
+                        scopesMasterPanel
+                        Divider()
+                        samplesSubMasterPanel
+                        Divider()
+                    }
                     sampleWorkArea
                     Divider()
                     promptPanel
                 }
-                .frame(minWidth: 760)
+                .frame(minWidth: appState.editOrigin == nil ? 760 : 540)
 
                 if showImprovePanel {
                     improvePanel
@@ -214,9 +231,13 @@ struct PromptBuilderView: View {
             if isEmbedded { VisualEffectBackground() }
         }
         .onAppear { restoreDraft(); applySeed(); updateBreadcrumb() }
-        .onChange(of: promptText)     { _, t in UserDefaults.standard.set(t, forKey: Self.draftPromptKey) }
+        // Persist the *standalone* (Library) draft only. In a document cascade the prompt +
+        // scratchpad are the forwarded source's, not your global draft — don't leak them.
+        .onChange(of: promptText)     { _, t in
+            if appState.editOrigin == nil { UserDefaults.standard.set(t, forKey: Self.draftPromptKey) }
+        }
         .onChange(of: scratchpadText) { _, t in
-            UserDefaults.standard.set(t, forKey: Self.draftScratchpadKey)
+            if appState.editOrigin == nil { UserDefaults.standard.set(t, forKey: Self.draftScratchpadKey) }
             if settingScratchpadProgrammatically {
                 settingScratchpadProgrammatically = false   // keep the run-to-here provenance
             } else {
@@ -228,7 +249,9 @@ struct PromptBuilderView: View {
         }
         .onChange(of: showImprovePanel) { _, isVisible in
             if isVisible && chatNeedsContextRefresh { resetChat() }
+            updateBreadcrumb()                       // surface/hide the "Improve" crumb (24.1)
         }
+        .onChange(of: promptFocused) { _, _ in updateBreadcrumb() }   // surface/hide the "Prompt" crumb
         .onChange(of: scopeFilter) { _, _ in
             if case .saved = sampleSelection { sampleSelection = .scratchpad }
             testResult = nil; testError = nil
@@ -427,8 +450,13 @@ struct PromptBuilderView: View {
     private var scratchpadWorkArea: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Scratchpad").font(.title3.bold())
-                Text("· not saved").font(.caption).foregroundStyle(.secondary)
+                if appState.editOrigin != nil {
+                    Text("Forwarded Sample").font(.title3.bold())
+                    Text("· \(inContextSampleName)").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Scratchpad").font(.title3.bold())
+                    Text("· not saved").font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 if !scratchpadText.isEmpty {
                     Button("Clear") { scratchpadText = "" }
@@ -445,7 +473,9 @@ struct PromptBuilderView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Temporary — paste or type text to test your prompt.")
+                    Text(appState.editOrigin != nil
+                         ? "Forwarded from the action — testing this step's prompt. Results stay here; your sources aren't changed."
+                         : "Temporary — paste or type text to test your prompt.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -626,6 +656,14 @@ struct PromptBuilderView: View {
         return "🧩 Scratchpad"
     }
 
+    /// Name of the forwarded sample for the in-context breadcrumb (24.1): "Step N text" when
+    /// drilled from a step, else the seed's sample name.
+    private var inContextSampleName: String {
+        if let idx = seed?.stepIndex { return "Step \(idx + 1) text" }
+        let name = seed?.sampleName ?? ""
+        return name.isEmpty ? "forwarded text" : name
+    }
+
     private var subjectChip: some View {
         HStack(spacing: 4) {
             Text("Subject:").font(.caption2).foregroundStyle(.tertiary)
@@ -669,6 +707,7 @@ struct PromptBuilderView: View {
                             .frame(minHeight: 200)
                             .scrollContentBackground(.hidden)
                             .padding(6)
+                            .focused($promptFocused)
 
                         if promptText.isEmpty {
                             Text("Enter your prompt here…")
@@ -1033,6 +1072,9 @@ struct PromptBuilderView: View {
     }
 
     private func restoreDraft() {
+        // Only the standalone (Library) flow restores the saved draft. In a document cascade,
+        // `applySeed` fills the prompt + scratchpad from the forwarded source instead.
+        guard appState.editOrigin == nil else { scratchpadText = ""; return }
         promptText     = UserDefaults.standard.string(forKey: Self.draftPromptKey) ?? ""
         scratchpadText = UserDefaults.standard.string(forKey: Self.draftScratchpadKey) ?? ""
     }

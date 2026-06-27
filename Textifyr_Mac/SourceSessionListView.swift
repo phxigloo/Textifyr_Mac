@@ -312,6 +312,7 @@ private struct SessionRowView: View {
 struct SessionEditView: View {
     let session: SourceSession
     let context: ModelContext
+    var initialShowTrace: Bool = false
     let onDismiss: () -> Void
 
     @EnvironmentObject private var appState: AppState
@@ -352,18 +353,7 @@ struct SessionEditView: View {
                 Text(showingTrace ? "Run Trace" : "Edit Session")
                     .font(.title2).bold()
                 Spacer()
-                if showingTrace {
-                    EmptyView()
-                } else {
-                    if trace != nil {
-                        Button { withAnimation { showingTrace = true } } label: {
-                            Label("Inspect Run", systemImage: "list.bullet.rectangle")
-                        }
-                        .controlSize(.small)
-                        .help("See what each step did to this source in the last run.")
-                    }
-                    stepIndicator
-                }
+                if !showingTrace { stepIndicator }
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -375,6 +365,8 @@ struct SessionEditView: View {
                 RunTraceInspectorView(trace: trace,
                                       onOpenStepEditor: openStepEditor,
                                       onRerunFromHere: rerunFromHere)
+                Divider()
+                traceFooter
             } else if tryState.isActive {
                 tryRunPanel
             } else {
@@ -385,6 +377,7 @@ struct SessionEditView: View {
         .environment(\.wizardDismiss, onDismiss)
         .onAppear {
             trace = RunTraceStore.read(sourceID: session.id)
+            if initialShowTrace, trace != nil { showingTrace = true }
             updateSourceBreadcrumb()
         }
         .onChange(of: showingTrace) { _, _ in updateSourceBreadcrumb() }
@@ -400,17 +393,27 @@ struct SessionEditView: View {
         }
     }
 
-    /// Pushes the source-editor location into the Path Bar (23.4 / #2):
-    /// `Documents ▸ <doc> ▸ <source> ▸ Edit` — or `▸ Run Trace` while inspecting.
+    private var sourceCrumbLabel: String {
+        session.sourceName.isEmpty
+            ? "Source: \(session.captureMethod.displayName)"
+            : "Source: \(session.captureMethod.displayName) – \(session.sourceName)"
+    }
+
+    /// Sets the navigation trail to the source-editor location with typed, restorable crumbs
+    /// (24.1): `Documents ▸ Document: <doc> ▸ Source: … ▸ Edit ▸ [Run Trace]`. Each crumb
+    /// carries a `NavTarget` so clicking it restores that exact spot.
     private func updateSourceBreadcrumb() {
-        let docTitle = session.document?.title ?? ""
-        let srcName = session.sourceName.isEmpty ? session.captureMethod.displayName : session.sourceName
-        appState.breadcrumb = [
-            BreadcrumbCrumb("Documents", targetMode: .documents),
-            BreadcrumbCrumb(docTitle.isEmpty ? "Document" : docTitle, targetMode: .documents),
-            BreadcrumbCrumb(srcName),
-            BreadcrumbCrumb(showingTrace ? "Run Trace" : "Edit"),
+        let docTitle = session.document?.title ?? "Document"
+        var crumbs: [BreadcrumbCrumb] = [
+            BreadcrumbCrumb("Documents", target: .documents),
+            BreadcrumbCrumb("Document: \(docTitle.isEmpty ? "Document" : docTitle)", target: .documents),
+            BreadcrumbCrumb(sourceCrumbLabel, target: .source(id: session.id, showTrace: false)),
+            BreadcrumbCrumb("Edit", target: .source(id: session.id, showTrace: false)),
         ]
+        if showingTrace {
+            crumbs.append(BreadcrumbCrumb("Run Trace", target: .source(id: session.id, showTrace: true)))
+        }
+        appState.breadcrumb = crumbs
     }
 
     @ViewBuilder
@@ -418,6 +421,7 @@ struct SessionEditView: View {
         VStack(spacing: 0) {
             if rebuildHintShown { rebuildHintBar }
             if showFailureBanner { failureBanner }
+            if hasDrillActions { drillBar }
 
             CaptureReviewStages(
                 originalText: session.rawText,
@@ -485,75 +489,99 @@ struct SessionEditView: View {
 
     // MARK: - Failure banner (21.5)
 
-    /// Shown when this source failed in the last workflow run. Names the error in plain
-    /// language, suggests the matching remedy, and offers one-click routes to fix it:
-    /// edit/split here, open the action, or iterate the prompt in the Prompt Builder.
+    /// Info-only: names the error in plain language + the suggested remedy. All *actions*
+    /// live in the unified `drillBar` below it (24.2), so they're never scattered.
     private var failureBanner: some View {
         let remedy = session.failureRemedy
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: remedy.icon)
-                    .foregroundStyle(remedy == .awaitingRerun ? Color.accentColor : .orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(remedy.headline)
-                        .font(.callout.bold())
-                    Text(remedy.guidance)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if !session.lastRunFailureReason.isEmpty {
-                        Text(session.lastRunFailureReason)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(2)
-                    }
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: remedy.icon)
+                .foregroundStyle(remedy == .awaitingRerun ? Color.accentColor : .orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(remedy.headline)
+                    .font(.callout.bold())
+                Text(remedy.guidance)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !session.lastRunFailureReason.isEmpty {
+                    Text(session.lastRunFailureReason)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
                 }
-                Spacer()
             }
-            HStack(spacing: 8) {
-                // For "awaiting re-run" the input is already fixed — re-running happens from
-                // the Sources list, so just offer "Mark Resolved" (this text is final).
-                if trace != nil {
-                    Button("Inspect Run") { withAnimation { showingTrace = true } }
-                        .controlSize(.small)
-                        .help("See each step's input and output, positioned at the failure.")
-                }
-                // Kind-aware route to the failed step's editor (23.3): AI step → Prompt
-                // Builder; deterministic step → the Action editor. Falls back to the generic
-                // routes when we have no structured provenance.
-                if let prov = session.failureProvenance {
-                    // In-context, action-level re-run (23.5): apply the failed action to this
-                    // source's current text and preview before committing.
-                    Button("Run on This Source") { runActionOnSource(prov) }
-                        .controlSize(.small)
-                        .help("Run “\(prov.actionName)” on this source and preview the result.")
-                    if remedy != .awaitingRerun {
-                        switch StepEditRoute.from(kindRaw: prov.stepKind) {
-                        case .promptBuilder:
-                            Button("Improve in Prompt Builder") { improveFailedStep(prov) }
-                                .controlSize(.small)
-                        case .actionEditor:
-                            Button("Open the Action") { openAction(prov.actionID) }
-                                .controlSize(.small)
-                        }
-                    }
-                } else if remedy != .noText && remedy != .awaitingRerun {
-                    Button("Open the Action") { openActions() }
-                        .controlSize(.small)
-                    Button("Improve in Prompt Builder") { openInPromptBuilder() }
-                        .controlSize(.small)
-                }
-                Spacer()
-                Button("Mark Resolved") { markResolved() }
-                    .controlSize(.small)
-                    .help("Clear the flag — this text is final; don't run the action on it.")
-            }
+            Spacer()
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(Color.orange.opacity(0.08))
         .overlay(alignment: .bottom) { Divider() }
         .transition(.opacity)
+    }
+
+    /// Footer for the Run Trace view — keeps the 34pt `.bar` footer chrome consistent with the
+    /// other tools (24.2 follow-up), and gives a clear "back to editing" exit.
+    private var traceFooter: some View {
+        HStack(spacing: 8) {
+            Button("Back to Editing") { withAnimation { showingTrace = false } }
+                .controlSize(.small)
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 34)
+        .background(.bar)
+    }
+
+    // MARK: - Unified drill bar (24.2)
+
+    /// True when this source has somewhere to drill — it ran (has a trace) or it failed.
+    private var hasDrillActions: Bool { trace != nil || session.lastRunFailed }
+
+    /// One consistent "go deeper" bar holding *every* drill action (Inspect Run, the
+    /// action-level re-run, the kind-aware fix route, Mark Resolved) — demarcated from the
+    /// "up" navigation trail (the Path Bar). Replaces the scattered header/banner buttons.
+    private var drillBar: some View {
+        let remedy = session.failureRemedy
+        return HStack(spacing: 8) {
+            Image(systemName: "arrow.down.right.circle")
+                .foregroundStyle(.secondary)
+                .help("Go deeper — inspect or fix this source")
+            Text("Drill in").font(.caption2).foregroundStyle(.tertiary)
+
+            if trace != nil {
+                Button("Inspect Run") { withAnimation { showingTrace = true } }
+                    .controlSize(.small)
+                    .help("See each step's input and output, positioned at the failure.")
+            }
+            if let prov = session.failureProvenance {
+                Button("Run on This Source") { runActionOnSource(prov) }
+                    .controlSize(.small)
+                    .help("Run “\(prov.actionName)” on this source and preview the result.")
+                if remedy != .awaitingRerun {
+                    switch StepEditRoute.from(kindRaw: prov.stepKind) {
+                    case .promptBuilder:
+                        Button("Improve in Prompt Builder") { improveFailedStep(prov) }.controlSize(.small)
+                    case .actionEditor:
+                        Button("Open the Action") { openAction(prov) }.controlSize(.small)
+                    }
+                }
+            } else {
+                // No structured failure (a successful or generic source) — still allow refining
+                // its text against a prompt.
+                Button("Improve in Prompt Builder") { openInPromptBuilder() }.controlSize(.small)
+            }
+
+            Spacer()
+            if session.lastRunFailed {
+                Button("Mark Resolved") { markResolved() }
+                    .controlSize(.small)
+                    .help("Clear the flag — this text is final; don't run the action on it.")
+            }
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 38)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func clearFailureFlag() {
@@ -584,18 +612,38 @@ struct SessionEditView: View {
             sourceName: session.sourceName.isEmpty ? session.captureMethod.displayName : session.sourceName)
     }
 
+    // MARK: - Cascade crumb helpers (24.1)
+
+    private func actionCrumbLabel(stage: String, name: String) -> String {
+        stage.isEmpty ? "Action: \(name)" : "Action: \(stage) – \(name)"
+    }
+
+    /// Appends the Action ▸ Step ▸ Prompt Builder crumbs onto the current source-editor trail
+    /// (24.1), so drilling preserves the full path with restorable targets.
+    private func pushPromptCascade(stage: String, actionID: UUID, actionName: String,
+                                   stepIndex: Int, stepName: String, seed: PromptBuilderSeed) {
+        appState.breadcrumb.append(contentsOf: [
+            BreadcrumbCrumb(actionCrumbLabel(stage: stage, name: actionName), target: .action(id: actionID)),
+            BreadcrumbCrumb("Step \(stepIndex + 1): \(stepName)", target: .promptStep(seed: seed)),
+            BreadcrumbCrumb("Prompt Builder", target: .promptStep(seed: seed)),
+        ])
+    }
+
     private func openActions() {
         setEditOrigin()
+        appState.breadcrumb.append(BreadcrumbCrumb("Actions", target: .mode(.actions)))
         appState.workspaceMode = .actions
         onDismiss()
     }
 
     private func openInPromptBuilder() {
         setEditOrigin()
-        appState.promptBuilderSeed = PromptBuilderSeed(
+        let seed = PromptBuilderSeed(
             prompt: "",
             sampleText: session.rawText,
             sampleName: session.sourceName.isEmpty ? session.captureMethod.displayName : session.sourceName)
+        appState.promptBuilderSeed = seed
+        appState.breadcrumb.append(BreadcrumbCrumb("Prompt Builder", target: .promptStep(seed: seed)))
         appState.workspaceMode = .promptBuilder
         onDismiss()
     }
@@ -607,24 +655,31 @@ struct SessionEditView: View {
         setEditOrigin()
         switch record.editRoute {
         case .promptBuilder:
-            appState.promptBuilderSeed = PromptBuilderSeed(
+            let seed = PromptBuilderSeed(
                 prompt: prompt(forAction: record.actionID, stepIndex: record.stepIndex),
                 actionID: record.actionID,
                 stepIndex: record.stepIndex,
                 sampleText: record.input,
                 sampleName: "Step: \(record.stepName)")
+            appState.promptBuilderSeed = seed
+            pushPromptCascade(stage: record.stage, actionID: record.actionID, actionName: record.actionName,
+                              stepIndex: record.stepIndex, stepName: record.stepName, seed: seed)
             appState.workspaceMode = .promptBuilder
         case .actionEditor:
             appState.actionToOpen = record.actionID
+            appState.breadcrumb.append(BreadcrumbCrumb(actionCrumbLabel(stage: record.stage, name: record.actionName),
+                                                       target: .action(id: record.actionID)))
             appState.workspaceMode = .actions
         }
         onDismiss()
     }
 
     /// Opens a failed deterministic step's action in the Action editor (23.3).
-    private func openAction(_ id: UUID) {
+    private func openAction(_ prov: FailureProvenance) {
         setEditOrigin()
-        appState.actionToOpen = id
+        appState.actionToOpen = prov.actionID
+        appState.breadcrumb.append(BreadcrumbCrumb(actionCrumbLabel(stage: prov.stage, name: prov.actionName),
+                                                   target: .action(id: prov.actionID)))
         appState.workspaceMode = .actions
         onDismiss()
     }
@@ -633,12 +688,15 @@ struct SessionEditView: View {
     /// that failed (pulled from the trace) as the test sample (23.3).
     private func improveFailedStep(_ prov: FailureProvenance) {
         setEditOrigin()
-        appState.promptBuilderSeed = PromptBuilderSeed(
+        let seed = PromptBuilderSeed(
             prompt: prompt(forAction: prov.actionID, stepIndex: prov.stepIndex),
             actionID: prov.actionID,
             stepIndex: prov.stepIndex,
             sampleText: trace?.steps.first(where: { $0.failed })?.input ?? session.rawText,
             sampleName: "Step: \(prov.stepName)")
+        appState.promptBuilderSeed = seed
+        pushPromptCascade(stage: prov.stage, actionID: prov.actionID, actionName: prov.actionName,
+                          stepIndex: prov.stepIndex, stepName: prov.stepName, seed: seed)
         appState.workspaceMode = .promptBuilder
         onDismiss()
     }

@@ -63,26 +63,23 @@ struct ToolColumnHeader: View {
     }
 }
 
-/// The persistent bottom Path Bar (Finder-style). Renders `appState.breadcrumb`;
-/// crumbs with a `targetMode` are clickable hotlinks that switch tools.
-private struct PathBar: View {
+/// The top navigation **jump-bar** (Phase 24.3 — moved up from the bottom Path Bar). Renders
+/// `appState.breadcrumb` as the cascade trail you navigate *up*; crumbs with a `target`/`targetMode`
+/// are clickable hotlinks that restore that exact location.
+private struct JumpBar: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
         BreadcrumbBar(crumbs: appState.breadcrumb.map { crumb in
-            BreadcrumbBar.Crumb(crumb.label, action: crumb.targetMode.map { target in
-                {
-                    appState.promptBuilderSeed = nil
-                    if target == .documents { appState.editOrigin = nil }
-                    appState.workspaceMode = target
-                }
-            })
+            // A crumb is a hotlink if it carries a restore target (24.1) or a legacy mode.
+            let clickable = crumb.target != nil || crumb.targetMode != nil
+            return BreadcrumbBar.Crumb(crumb.label, action: clickable ? { appState.navigate(to: crumb) } : nil)
         })
     }
 }
 
-/// A jump-bar breadcrumb (Phase 22.2). Earlier segments are clickable hotlinks; the
-/// last is the current location.
+/// A jump-bar breadcrumb (Phase 22.2 / 24.3). A leading glyph marks it as the up-navigation
+/// path; earlier segments are clickable hotlinks, the last is the current location.
 struct BreadcrumbBar: View {
     struct Crumb: Identifiable {
         let id = UUID()
@@ -97,6 +94,10 @@ struct BreadcrumbBar: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("Navigation path — click a segment to go back")
             ForEach(Array(crumbs.enumerated()), id: \.element.id) { idx, crumb in
                 if idx > 0 {
                     Image(systemName: "chevron.right")
@@ -115,7 +116,7 @@ struct BreadcrumbBar: View {
         }
         .font(.callout)
         .padding(.horizontal, 12)
-        .frame(height: 32)
+        .frame(height: 34)
         .background(.bar)
     }
 }
@@ -220,6 +221,12 @@ private struct MainNavigationView: View {
         VStack(spacing: 0) {
             ModeSelectorBar()
             Divider()
+            // The navigation trail (24.3) — a top jump-bar, the way you navigate *up* the
+            // cascade (Xcode/Logic placement). Sits right under the entry-point mode bar.
+            if !appState.breadcrumb.isEmpty {
+                JumpBar()
+                Divider()
+            }
             Group {
                 switch appState.workspaceMode {
                 case .documents:     DocumentsWorkspace()
@@ -230,11 +237,6 @@ private struct MainNavigationView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            if !appState.breadcrumb.isEmpty {
-                Divider()
-                PathBar()
-            }
         }
         .collapseWindowToolbar()
         .alert("Error", isPresented: Binding(
@@ -267,37 +269,33 @@ private struct ModeSelectorBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            // Prompt Builder is no longer a co-equal peer (23.6): it's a *step* editor, reached
-            // by drilling into an AI step (or the "Prompt Builder" entry in Actions). The bar
-            // shows only the three top-level surfaces.
-            ForEach(AppState.WorkspaceMode.allCases.filter { $0 != .promptBuilder }, id: \.self) { m in
-                let isSelected = appState.workspaceMode == m
-                Button {
-                    appState.promptBuilderSeed = nil   // a manual tool switch clears any step seed
-                    appState.editOrigin = nil          // …and drops the in-context cascade root (23.4)
-                    appState.workspaceMode = m
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: m.systemImage)
-                            .font(.system(size: 12))
-                        Text(m.title)
-                            .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(m.title)
+            // Documents — the cascade home.
+            Button { openMode(.documents) } label: {
+                modeChip(icon: AppState.WorkspaceMode.documents.systemImage,
+                         title: "Documents",
+                         selected: appState.workspaceMode == .documents)
             }
+            .buttonStyle(.plain)
+            .help("Documents")
+
+            // Library — peer authoring (Actions / Prompts / Workflows), a cascading menu (24.4).
+            // Separated from the Documents cascade so deep-in-a-cascade users aren't tempted out
+            // of context by always-visible tabs.
+            Menu {
+                Button { openMode(.actions) }       label: { Label("Actions",   systemImage: AppState.WorkspaceMode.actions.systemImage) }
+                Button { openMode(.promptBuilder) }  label: { Label("Prompts",   systemImage: AppState.WorkspaceMode.promptBuilder.systemImage) }
+                Button { openMode(.workflows) }      label: { Label("Workflows", systemImage: AppState.WorkspaceMode.workflows.systemImage) }
+            } label: {
+                modeChip(icon: "books.vertical", title: "Library",
+                         selected: appState.workspaceMode != .documents, showsChevron: true)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Library — author actions, prompts, and workflows")
+
             Spacer()
-            // Run Workflow lives here (global) — workflows are independent of the
-            // current document, so this no longer sits in the Documents sidebar footer.
+            // Run Workflow lives here (global) — a top-level *command*, independent of mode.
             WorkflowRunMenu()
         }
         // Left inset clears the hidden-title-bar traffic lights.
@@ -305,6 +303,30 @@ private struct ModeSelectorBar: View {
         .padding(.trailing, 10)
         .frame(height: 38)
         .background(.bar)
+    }
+
+    private func openMode(_ mode: AppState.WorkspaceMode) {
+        appState.promptBuilderSeed = nil   // a manual tool switch clears any step seed
+        appState.editOrigin = nil          // …and drops the in-context cascade root (24.4 = Library)
+        appState.workspaceMode = mode
+    }
+
+    private func modeChip(icon: String, title: String, selected: Bool, showsChevron: Bool = false) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.system(size: 12))
+            Text(title).font(.system(size: 12, weight: selected ? .semibold : .regular))
+            if showsChevron {
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(selected ? Color.accentColor.opacity(0.15) : Color.clear)
+        )
+        .contentShape(Rectangle())
     }
 }
 
@@ -468,8 +490,8 @@ private struct WorkflowsWorkspace: View {
     }
 
     private func updateBreadcrumb() {
-        // Accumulating trail (23.4): the shared root (`🧩 Library` / `📄 doc ▸ source`),
-        // then this tool's location.
+        guard appState.editOrigin == nil else { return }   // in-context cascade owns the trail (24.1)
+        // Standalone: the shared root (`🧩 Library` / `📄 doc ▸ source`), then this tool's location.
         var crumbs = appState.rootCrumbs
         crumbs.append(BreadcrumbCrumb("Workflows"))
         if let wf = selected {

@@ -193,6 +193,14 @@ private struct AppCommands: Commands {
         NotificationCenter.default.post(name: name, object: nil)
     }
 
+    /// Switches the main workspace mode from a menu command, clearing any in-context cascade
+    /// state (manual switch = Library/Documents top level, like the mode bar).
+    private func openMode(_ mode: AppState.WorkspaceMode) {
+        appState.promptBuilderSeed = nil
+        appState.editOrigin = nil
+        appState.workspaceMode = mode
+    }
+
     var body: some Commands {
 
         // MARK: App menu
@@ -301,19 +309,21 @@ private struct AppCommands: Commands {
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(!appState.outputTabIsActive)
             Divider()
-            Button("Prompt Builder") { appState.workspaceMode = .promptBuilder }
-                .keyboardShortcut("p", modifiers: [.command, .shift])
-            Button("Action Editor")  { appState.workspaceMode = .actions }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
-            Divider()
-            Button("Workflows…")     { appState.workspaceMode = .workflows }
-                .keyboardShortcut("w", modifiers: [.command, .shift])
+            Menu("Library") {
+                Button("Workflow Editor") { openMode(.workflows) }
+                    .keyboardShortcut("w", modifiers: [.command, .shift])
+                Button("Action Editor")   { openMode(.actions) }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                Button("Prompt Editor")   { openMode(.promptBuilder) }
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
+            }
+            Button("Documents") { openMode(.documents) }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
         }
 
         // MARK: View menu
         CommandMenu("View") {
-            Button("Show/Hide Sidebar")         { post(.toggleSidebar) }
-            Button("Show/Hide Action Inspector") { post(.toggleInspector) }
+            Button("Show/Hide Sidebar") { post(.toggleSidebar) }
         }
 
         // MARK: Help menu

@@ -45,7 +45,9 @@ struct PipelineEditorWindowView: View {
 
     @StateObject private var windowState = PipelineWindowState()
 
-    @State private var selectedScope: PipelineScope = .output
+    @State private var selectedScope: PipelineScope = PipelineScope.allCases.first ?? .postCapture
+    /// Suppresses default-first-action selection while restoring a specific action (24.3 #1).
+    @State private var isRestoringAction = false
     @State private var selectedPipelineID: UUID?
     @State private var pendingPipelineID: UUID?
     @State private var showDiscardAlert = false
@@ -116,11 +118,20 @@ struct PipelineEditorWindowView: View {
             Text("Save changes to \"\(name)\" before switching?")
         }
         .onChange(of: selectedScope) { _, _ in
-            requestSwitch(to: nil)
+            // Default-select the first action in the new scope, unless we're restoring a
+            // specific one (in which case the restore selects it).
+            if !isRestoringAction { requestSwitch(to: scopedPipelines.first?.id) }
             updateBreadcrumb()
         }
         .onChange(of: selectedPipelineID) { _, _ in updateBreadcrumb() }
-        .onAppear { updateBreadcrumb(); openRequestedActionIfNeeded() }
+        .onAppear {
+            updateBreadcrumb()
+            if appState.actionToOpen != nil {
+                openRequestedActionIfNeeded()
+            } else if selectedPipelineID == nil {
+                requestSwitch(to: scopedPipelines.first?.id)   // default-select the first action
+            }
+        }
         .onChange(of: appState.actionToOpen) { _, _ in openRequestedActionIfNeeded() }
     }
 
@@ -130,13 +141,21 @@ struct PipelineEditorWindowView: View {
         guard let id = appState.actionToOpen else { return }
         appState.actionToOpen = nil
         guard let pipeline = allPipelines.first(where: { $0.id == id }) else { return }
-        if selectedScope != pipeline.scope { selectedScope = pipeline.scope }
-        requestSwitch(to: id)
+        // Setting the scope fires `onChange(selectedScope)`; the `isRestoringAction` flag stops it
+        // from default-selecting the first action, and the deferred `requestSwitch` selects the
+        // requested one *after* the scope settles (24.1 bug B).
+        isRestoringAction = true
+        selectedScope = pipeline.scope
+        Task { @MainActor in
+            requestSwitch(to: id)
+            isRestoringAction = false
+        }
     }
 
     private func updateBreadcrumb() {
-        // Accumulating trail (23.4): `📄 doc ▸ source` (drilled in from a source) or
-        // `🧩 Library` (authoring), then this tool's location.
+        // In an in-context cascade the trail is owned by the drill (24.1) — don't overwrite it.
+        guard appState.editOrigin == nil else { return }
+        // Standalone/Library authoring: `🧩 Library ▸ <scope> ▸ <action>`.
         var crumbs = appState.rootCrumbs
         crumbs.append(BreadcrumbCrumb(selectedScope.displayName))
         if let p = selectedPipeline { crumbs.append(BreadcrumbCrumb(p.name)) }
