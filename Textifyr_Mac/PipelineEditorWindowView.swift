@@ -55,6 +55,9 @@ struct PipelineEditorWindowView: View {
     @State private var showDeleteConfirmation = false
     @State private var pipelineToDelete: FormattingPipeline?
     @State private var dropTargetScope: PipelineScope?
+    /// Workflows whose stages were cleared because they referenced a just-deleted action.
+    @State private var affectedWorkflows: [String] = []
+    @State private var showAffectedAlert = false
 
     private var scopedPipelines: [FormattingPipeline] {
         allPipelines.filter {
@@ -94,6 +97,13 @@ struct PipelineEditorWindowView: View {
         } message: {
             let name = pipelineToDelete?.name ?? "this action"
             Text("Delete \"\(name)\"? This cannot be undone.")
+        }
+        .alert("Workflows Updated", isPresented: $showAffectedAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("This action was used by \(affectedWorkflows.count) workflow(s): "
+                 + affectedWorkflows.joined(separator: ", ")
+                 + ". Those stages were cleared so the workflow won't silently skip a missing action.")
         }
         .confirmationDialog(
             "Unsaved Changes",
@@ -407,8 +417,15 @@ struct PipelineEditorWindowView: View {
         if selectedPipelineID == pipeline.id {
             switchToPipeline(id: nil)
         }
+        // Clear any workflow stages that pointed at this action so no workflow is
+        // left with a dangling reference it would silently skip when run.
+        let affected = WorkflowIntegrity.clearReferences(to: pipeline.id, in: modelContext)
         modelContext.delete(pipeline)
         try? modelContext.save()
+        if !affected.isEmpty {
+            affectedWorkflows = affected
+            showAffectedAlert = true
+        }
     }
 
     private func setHidden(_ hidden: Bool, pipeline: FormattingPipeline) {

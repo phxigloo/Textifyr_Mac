@@ -23,6 +23,9 @@ struct WorkflowManagerView: View {
     @State private var selectedID: UUID?
     @State private var editing: WorkflowPreset?
     @State private var showEditor = false
+    @State private var integrityMessage = ""
+    @State private var showIntegrity = false
+    @State private var integrityHasDangling = false
 
     private var selected: WorkflowPreset? { workflows.first { $0.id == selectedID } }
 
@@ -62,6 +65,33 @@ struct WorkflowManagerView: View {
         .sheet(isPresented: $showEditor) {
             WorkflowSetupSheet(preset: editing)
         }
+        .alert("Workflow Integrity", isPresented: $showIntegrity) {
+            if integrityHasDangling {
+                Button("Repair") {
+                    WorkflowIntegrity.repairDangling(in: modelContext)
+                    try? modelContext.save()
+                }
+                Button("Later", role: .cancel) {}
+            } else {
+                Button("OK", role: .cancel) {}
+            }
+        } message: {
+            Text(integrityMessage)
+        }
+    }
+
+    private func checkIntegrity() {
+        let dangling = WorkflowIntegrity.danglingStages(in: modelContext)
+        integrityHasDangling = !dangling.isEmpty
+        if dangling.isEmpty {
+            integrityMessage = "All workflows are intact — every stage points to an existing action."
+        } else {
+            let lines = dangling.map { "• \($0.workflowName): \($0.stageLabel)" }.joined(separator: "\n")
+            integrityMessage = "These workflow stages reference a deleted action and will be skipped when run:\n\n"
+                + lines
+                + "\n\nRepair clears these references."
+        }
+        showIntegrity = true
     }
 
     // MARK: - Footer (+/- · Edit · Run)
@@ -78,6 +108,13 @@ struct WorkflowManagerView: View {
                 Image(systemName: "minus").font(.system(size: 15, weight: .semibold))
             }
             .buttonStyle(.borderless).disabled(selected == nil).help("Delete selected workflow")
+
+            Button { checkIntegrity() } label: {
+                Image(systemName: "checkmark.shield")
+            }
+            .buttonStyle(.borderless)
+            .disabled(workflows.isEmpty)
+            .help("Check workflows for missing (deleted) actions")
 
             Spacer()
 

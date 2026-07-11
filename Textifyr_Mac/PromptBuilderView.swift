@@ -177,6 +177,7 @@ struct PromptBuilderView: View {
                         Divider()
                     }
                     sampleWorkArea
+                        .frame(minWidth: 220, idealWidth: 300, maxWidth: 340)
                     Divider()
                     promptPanel
                 }
@@ -271,7 +272,14 @@ struct PromptBuilderView: View {
             LoadFromActionSheet { loaded in promptText = loaded }
         }
         .sheet(isPresented: $showingSaveSheet) {
-            SaveToPipelineSheet(promptText: promptText)
+            SaveToPipelineSheet(promptText: promptText) { pipelineID, _ in
+                // Land the user on the action they just saved into, instead of
+                // dropping back onto the Prompt Builder (item #6 flow fix).
+                appState.editOrigin = nil
+                appState.actionToOpen = pipelineID
+                appState.workspaceMode = .actions
+                if !isEmbedded { dismiss() }
+            }
         }
     }
 
@@ -454,7 +462,7 @@ struct PromptBuilderView: View {
                     Text("Forwarded Sample").font(.title3.bold())
                     Text("· \(inContextSampleName)").font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("Scratchpad").font(.title3.bold())
+                    Text("Selected Sample · Scratchpad").font(.title3.bold())
                     Text("· not saved").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -641,7 +649,7 @@ struct PromptBuilderView: View {
         )
     }
 
-    // MARK: - Prompt panel (right, fixed 320 pt)
+    // MARK: - Prompt panel (right, flexible — takes priority over the sample column)
 
     /// Persistent "Subject:" chip (23.5) — makes clear *what* Run Prompt tests against, and
     /// that the Prompt Builder is **Test-only** (authoring): `📄 <source>` when drilled in
@@ -755,7 +763,8 @@ struct PromptBuilderView: View {
             .padding(.vertical, 12)
             .background(.bar)
         }
-        .frame(width: 320)
+        .frame(minWidth: 380, maxWidth: .infinity)
+        .layoutPriority(1)
     }
 
     // MARK: - AI Improvement chat panel (slide in from right)
@@ -1373,6 +1382,9 @@ private struct LoadFromActionSheet: View {
 
 private struct SaveToPipelineSheet: View {
     let promptText: String
+    /// Called with the action (pipeline) that was saved into, so the caller can
+    /// navigate there. Fires just before the sheet dismisses.
+    var onSaved: (UUID, PipelineScope) -> Void = { _, _ in }
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \FormattingPipeline.name) private var allPipelines: [FormattingPipeline]
@@ -1562,10 +1574,12 @@ private struct SaveToPipelineSheet: View {
     }
 
     private func performSave() {
+        var savedPipelineID: UUID?
         switch saveMode {
         case .updateStep:
             guard let step = selectedStep else { return }
             step.prompt = promptText
+            savedPipelineID = selectedPipeline?.id
             try? modelContext.save()
 
         case .addStep:
@@ -1577,6 +1591,7 @@ private struct SaveToPipelineSheet: View {
             modelContext.insert(step)
             step.pipeline  = pipeline
             pipeline.steps = (pipeline.steps ?? []) + [step]
+            savedPipelineID = pipeline.id
             try? modelContext.save()
 
         case .newPipeline:
@@ -1592,8 +1607,10 @@ private struct SaveToPipelineSheet: View {
             modelContext.insert(step)
             step.pipeline  = pipeline
             pipeline.steps = [step]
+            savedPipelineID = pipeline.id
             try? modelContext.save()
         }
+        if let savedPipelineID { onSaved(savedPipelineID, scope) }
         dismiss()
     }
 }
