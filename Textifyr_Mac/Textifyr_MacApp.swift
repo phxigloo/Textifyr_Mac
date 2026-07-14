@@ -34,6 +34,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    /// Spin up the open/save panel XPC service before the user needs it.
+    ///
+    /// A sandboxed app doesn't draw the file panel itself: AppKit renders it out-of-process in
+    /// `com.apple.appkit.xpc.openAndSavePanelService`, which is spawned lazily on the first
+    /// `NSOpenPanel()` of the session. That made the first "Choose File…" visibly lag.
+    /// Creating one throwaway panel absorbs the spawn cost.
+    ///
+    /// Measured (Debug, M-series): first panel click→visible 380ms → 149ms.
+    /// The warm-up itself blocks the main thread ~325ms and NSOpenPanel is main-thread-only,
+    /// so it is deferred until after the window is up rather than run during launch.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            _ = NSOpenPanel()
+        }
+    }
+
     @objc func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent: NSAppleEventDescriptor) {
         guard let urlString = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
               let url = URL(string: urlString) else { return }

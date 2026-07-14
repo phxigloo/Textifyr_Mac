@@ -63,6 +63,25 @@ struct ToolColumnHeader: View {
     }
 }
 
+/// Footer strip closing every tool column and wizard step: a 34pt `.bar` bar of small controls
+/// under a divider. The counterpart to `ToolColumnHeader` (Phase 22.7) — together they are the
+/// chrome each capture wizard floats its content between.
+struct ToolColumnFooter<Content: View>: View {
+    private let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 8) { content }
+                .controlSize(.small)
+                .padding(.horizontal, 20)
+                .frame(height: 34)
+                .background(.bar)
+        }
+    }
+}
+
 /// The top navigation **jump-bar** (Phase 24.3 — moved up from the bottom Path Bar). Renders
 /// `appState.breadcrumb` as the cascade trail you navigate *up*; crumbs with a `target`/`targetMode`
 /// are clickable hotlinks that restore that exact location.
@@ -282,8 +301,8 @@ private struct ModeSelectorBar: View {
             // Separated from the Documents cascade so deep-in-a-cascade users aren't tempted out
             // of context by always-visible tabs.
             Menu {
-                Button { openMode(.actions) }       label: { Label("Actions",   systemImage: AppState.WorkspaceMode.actions.systemImage) }
                 Button { openMode(.promptBuilder) }  label: { Label("Prompts",   systemImage: AppState.WorkspaceMode.promptBuilder.systemImage) }
+                Button { openMode(.actions) }       label: { Label("Actions",   systemImage: AppState.WorkspaceMode.actions.systemImage) }
                 Button { openMode(.workflows) }      label: { Label("Workflows", systemImage: AppState.WorkspaceMode.workflows.systemImage) }
             } label: {
                 modeChip(icon: "books.vertical", title: "Library",
@@ -422,6 +441,9 @@ private struct WorkflowsWorkspace: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \WorkflowPreset.sortOrder) private var workflows: [WorkflowPreset]
     @State private var selectedID: UUID?
+    @State private var integrityMessage = ""
+    @State private var showIntegrity = false
+    @State private var integrityHasDangling = false
 
     private var selected: WorkflowPreset? { workflows.first { $0.id == selectedID } }
 
@@ -460,6 +482,13 @@ private struct WorkflowsWorkspace: View {
                     }
                     .buttonStyle(.borderless).disabled(selected == nil).help("Delete selected workflow")
 
+                    Button { checkIntegrity() } label: {
+                        Image(systemName: "checkmark.shield")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(workflows.isEmpty)
+                    .help("Check workflows for missing (deleted) actions")
+
                     Spacer()
                 }
                 .padding(.horizontal, 10)
@@ -487,6 +516,33 @@ private struct WorkflowsWorkspace: View {
         .background(VisualEffectBackground())
         .onAppear { updateBreadcrumb() }
         .onChange(of: selectedID) { _, _ in updateBreadcrumb() }
+        .alert("Workflow Integrity", isPresented: $showIntegrity) {
+            if integrityHasDangling {
+                Button("Repair") {
+                    WorkflowIntegrity.repairDangling(in: modelContext)
+                    try? modelContext.save()
+                }
+                Button("Later", role: .cancel) {}
+            } else {
+                Button("OK", role: .cancel) {}
+            }
+        } message: {
+            Text(integrityMessage)
+        }
+    }
+
+    private func checkIntegrity() {
+        let dangling = WorkflowIntegrity.danglingStages(in: modelContext)
+        integrityHasDangling = !dangling.isEmpty
+        if dangling.isEmpty {
+            integrityMessage = "All workflows are intact — every stage points to an existing action."
+        } else {
+            let lines = dangling.map { "• \($0.workflowName): \($0.stageLabel)" }.joined(separator: "\n")
+            integrityMessage = "These workflow stages reference a deleted action and will be skipped when run:\n\n"
+                + lines
+                + "\n\nRepair clears these references."
+        }
+        showIntegrity = true
     }
 
     private func updateBreadcrumb() {

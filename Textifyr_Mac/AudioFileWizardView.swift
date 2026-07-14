@@ -46,16 +46,27 @@ struct AudioFileWizardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            ToolColumnHeader(title)
             stepContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             restorePostCapturePipeline()
+            updateWizardBreadcrumb()
             if let url = appState.pendingSharedAudioURL {
                 appState.pendingSharedAudioURL = nil
                 Task { await captureVM.processAudioFile(url) }
+            }
+        }
+        .onChange(of: wizardStep) { _, _ in updateWizardBreadcrumb() }
+        .onDisappear {
+            // Hand the trail back to the document (mirrors SessionEditView) — unless a crumb
+            // took us into another tool, which sets its own trail.
+            if appState.workspaceMode == .documents {
+                appState.breadcrumb = [
+                    BreadcrumbCrumb("Documents", targetMode: .documents),
+                    BreadcrumbCrumb(captureVM.document.title, targetMode: .documents),
+                ]
             }
         }
         .onChange(of: captureVM.phase) { _, phase in handlePhaseChange(phase) }
@@ -79,37 +90,31 @@ struct AudioFileWizardView: View {
         selectedPostCapturePipelineID = postCapturePipelines.first { $0.name == name }?.id
     }
 
-    // MARK: - Header
+    // MARK: - Chrome
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: captureMethod.systemImage)
-                .foregroundStyle(.tint)
-            Text(captureMethod == .videoAudio ? "Import Video" : "Import Audio File")
-                .font(.title2).bold()
-            Spacer()
-            stepIndicator
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
+    private var title: String {
+        captureMethod == .videoAudio ? "Import Video" : "Import Audio File"
     }
 
-    private var stepIndicator: some View {
-        let current = wizardStep == .settings ? 0 : reviewStepIndex
-        return HStack(spacing: 0) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(current >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: current == i ? 10 : 7, height: current == i ? 10 : 7)
-                if i < 2 {
-                    Rectangle()
-                        .fill(current > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 32, height: 2)
-                }
-            }
+    /// The wizard's step lives in the jump-bar, not in a 1-2-3 dot indicator (Phase 22.8):
+    /// `Documents ▸ Document: <doc> ▸ Add Source ▸ Audio File [▸ Review]`.
+    ///
+    /// The wizard's own crumbs are plain text rather than hotlinks on purpose. Landing back on
+    /// "Add Source" or the settings step means abandoning the capture — going back from Review
+    /// *deletes the transcribed session* (see `backFromReview`). That belongs behind the
+    /// explicit Back/Cancel buttons, not behind a one-click crumb.
+    private func updateWizardBreadcrumb() {
+        let docTitle = captureVM.document.title
+        var crumbs: [BreadcrumbCrumb] = [
+            BreadcrumbCrumb("Documents", target: .documents),
+            BreadcrumbCrumb("Document: \(docTitle.isEmpty ? "Document" : docTitle)", target: .documents),
+            BreadcrumbCrumb("Add Source"),
+            BreadcrumbCrumb(captureMethod.displayName),
+        ]
+        if wizardStep == .review {
+            crumbs.append(BreadcrumbCrumb("Review"))
         }
-        .animation(.easeInOut(duration: 0.2), value: current)
+        appState.breadcrumb = crumbs
     }
 
     private var stepTransition: AnyTransition {
@@ -296,9 +301,7 @@ struct AudioFileWizardView: View {
                 .animation(.easeInOut(duration: 0.2), value: postCaptureError)
             }
 
-            Divider()
-
-            HStack {
+            ToolColumnFooter {
                 Button("Cancel") { cancel() }.buttonStyle(.bordered)
                 if captureVM.phase == .identifySpeakers {
                     Button("Skip") { captureVM.skipSpeakerRename() }.buttonStyle(.bordered)
@@ -306,8 +309,6 @@ struct AudioFileWizardView: View {
                 Spacer()
                 settingsActionButton
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
         }
         .fileImporter(
             isPresented: $showFileImporter,

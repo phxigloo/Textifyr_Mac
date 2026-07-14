@@ -583,6 +583,7 @@ struct SmartVisionInputView: View {
             Text(label)
                 .font(.caption)
                 .multilineTextAlignment(.center)
+            
                 .lineLimit(2)
                 .foregroundStyle(dimmed ? Color.secondary : Color.primary)
         }

@@ -14,6 +14,7 @@ struct PipelineStepRow: View {
     @State private var config: TextTransformConfig
     @State private var verify: StepVerifyConfig
     @State private var extract: ExtractFieldsConfig
+    @State private var showingPromptLibrary = false
 
     private var stepIndex: Int {
         viewModel.steps.firstIndex(where: { $0.id == step.id }) ?? 0
@@ -74,6 +75,12 @@ struct PipelineStepRow: View {
             // Sync back if AI improvement changed the step in the view model
             if newValue != prompt { prompt = newValue }
         }
+        .sheet(isPresented: $showingPromptLibrary) {
+            LoadExistingPromptSheet(scopeFilter: viewModel.pipeline.scope) { loaded in
+                prompt = loaded
+                savePrompt()
+            }
+        }
     }
 
     /// Navigates (in-window, no popup — Phase 22.2) to the Prompt Builder, seeded with
@@ -96,6 +103,10 @@ struct PipelineStepRow: View {
             ForEach(StepUIKind.allCases) { k in
                 Button { applyUIKind(k) } label: { Label(k.label, systemImage: k.icon) }
             }
+            Divider()
+            Button { openPromptLibrary() } label: {
+                Label("Prompt Library…", systemImage: "books.vertical")
+            }
         } label: {
             Label(currentUIKind.label, systemImage: currentUIKind.icon)
                 .font(.caption)
@@ -104,6 +115,13 @@ struct PipelineStepRow: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Choose whether this step uses AI or a deterministic text transform")
+    }
+
+    /// Makes this an AI step (if it isn't) and opens the saved-prompt library, filtered to
+    /// the action's scope, to fill the step's prompt. (Phase 25 — library access from a step.)
+    private func openPromptLibrary() {
+        if kind != .aiPrompt { applyUIKind(.aiPrompt) }
+        showingPromptLibrary = true
     }
 
     private func applyUIKind(_ newKind: StepUIKind) {

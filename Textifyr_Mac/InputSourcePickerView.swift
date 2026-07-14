@@ -70,17 +70,11 @@ struct InputSourcePickerView: View {
                 .padding(24)
             }
 
-            Divider()
-
-            HStack {
+            ToolColumnFooter {
                 Button("Cancel") { onDismiss() }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
                 Spacer()
             }
-            .padding(.horizontal, 20)
-            .frame(height: 34)
-            .background(.bar)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

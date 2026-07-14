@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppKit
 import UniformTypeIdentifiers
 import TextifyrModels
 import TextifyrServices
@@ -20,8 +21,6 @@ struct WorkflowLaunchModifier: ViewModifier {
     @Environment(\.modelContext) private var modelContext
 
     @State private var runRequest: WorkflowRunRequest?
-    @State private var awaitingFiles: WorkflowPreset?
-    @State private var showFileImporter = false
     @State private var pendingLargeBatch: WorkflowRunRequest?
 
     private static let importTypes: [UTType] =
@@ -32,20 +31,6 @@ struct WorkflowLaunchModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onChange(of: appState.workflowToLaunch?.id) { _, _ in handleLaunch() }
-            .fileImporter(isPresented: $showFileImporter,
-                          allowedContentTypes: Self.importTypes,
-                          allowsMultipleSelection: true) { result in
-                let preset = awaitingFiles
-                awaitingFiles = nil
-                guard let preset, let urls = try? result.get(), !urls.isEmpty else { return }
-                let req = WorkflowRunRequest(preset: preset, fileURLs: urls)
-                if urls.count >= Self.largeBatchThreshold,
-                   !UserDefaults.standard.bool(forKey: Self.suppressLargeBatchKey) {
-                    pendingLargeBatch = req
-                } else {
-                    runRequest = req
-                }
-            }
             .confirmationDialog(
                 "Process \(pendingLargeBatch?.fileURLs.count ?? 0) files?",
                 isPresented: Binding(get: { pendingLargeBatch != nil }, set: { _ in }),
@@ -81,8 +66,7 @@ struct WorkflowLaunchModifier: ViewModifier {
         guard let wf = appState.workflowToLaunch else { return }
         appState.workflowToLaunch = nil
         if wf.usesFileInput {
-            awaitingFiles = wf
-            showFileImporter = true
+            chooseFiles(for: wf)
         } else {
             // Live capture: create the document, select it, remember the workflow,
             // and open the capture wizard. SourcesTabView resumes the chain when the
@@ -94,6 +78,31 @@ struct WorkflowLaunchModifier: ViewModifier {
             appState.selectedDocument = doc
             appState.liveWorkflowPending = LiveWorkflowRequest(presetID: wf.id, documentID: doc.id)
             appState.pendingSourceMethod = wf.inputMethod
+        }
+    }
+
+    /// Deliberately NSOpenPanel, not SwiftUI's `.fileImporter`. This modifier is attached at
+    /// the ContentView root, and an ancestor `.fileImporter` silently suppresses every
+    /// `.fileImporter` a descendant declares — which is every capture wizard's "Choose File…".
+    /// Only one `.fileImporter` in an ancestor chain ever presents, so this one must not exist.
+    private func chooseFiles(for preset: WorkflowPreset) {
+        // Off the current update pass: runModal() spins its own loop.
+        DispatchQueue.main.async {
+            let panel = NSOpenPanel()
+            panel.allowedContentTypes = Self.importTypes
+            panel.allowsMultipleSelection = true
+            panel.canChooseDirectories = false
+            panel.canChooseFiles = true
+            panel.message = "Choose files for “\(preset.name)”"
+
+            guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+            let req = WorkflowRunRequest(preset: preset, fileURLs: panel.urls)
+            if panel.urls.count >= Self.largeBatchThreshold,
+               !UserDefaults.standard.bool(forKey: Self.suppressLargeBatchKey) {
+                pendingLargeBatch = req
+            } else {
+                runRequest = req
+            }
         }
     }
 }

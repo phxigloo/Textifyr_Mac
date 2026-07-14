@@ -11,12 +11,6 @@ private enum SampleSelection: Hashable {
     case saved(UUID)
 }
 
-/// Selection in the Prompt Builder scopes master ("All" + each pipeline scope).
-private enum ScopeChoice: Hashable {
-    case all
-    case scope(PipelineScope)
-}
-
 
 // MARK: - Main view
 
@@ -31,6 +25,7 @@ struct PromptBuilderView: View {
     @Environment(\.dismiss) private var dismiss
 
     @Query(sort: \PromptSample.sortOrder) private var allSamples: [PromptSample]
+    @Query(sort: \SavedPrompt.sortOrder) private var allSavedPrompts: [SavedPrompt]
 
     @State private var promptText: String = ""
     @State private var sampleSelection: SampleSelection? = .scratchpad
@@ -56,8 +51,19 @@ struct PromptBuilderView: View {
     @State private var editingText: String = ""
     @State private var editingScope: PipelineScope = .source
 
-    @State private var showingLoadSheet = false
-    @State private var showingSaveSheet = false
+    @State private var showingLoadPromptSheet    = false   // pick from the SavedPrompt library
+    @State private var showingSaveLibrarySheet   = false   // save the current prompt to the library
+    @State private var showingImportActionSheet  = false   // secondary: pull a prompt out of an action step
+
+    /// Where the Prompt Builder was opened from — drives which chrome shows and where Save goes.
+    /// `.documentSource` (a drilled-in source, `editOrigin` set) and `.action` (a step's Improve
+    /// button, seed carries `actionID`) both already know the scope; only `.library` needs to pick it.
+    private enum Origin { case library, action, documentSource }
+    private var origin: Origin {
+        if appState.editOrigin != nil { return .documentSource }
+        if seed?.actionID != nil { return .action }
+        return .library
+    }
 
     // "Run up to here" context (set from a seed when improving a mid-chain step).
     @State private var rthActionID: UUID? = nil
@@ -148,7 +154,9 @@ struct PromptBuilderView: View {
         if let seed, let actionID = seed.actionID {
             let actionName = ((try? modelContext.fetch(FetchDescriptor<FormattingPipeline>())) ?? [])
                 .first(where: { $0.id == actionID })?.name ?? "Action"
-            crumbs.append(BreadcrumbCrumb(actionName, targetMode: .actions))
+            // Carry a NavTarget so clicking the crumb re-selects *this* action (its scope +
+            // selection), not just the Actions mode with the first action defaulted. (Fix c)
+            crumbs.append(BreadcrumbCrumb(actionName, target: .action(id: actionID)))
             if let idx = seed.stepIndex { crumbs.append(BreadcrumbCrumb("Step \(idx + 1)")) }
             crumbs.append(BreadcrumbCrumb(seed.openImprove ? "Improve" : "Prompt Builder"))
         } else {
@@ -165,67 +173,36 @@ struct PromptBuilderView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HSplitView {
-                HStack(spacing: 0) {
-                    // "Test mode" applies only to the *document cascade* (real forwarded source
-                    // text → `editOrigin` set, 24.1b): hide the library browser. The Library drill
-                    // (Actions ▸ Improve) keeps the scope/sample browser — you test against samples.
-                    if appState.editOrigin == nil {
-                        scopesMasterPanel
-                        Divider()
-                        samplesSubMasterPanel
-                        Divider()
+            GeometryReader { geo in
+                HSplitView {
+                    // Test bench ≈ one third of the available width (resizable via the splitter).
+                    testBench
+                        .frame(minWidth: 320,
+                               idealWidth: max(320, geo.size.width * 0.33),
+                               maxWidth: max(380, geo.size.width * 0.45))
+                    promptPane
+                        .frame(minWidth: 380, maxWidth: .infinity)
+                        .layoutPriority(1)
+
+                    if showImprovePanel {
+                        improvePanel
+                            .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
                     }
-                    sampleWorkArea
-                        .frame(minWidth: 220, idealWidth: 300, maxWidth: 340)
-                    Divider()
-                    promptPanel
                 }
-                .frame(minWidth: appState.editOrigin == nil ? 760 : 540)
-
-                if showImprovePanel {
-                    improvePanel
-                        .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
-                }
+                .frame(width: geo.size.width, height: geo.size.height)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            Divider()
-
-            HStack(spacing: 12) {
-                if !isEmbedded {
+            if !isEmbedded {
+                Divider()
+                HStack {
                     Button("Cancel") { dismiss() }
                         .buttonStyle(.bordered)
+                    Spacer()
                 }
-                if let idx = rthStepIndex, idx > 0 {
-                    Button { runUpToHere() } label: {
-                        Label("Load step input", systemImage: "arrow.down.to.line")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(isRunning || activeText.isEmpty)
-                    .help("Run the earlier steps of this action on the selected sample and put the result in the Scratchpad — that is the real input to the step you're improving.")
-                }
-
-                Label(inputProvenance, systemImage: "arrow.right.to.line")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .help("The text the prompt will run on.")
-
-                if let v = stepVerify, v.enabled {
-                    Label(verifySummary(v), systemImage: "checkmark.shield")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .help("This step's “Check the result” settings from the Action Editor.")
-                }
-
-                Spacer()
-                runToolbarContent
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.bar)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(.bar)
         }
         .frame(minWidth: isEmbedded ? 720 : 1000, minHeight: isEmbedded ? 460 : 580)
         .background {
@@ -268,18 +245,19 @@ struct PromptBuilderView: View {
             }
             updateBreadcrumb()
         }
-        .sheet(isPresented: $showingLoadSheet) {
-            LoadFromActionSheet { loaded in promptText = loaded }
-        }
-        .sheet(isPresented: $showingSaveSheet) {
-            SaveToPipelineSheet(promptText: promptText) { pipelineID, _ in
-                // Land the user on the action they just saved into, instead of
-                // dropping back onto the Prompt Builder (item #6 flow fix).
-                appState.editOrigin = nil
-                appState.actionToOpen = pipelineID
-                appState.workspaceMode = .actions
-                if !isEmbedded { dismiss() }
+        .sheet(isPresented: $showingLoadPromptSheet) {
+            // Library origin browses all prompts; Action/Wizard pre-filter to the action's scope.
+            LoadExistingPromptSheet(scopeFilter: origin == .library ? nil : scopeFilter) { loaded in
+                promptText = loaded
             }
+        }
+        .sheet(isPresented: $showingSaveLibrarySheet) {
+            SavePromptToLibrarySheet(promptText: promptText,
+                                     initialScope: scopeFilter,
+                                     nextSortOrder: allSavedPrompts.count)
+        }
+        .sheet(isPresented: $showingImportActionSheet) {
+            LoadFromActionSheet { loaded in promptText = loaded }
         }
     }
 
@@ -318,57 +296,58 @@ struct PromptBuilderView: View {
         return ""
     }
 
-    // MARK: - Scopes master (left, ~150 pt) — mirrors the Actions scope column
+    // MARK: - Test bench (left pane): input editor on top, scope pop-up, samples list below
 
-    private func scopeIcon(_ s: PipelineScope) -> String {
-        switch s {
-        case .postCapture: return "wand.and.sparkles"
-        case .source:      return "text.document"
-        case .output:      return "doc.on.doc"
-        }
-    }
-
-    private var scopeChoiceBinding: Binding<ScopeChoice?> {
-        Binding(
-            get: { scopeFilter.map(ScopeChoice.scope) ?? .all },
-            set: { choice in
-                switch choice {
-                case .scope(let s): scopeFilter = s
-                default:            scopeFilter = nil
-                }
-            }
-        )
-    }
-
-    private var scopesMasterPanel: some View {
+    /// The left pane. The selected input editor fills the top; below it (except in the
+    /// document-source cascade, where the input is the forwarded text and there's nothing
+    /// to pick) sit the optional Scope pop-up — shown only for the Library origin, since
+    /// Action/Wizard already know the scope — and the Samples list.
+    private var testBench: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Scopes").font(.title3.bold())
-                Spacer()
-            }
-            .frame(height: 44)
-            .padding(.horizontal, 12)
-            .background(.bar)
+            sampleWorkArea
+                .frame(maxHeight: .infinity)
 
-            Divider()
-
-            List(selection: scopeChoiceBinding) {
-                Label("All Scopes", systemImage: "square.stack.3d.up")
-                    .tag(ScopeChoice.all)
-                ForEach(PipelineScope.allCases, id: \.self) { s in
-                    Label(s.displayName, systemImage: scopeIcon(s))
-                        .tag(ScopeChoice.scope(s))
+            if origin != .documentSource {
+                Divider()
+                if origin == .library {
+                    scopeTagRow
+                    Divider()
                 }
+                // Scope + Samples take roughly the lower half of the column.
+                samplesList
+                    .frame(maxHeight: .infinity)
             }
-            .listStyle(.inset)
-            .modifier(MasterListCard())
         }
-        .frame(width: 168)
     }
 
-    // MARK: - Samples sub-master (~200 pt, opaque) — like the Actions action list
+    private var scopeTagBinding: Binding<PipelineScope?> {
+        Binding(get: { scopeFilter }, set: { scopeFilter = $0 })
+    }
 
-    private var samplesSubMasterPanel: some View {
+    /// Optional scope filter (Library only). Scope is a soft tag, not a required category —
+    /// default "Any". Filters the Samples list and pre-fills the tag when saving to the library.
+    private var scopeTagRow: some View {
+        HStack(spacing: 8) {
+            Text("Scope").font(.caption).foregroundStyle(.secondary)
+            Picker("", selection: scopeTagBinding) {
+                Text("Any").tag(nil as PipelineScope?)
+                ForEach(PipelineScope.allCases, id: \.self) { s in
+                    Text(s.displayName).tag(s as PipelineScope?)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
+    }
+
+    // MARK: - Samples list (bottom of the test bench)
+
+    private var samplesList: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("Samples").font(.title3.bold())
@@ -434,7 +413,6 @@ struct PromptBuilderView: View {
             .frame(height: 28)
             .background(Color(nsColor: .controlBackgroundColor))
         }
-        .frame(width: 200)
     }
 
     // MARK: - Sample work area (middle, flex)
@@ -505,12 +483,6 @@ struct PromptBuilderView: View {
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
-
-                    if let err = testError {
-                        Text(err).font(.caption).foregroundStyle(.red)
-                    }
-
-                    resultView
                 }
                 .padding(16)
             }
@@ -587,12 +559,6 @@ struct PromptBuilderView: View {
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
-
-                    if let err = testError {
-                        Text(err).font(.caption).foregroundStyle(.red)
-                    }
-
-                    resultView
                 }
                 .padding(16)
             }
@@ -682,19 +648,44 @@ struct PromptBuilderView: View {
         .help("Run Prompt tests against this subject. Results stay here — they don't change your sources.")
     }
 
-    private var promptPanel: some View {
+    private var promptPane: some View {
         VStack(spacing: 0) {
-            HStack {
+            // Header + prompt toolbar. File actions (Load · Save · Clear) are grouped and
+            // labeled; AI Improve sits by itself against the right edge.
+            HStack(spacing: 12) {
                 Label("Prompt", systemImage: "text.bubble")
                     .font(.headline)
                 Spacer()
-                subjectChip
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        showImprovePanel.toggle()
+
+                // Section: Load · Save · Clear (icon + word)
+                HStack(spacing: 6) {
+                    Menu {
+                        Button("Load Existing Prompt…") { showingLoadPromptSheet = true }
+                        Button("Import from Action…")   { showingImportActionSheet = true }
+                    } label: {
+                        Label("Load", systemImage: "tray.and.arrow.down")
                     }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Load a prompt")
+
+                    saveMenu
+
+                    Button { promptText = "" } label: {
+                        Label("Clear", systemImage: "xmark.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(promptText.isEmpty)
+                    .help("Clear the prompt")
+                }
+
+                Divider().frame(height: 18)
+
+                // AI improvement — on its own, against the right border.
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { showImprovePanel.toggle() }
                 } label: {
-                    Image(systemName: "wand.and.sparkles")
+                    Label("Improve", systemImage: "wand.and.sparkles")
                         .foregroundStyle(showImprovePanel ? Color.accentColor : Color.secondary)
                 }
                 .buttonStyle(.borderless)
@@ -745,26 +736,135 @@ struct PromptBuilderView: View {
 
             Divider()
 
-            HStack(spacing: 8) {
-                Button("Load from Action…") { showingLoadSheet = true }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Spacer()
-                Button("Clear") { promptText = "" }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(promptText.isEmpty)
-                Button("Save to Action…") { showingSaveSheet = true }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(promptText.isEmpty)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(.bar)
+            runBar
+
+            resultPane
         }
-        .frame(minWidth: 380, maxWidth: .infinity)
-        .layoutPriority(1)
+    }
+
+    /// Run bar: what the prompt runs against + optional "Load step input" + Run/Stop.
+    private var runBar: some View {
+        HStack(spacing: 10) {
+            if let idx = rthStepIndex, idx > 0 {
+                Button { runUpToHere() } label: {
+                    Label("Load step input", systemImage: "arrow.down.to.line")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isRunning || activeText.isEmpty)
+                .help("Run the earlier steps of this action on the selected input and load the result — the real input to the step you're improving.")
+            }
+
+            subjectChip
+
+            if let v = stepVerify, v.enabled {
+                Label(verifySummary(v), systemImage: "checkmark.shield")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help("This step's “Check the result” settings from the Action Editor.")
+            }
+
+            Spacer()
+            runToolbarContent
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    /// Result pane (bottom-right): the run result, plus any run error.
+    @ViewBuilder
+    private var resultPane: some View {
+        if testResult != nil || testError != nil {
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let err = testError {
+                        Text(err).font(.caption).foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    resultView
+                }
+                .padding(16)
+            }
+            .frame(maxHeight: .infinity)
+        } else {
+            Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: - Contextual Save (Phase 25.2)
+
+    /// Where the prompt goes depends on the origin: the Library saves it to the prompt
+    /// library; an Action can update/append a step (no scope/action pickers — implied),
+    /// save to the library, or copy; a document-source test just saves-to-library or copies.
+    @ViewBuilder
+    private var saveMenu: some View {
+        Menu {
+            switch origin {
+            case .library:
+                Button("Save Prompt…") { showingSaveLibrarySheet = true }
+                Button("Copy")         { copyPrompt() }
+            case .action:
+                if rthStepIndex != nil {
+                    Button("Update This Step") { updateSeededStep() }
+                }
+                Button("Add as New Step")  { addStepToSeededAction() }
+                Divider()
+                Button("Save to Library…") { showingSaveLibrarySheet = true }
+                Button("Copy")             { copyPrompt() }
+            case .documentSource:
+                Button("Save to Library…") { showingSaveLibrarySheet = true }
+                Button("Copy")             { copyPrompt() }
+            }
+        } label: {
+            Label("Save", systemImage: "square.and.arrow.down")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(promptText.isEmpty)
+        .help("Save this prompt")
+    }
+
+    private func copyPrompt() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(promptText, forType: .string)
+    }
+
+    private func fetchPipeline(_ id: UUID) -> FormattingPipeline? {
+        ((try? modelContext.fetch(FetchDescriptor<FormattingPipeline>())) ?? []).first { $0.id == id }
+    }
+
+    /// Overwrites the seeded step's prompt with the current text, then returns to the action.
+    private func updateSeededStep() {
+        guard let id = rthActionID, let idx = rthStepIndex,
+              let pipeline = fetchPipeline(id) else { return }
+        let steps = pipeline.sortedSteps
+        guard idx >= 0, idx < steps.count else { return }
+        steps[idx].prompt = promptText
+        try? modelContext.save()
+        navigateToAction(id)
+    }
+
+    /// Appends a new step (with the current prompt) to the seeded action, then returns to it.
+    private func addStepToSeededAction() {
+        guard let id = rthActionID, let pipeline = fetchPipeline(id) else { return }
+        let order = (pipeline.steps ?? []).count
+        let step = PipelineStep(name: "Step \(order + 1)", prompt: promptText, sortOrder: order)
+        modelContext.insert(step)
+        step.pipeline  = pipeline
+        pipeline.steps = (pipeline.steps ?? []) + [step]
+        try? modelContext.save()
+        navigateToAction(id)
+    }
+
+    /// Lands the user on the action they just saved into (item #6 flow).
+    private func navigateToAction(_ id: UUID) {
+        appState.editOrigin = nil
+        appState.actionToOpen = id
+        appState.workspaceMode = .actions
+        if !isEmbedded { dismiss() }
     }
 
     // MARK: - AI Improvement chat panel (slide in from right)
@@ -1096,6 +1196,14 @@ struct PromptBuilderView: View {
         rthActionID  = seed.actionID
         rthStepIndex = seed.stepIndex
 
+        // Action origin already knows its scope — pre-filter the samples list and the
+        // "Load Existing Prompt" library to it (the scope pop-up stays hidden). (Phase 25.2)
+        if let id = seed.actionID,
+           let pipeline = ((try? modelContext.fetch(FetchDescriptor<FormattingPipeline>())) ?? [])
+                .first(where: { $0.id == id }) {
+            scopeFilter = pipeline.scope
+        }
+
         // Seeded from a source (e.g. a flagged source's "Improve in Prompt Builder"):
         // stage its text as the Scratchpad sample so the user iterates against the exact
         // input that failed (21.5/22.9).
@@ -1378,95 +1486,216 @@ private struct LoadFromActionSheet: View {
     }
 }
 
-// MARK: - Save to Pipeline sheet
+// MARK: - Load existing prompt sheet (Phase 25.4)
 
-private struct SaveToPipelineSheet: View {
-    let promptText: String
-    /// Called with the action (pipeline) that was saved into, so the caller can
-    /// navigate there. Fires just before the sheet dismisses.
-    var onSaved: (UUID, PipelineScope) -> Void = { _, _ in }
+/// Internal (not private) so the Action step editor can reuse it to pick a saved prompt.
+struct LoadExistingPromptSheet: View {
+    /// When non-nil, prompts are pre-filtered to this scope tag (plus untagged "Any" prompts).
+    var scopeFilter: PipelineScope?
+    let onLoad: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \FormattingPipeline.name) private var allPipelines: [FormattingPipeline]
+    @Query(sort: \SavedPrompt.sortOrder) private var allPrompts: [SavedPrompt]
 
-    enum SaveMode: String, CaseIterable {
-        case updateStep   = "Update Existing Step"
-        case addStep      = "Add to Action"
-        case newPipeline  = "New Action"
-    }
+    @State private var selectedID: UUID?
+    @State private var scopeFilterState: PipelineScope?
+    @State private var didInit = false
+    @State private var editingName: String = ""
 
-    @State private var scope: PipelineScope = .source
-    @State private var saveMode: SaveMode = .addStep
-    @State private var selectedPipelineID: UUID? = nil
-    @State private var selectedStepID: UUID? = nil
-    @State private var newPipelineName: String = ""
-    @State private var newStepName: String = "Step 1"
+    /// Prompts tagged with a specific scope, in sort order.
+    private func prompts(in scope: PipelineScope) -> [SavedPrompt] {
+        allPrompts.filter { $0.scopeTag == scope }
+    }
+    /// Untagged, general-purpose ("Any") prompts — applicable to any scope.
+    private var generalPrompts: [SavedPrompt] {
+        allPrompts.filter { $0.scopeTag == nil }
+    }
+    private var selected: SavedPrompt? { allPrompts.first { $0.id == selectedID } }
 
-    private var scopedPipelines: [FormattingPipeline] {
-        allPipelines.filter { $0.scope == scope }
-    }
-    private var selectedPipeline: FormattingPipeline? {
-        allPipelines.first { $0.id == selectedPipelineID }
-    }
-    private var steps: [PipelineStep] { selectedPipeline?.sortedSteps ?? [] }
-    private var selectedStep: PipelineStep? {
-        steps.first { $0.id == selectedStepID }
-    }
-    private var canSave: Bool {
-        switch saveMode {
-        case .updateStep:  return selectedStep != nil
-        case .addStep:     return selectedPipeline != nil && !newStepName.trimmingCharacters(in: .whitespaces).isEmpty
-        case .newPipeline: return !newPipelineName.trimmingCharacters(in: .whitespaces).isEmpty
-                                  && !newStepName.trimmingCharacters(in: .whitespaces).isEmpty
-        }
+    /// One selectable row — name only; the section header carries the scope.
+    @ViewBuilder
+    private func promptRow(_ p: SavedPrompt) -> some View {
+        Text(p.name.isEmpty ? "Untitled" : p.name)
+            .font(.callout)
+            .lineLimit(1)
+            .tag(p.id)
+            .contextMenu {
+                Button("Duplicate") { duplicate(p) }
+                Button("Delete", role: .destructive) { delete(p) }
+            }
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Text("Load Existing Prompt").font(.headline)
+                Spacer()
+                Picker("", selection: $scopeFilterState) {
+                    Text("All Scopes").tag(nil as PipelineScope?)
+                    ForEach(PipelineScope.allCases, id: \.self) { s in
+                        Text(s.displayName).tag(s as PipelineScope?)
+                    }
+                }
+                .pickerStyle(.menu).labelsHidden().controlSize(.small).frame(width: 130)
+                Button("Cancel") { dismiss() }.buttonStyle(.bordered)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14).background(.bar)
+
+            Divider()
+
+            HStack(spacing: 0) {
+                // Option 3: a chosen stage shows its own prompts, then a "General (Any)"
+                // section of untagged prompts below — universal prompts are never hidden,
+                // and there's no extra toggle to learn.
+                List(selection: $selectedID) {
+                    if let f = scopeFilterState {
+                        let scoped = prompts(in: f)
+                        if !scoped.isEmpty {
+                            Section(f.displayName) {
+                                ForEach(scoped, id: \.id) { promptRow($0) }
+                            }
+                        }
+                        if !generalPrompts.isEmpty {
+                            Section("General (Any)") {
+                                ForEach(generalPrompts, id: \.id) { promptRow($0) }
+                            }
+                        }
+                    } else {
+                        // All Scopes: one section per stage, general-purpose last.
+                        ForEach(PipelineScope.allCases, id: \.self) { s in
+                            let group = prompts(in: s)
+                            if !group.isEmpty {
+                                Section(s.displayName) {
+                                    ForEach(group, id: \.id) { promptRow($0) }
+                                }
+                            }
+                        }
+                        if !generalPrompts.isEmpty {
+                            Section("General (Any)") {
+                                ForEach(generalPrompts, id: \.id) { promptRow($0) }
+                            }
+                        }
+                    }
+                }
+                .listStyle(.inset)
+                .frame(width: 220)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    if let p = selected {
+                        HStack {
+                            TextField("Name", text: $editingName).textFieldStyle(.roundedBorder)
+                            Button("Rename") {
+                                p.name = editingName.trimmingCharacters(in: .whitespaces)
+                                try? modelContext.save()
+                            }
+                            .disabled(editingName.trimmingCharacters(in: .whitespaces).isEmpty
+                                      || editingName == p.name)
+                        }
+                        ScrollView {
+                            Text(p.text).font(.callout).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(8)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        ContentUnavailableView("No Prompt Selected",
+                                               systemImage: "text.badge.plus",
+                                               description: Text("Select a prompt to preview it. Right-click to duplicate or delete."))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            Divider()
+
             HStack {
-                Text("Save to Action").font(.headline)
+                Button("Delete", role: .destructive) { if let p = selected { delete(p) } }
+                    .buttonStyle(.bordered).disabled(selected == nil)
+                Spacer()
+                Button("Duplicate") { if let p = selected { duplicate(p) } }
+                    .buttonStyle(.bordered).disabled(selected == nil)
+                Button("Load Prompt") { if let p = selected { onLoad(p.text); dismiss() } }
+                    .buttonStyle(.borderedProminent).disabled(selected == nil)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14)
+        }
+        .frame(width: 620, height: 460)
+        .onAppear { if !didInit { scopeFilterState = scopeFilter; didInit = true } }
+        .onChange(of: selectedID) { _, _ in editingName = selected?.name ?? "" }
+    }
+
+    private func duplicate(_ p: SavedPrompt) {
+        let copy = SavedPrompt(name: p.name + " Copy", text: p.text,
+                               scopeTag: p.scopeTag, sortOrder: allPrompts.count)
+        modelContext.insert(copy)
+        try? modelContext.save()
+        selectedID = copy.id
+    }
+
+    private func delete(_ p: SavedPrompt) {
+        if selectedID == p.id { selectedID = nil }
+        modelContext.delete(p)
+        try? modelContext.save()
+    }
+}
+
+// MARK: - Save prompt to library sheet (Phase 25.2)
+
+private struct SavePromptToLibrarySheet: View {
+    let promptText: String
+    var initialScope: PipelineScope?
+    var nextSortOrder: Int
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var name: String = ""
+    @State private var scope: PipelineScope? = nil
+    @State private var didInit = false
+
+    private var canSave: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Save Prompt to Library").font(.headline)
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(.bordered)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(.bar)
+            .padding(.horizontal, 20).padding(.vertical, 14).background(.bar)
 
             Divider()
 
             VStack(alignment: .leading, spacing: 16) {
-                LabeledContent("Scope") {
+                LabeledContent("Name") {
+                    TextField("Prompt name", text: $name).textFieldStyle(.roundedBorder).frame(width: 260)
+                }
+                LabeledContent("Scope tag") {
                     Picker("", selection: $scope) {
+                        Text("Any").tag(nil as PipelineScope?)
                         ForEach(PipelineScope.allCases, id: \.self) { s in
-                            Text(s.displayName).tag(s)
+                            Text(s.displayName).tag(s as PipelineScope?)
                         }
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 130)
-                    .onChange(of: scope) { _, _ in selectedPipelineID = nil; selectedStepID = nil }
+                    .labelsHidden().pickerStyle(.menu).frame(width: 160)
                 }
+                Text("Scope is an optional filter tag — leave it \"Any\" if the prompt applies broadly.")
+                    .font(.caption).foregroundStyle(.secondary)
 
-                Picker("", selection: $saveMode) {
-                    ForEach(SaveMode.allCases, id: \.self) { m in
-                        Text(m.rawValue).tag(m)
-                    }
+                Text("Preview").font(.caption.bold()).foregroundStyle(.secondary)
+                ScrollView {
+                    Text(promptText).font(.callout).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .onChange(of: saveMode) { _, _ in
-                    selectedPipelineID = nil
-                    selectedStepID     = nil
-                }
-
-                Group {
-                    switch saveMode {
-                    case .updateStep:  updateStepBody
-                    case .addStep:     addStepBody
-                    case .newPipeline: newPipelineBody
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxHeight: 140)
+                .padding(8)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .padding(20)
 
@@ -1474,143 +1703,22 @@ private struct SaveToPipelineSheet: View {
             Divider()
 
             HStack {
-                Text(saveModeHint)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Spacer()
-                Button("Save") { performSave() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canSave)
+                Button("Save") { save() }.buttonStyle(.borderedProminent).disabled(!canSave)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 20).padding(.vertical, 14)
         }
-        .frame(width: 520, height: 460)
+        .frame(width: 480, height: 420)
+        .onAppear { if !didInit { scope = initialScope; didInit = true } }
     }
 
-    @ViewBuilder
-    private var updateStepBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Select the action and step whose prompt to replace.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Action (\(scope.displayName))")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                    List(scopedPipelines, id: \.id, selection: $selectedPipelineID) { p in
-                        Text(p.name).tag(p.id)
-                    }
-                    .listStyle(.bordered)
-                    .onChange(of: selectedPipelineID) { _, _ in selectedStepID = nil }
-                }
-                .frame(width: 200, height: 160)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Step")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                    List(steps, id: \.id, selection: $selectedStepID) { step in
-                        Text(step.name).tag(step.id)
-                    }
-                    .listStyle(.bordered)
-                }
-                .frame(width: 220, height: 160)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var addStepBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Appends a new step with this prompt to the selected action.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Action (\(scope.displayName))")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                List(scopedPipelines, id: \.id, selection: $selectedPipelineID) { p in
-                    Text(p.name).tag(p.id)
-                }
-                .listStyle(.bordered)
-                .frame(height: 130)
-            }
-
-            LabeledContent("Step Name") {
-                TextField("e.g. Clean Up Filler Words", text: $newStepName)
-                    .textFieldStyle(.roundedBorder)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var newPipelineBody: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Creates a new \(scope.displayName) action with this prompt as its first step.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            LabeledContent("Action Name") {
-                TextField("e.g. Transcript Cleanup", text: $newPipelineName)
-                    .textFieldStyle(.roundedBorder)
-            }
-            LabeledContent("Step Name") {
-                TextField("e.g. Remove Filler Words", text: $newStepName)
-                    .textFieldStyle(.roundedBorder)
-            }
-        }
-    }
-
-    private var saveModeHint: String {
-        switch saveMode {
-        case .updateStep:  return "Replaces the selected step's prompt in place."
-        case .addStep:     return "Appends a new step; existing steps are unchanged."
-        case .newPipeline: return "Creates an action scoped to \(scope.displayName)."
-        }
-    }
-
-    private func performSave() {
-        var savedPipelineID: UUID?
-        switch saveMode {
-        case .updateStep:
-            guard let step = selectedStep else { return }
-            step.prompt = promptText
-            savedPipelineID = selectedPipeline?.id
-            try? modelContext.save()
-
-        case .addStep:
-            guard let pipeline = selectedPipeline else { return }
-            let order = (pipeline.steps ?? []).count
-            let step  = PipelineStep(name: newStepName.trimmingCharacters(in: .whitespaces),
-                                     prompt: promptText,
-                                     sortOrder: order)
-            modelContext.insert(step)
-            step.pipeline  = pipeline
-            pipeline.steps = (pipeline.steps ?? []) + [step]
-            savedPipelineID = pipeline.id
-            try? modelContext.save()
-
-        case .newPipeline:
-            let pipeline = FormattingPipeline(
-                name: newPipelineName.trimmingCharacters(in: .whitespaces),
-                mode: .sequential
-            )
-            pipeline.scope = scope
-            modelContext.insert(pipeline)
-            let step = PipelineStep(name: newStepName.trimmingCharacters(in: .whitespaces),
-                                    prompt: promptText,
-                                    sortOrder: 0)
-            modelContext.insert(step)
-            step.pipeline  = pipeline
-            pipeline.steps = [step]
-            savedPipelineID = pipeline.id
-            try? modelContext.save()
-        }
-        if let savedPipelineID { onSaved(savedPipelineID, scope) }
+    private func save() {
+        let prompt = SavedPrompt(name: name.trimmingCharacters(in: .whitespaces),
+                                 text: promptText,
+                                 scopeTag: scope,
+                                 sortOrder: nextSortOrder)
+        modelContext.insert(prompt)
+        try? modelContext.save()
         dismiss()
     }
 }

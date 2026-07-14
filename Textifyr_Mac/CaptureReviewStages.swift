@@ -706,9 +706,7 @@ struct CaptureReviewStages: View {
                 .padding(20)
             }
 
-            Divider()
-
-            HStack {
+            ToolColumnFooter {
                 Button("Cancel") {
                     runningPipelineTask?.cancel()
                     translateTask?.cancel()
@@ -733,8 +731,6 @@ struct CaptureReviewStages: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(sourceRTFData == nil && plainTextForAI.isEmpty)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
         }
     }
 
