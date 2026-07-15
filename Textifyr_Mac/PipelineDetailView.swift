@@ -6,6 +6,7 @@ import TextifyrViewModels
 
 struct PipelineDetailView: View {
     @ObservedObject var viewModel: PipelineEditorViewModel
+    @Environment(\.pipelineCommitsExternally) private var pipelineCommitsExternally
     @State private var showWizard = false
     @State private var showCopyStep = false
 
@@ -40,7 +41,7 @@ struct PipelineDetailView: View {
                         .onSubmit { viewModel.saveName() }
                         .onChange(of: viewModel.pipelineName) { _, _ in viewModel.saveName() }
 
-                    if viewModel.isDirty {
+                    if viewModel.isDirty && !pipelineCommitsExternally {
                         Circle()
                             .fill(Color.orange)
                             .frame(width: 7, height: 7)
@@ -66,7 +67,8 @@ struct PipelineDetailView: View {
 
                     Spacer()
 
-                    if viewModel.isDirty {
+                    // Hidden inside the scoped sheet — its footer Done/Cancel own commit/rollback.
+                    if viewModel.isDirty && !pipelineCommitsExternally {
                         Button("Discard") { viewModel.discardChanges() }
                             .buttonStyle(.bordered)
                             .controlSize(.small)

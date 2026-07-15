@@ -30,6 +30,8 @@ struct AudioFileWizardView: View {
     @State private var endTimeText = ""
     @State private var selectedPostCapturePipelineID: PersistentIdentifier? = nil
     @State private var showFileImporter = false
+    @State private var showDiscardConfirm = false
+    @State private var showActionEditor = false
     @State private var postCaptureError: String? = nil
     @State private var isRunningPostCapture = false
     @State private var postCaptureTask: Task<Void, Never>? = nil
@@ -53,6 +55,7 @@ struct AudioFileWizardView: View {
         .onAppear {
             restorePostCapturePipeline()
             updateWizardBreadcrumb()
+            appState.captureWizardActive = true
             if let url = appState.pendingSharedAudioURL {
                 appState.pendingSharedAudioURL = nil
                 Task { await captureVM.processAudioFile(url) }
@@ -60,6 +63,7 @@ struct AudioFileWizardView: View {
         }
         .onChange(of: wizardStep) { _, _ in updateWizardBreadcrumb() }
         .onDisappear {
+            appState.captureWizardActive = false
             // Hand the trail back to the document (mirrors SessionEditView) — unless a crumb
             // took us into another tool, which sets its own trail.
             if appState.workspaceMode == .documents {
@@ -68,6 +72,25 @@ struct AudioFileWizardView: View {
                     BreadcrumbCrumb(captureVM.document.title, targetMode: .documents),
                 ]
             }
+        }
+        // A document-level breadcrumb was clicked (routed here via requestExitCapture). Discard
+        // any in-progress capture — with a confirmation — then close back to the source list.
+        .onChange(of: appState.requestExitCapture) { _, req in
+            guard req else { return }
+            appState.requestExitCapture = false
+            if hasUnsavedCapture { showDiscardConfirm = true } else { cancel() }
+        }
+        .confirmationDialog("Discard this capture?",
+                            isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { cancel() }
+            Button("Keep Editing", role: .cancel) { }
+        } message: {
+            Text("The transcribed text will be lost.")
+        }
+        // Build/edit an After Capture action over the wizard; new actions appear in the picker
+        // above on dismiss (the picker is a live @Query). Pre-capture, so no sample text yet.
+        .sheet(isPresented: $showActionEditor) {
+            ScopedPipelineEditorSheet(scope: .postCapture)
         }
         .onChange(of: captureVM.phase) { _, phase in handlePhaseChange(phase) }
         .onChange(of: postCapturePipelines) { _, pipelines in
@@ -94,6 +117,17 @@ struct AudioFileWizardView: View {
 
     private var title: String {
         captureMethod == .videoAudio ? "Import Video" : "Import Audio File"
+    }
+
+    /// Is there capture work that leaving the wizard would throw away? True once a transcript
+    /// exists (Review step) or a capture/transcription is running. False on the untouched
+    /// settings step, so leaving before choosing a file needs no confirmation.
+    private var hasUnsavedCapture: Bool {
+        if wizardStep == .review || capturedSession != nil { return true }
+        switch captureVM.phase {
+        case .idle, .failed, .done: return false
+        default: return true
+        }
     }
 
     /// The wizard's step lives in the jump-bar, not in a 1-2-3 dot indicator (Phase 22.8):
@@ -205,16 +239,24 @@ struct AudioFileWizardView: View {
 
                         if !postCapturePipelines.isEmpty {
                             Divider().padding(.leading, 12)
-                            LabeledContent("After Capture") {
-                                Picker("", selection: $selectedPostCapturePipelineID) {
-                                    Text("None").tag(nil as PersistentIdentifier?)
-                                    ForEach(postCapturePipelines) { p in
-                                        Text(p.name).tag(p.id as PersistentIdentifier?)
+                            VStack(spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Text("After Capture, run Action")
+                                    Picker("", selection: $selectedPostCapturePipelineID) {
+                                        Text("Nothing").tag(nil as PersistentIdentifier?)
+                                        ForEach(postCapturePipelines) { p in
+                                            Text(p.name).tag(p.id as PersistentIdentifier?)
+                                        }
                                     }
+                                    .pickerStyle(.menu)
+                                    .fixedSize()
+                                    .disabled(captureVM.phase != .idle)
                                 }
-                                .pickerStyle(.menu)
-                                .disabled(captureVM.phase != .idle)
+                                Text("Actions are reusable recipes built from prompts.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
+                            .frame(maxWidth: .infinity)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
 
@@ -222,10 +264,9 @@ struct AudioFileWizardView: View {
                             HStack {
                                 Spacer()
                                 Button {
-                                    appState.inspectorDefaultScope = .postCapture
-                                    appState.inspectorVisible = true
+                                    showActionEditor = true
                                 } label: {
-                                    Label("Manage Actions…", systemImage: "slider.horizontal.3")
+                                    Label("New or Edit Action…", systemImage: "slider.horizontal.3")
                                         .font(.caption)
                                 }
                                 .buttonStyle(.borderless)

@@ -338,7 +338,9 @@ private struct AppCommands: Commands {
         }
 
         // MARK: View menu
-        CommandMenu("View") {
+        // Add to the system-provided View menu (via the sidebar group) rather than a second
+        // CommandMenu("View"), which macOS would render as a duplicate "View" menu.
+        CommandGroup(after: .sidebar) {
             Button("Show/Hide Sidebar") { post(.toggleSidebar) }
         }
 

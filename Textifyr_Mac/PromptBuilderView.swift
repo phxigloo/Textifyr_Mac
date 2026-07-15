@@ -657,19 +657,19 @@ struct PromptBuilderView: View {
                     .font(.headline)
                 Spacer()
 
-                // Section: Load · Save · Clear (icon + word)
+                // Section: Library · Clear (icon + word)
                 HStack(spacing: 6) {
                     Menu {
-                        Button("Load Existing Prompt…") { showingLoadPromptSheet = true }
-                        Button("Import from Action…")   { showingImportActionSheet = true }
+                        librarySaveButtons
+                        Divider()
+                        Button("Browse & Manage…") { showingLoadPromptSheet = true }
+                        Button("Import from Action…") { showingImportActionSheet = true }
                     } label: {
-                        Label("Load", systemImage: "tray.and.arrow.down")
+                        Label("Library", systemImage: "books.vertical")
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
-                    .help("Load a prompt")
-
-                    saveMenu
+                    .help("Save, browse, manage, or import prompts")
 
                     Button { promptText = "" } label: {
                         Label("Clear", systemImage: "xmark.circle")
@@ -796,35 +796,26 @@ struct PromptBuilderView: View {
 
     // MARK: - Contextual Save (Phase 25.2)
 
-    /// Where the prompt goes depends on the origin: the Library saves it to the prompt
-    /// library; an Action can update/append a step (no scope/action pickers — implied),
-    /// save to the library, or copy; a document-source test just saves-to-library or copies.
-    @ViewBuilder
-    private var saveMenu: some View {
-        Menu {
-            switch origin {
-            case .library:
-                Button("Save Prompt…") { showingSaveLibrarySheet = true }
-                Button("Copy")         { copyPrompt() }
-            case .action:
-                if rthStepIndex != nil {
-                    Button("Update This Step") { updateSeededStep() }
-                }
-                Button("Add as New Step")  { addStepToSeededAction() }
-                Divider()
-                Button("Save to Library…") { showingSaveLibrarySheet = true }
-                Button("Copy")             { copyPrompt() }
-            case .documentSource:
-                Button("Save to Library…") { showingSaveLibrarySheet = true }
-                Button("Copy")             { copyPrompt() }
+    /// Save/step actions folded into the Library menu (above the Browse/Import section). Origin-
+    /// dependent: the Library saves to the prompt library; an Action can update/append a step or
+    /// save-to-library/copy; a document-source test saves-to-library or copies. Disabled while the
+    /// prompt is empty; Browse/Import stay enabled regardless.
+    @ViewBuilder private var librarySaveButtons: some View {
+        switch origin {
+        case .library:
+            Button("Save Prompt…") { showingSaveLibrarySheet = true }.disabled(promptText.isEmpty)
+            Button("Copy")         { copyPrompt() }.disabled(promptText.isEmpty)
+        case .action:
+            if rthStepIndex != nil {
+                Button("Update This Step") { updateSeededStep() }.disabled(promptText.isEmpty)
             }
-        } label: {
-            Label("Save", systemImage: "square.and.arrow.down")
+            Button("Add as New Step")  { addStepToSeededAction() }.disabled(promptText.isEmpty)
+            Button("Save to Library…") { showingSaveLibrarySheet = true }.disabled(promptText.isEmpty)
+            Button("Copy")             { copyPrompt() }.disabled(promptText.isEmpty)
+        case .documentSource:
+            Button("Save to Library…") { showingSaveLibrarySheet = true }.disabled(promptText.isEmpty)
+            Button("Copy")             { copyPrompt() }.disabled(promptText.isEmpty)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .disabled(promptText.isEmpty)
-        .help("Save this prompt")
     }
 
     private func copyPrompt() {
@@ -1197,7 +1188,7 @@ struct PromptBuilderView: View {
         rthStepIndex = seed.stepIndex
 
         // Action origin already knows its scope — pre-filter the samples list and the
-        // "Load Existing Prompt" library to it (the scope pop-up stays hidden). (Phase 25.2)
+        // Prompt Library to it (the scope pop-up stays hidden). (Phase 25.2)
         if let id = seed.actionID,
            let pipeline = ((try? modelContext.fetch(FetchDescriptor<FormattingPipeline>())) ?? [])
                 .first(where: { $0.id == id }) {
@@ -1393,7 +1384,6 @@ private struct LoadFromActionSheet: View {
                 .controlSize(.small)
                 .frame(width: 110)
                 .onChange(of: scopeFilter) { _, _ in selectedPipelineID = nil; selectedStepID = nil }
-                Button("Cancel") { dismiss() }.buttonStyle(.bordered)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -1472,6 +1462,7 @@ private struct LoadFromActionSheet: View {
             Divider()
 
             HStack {
+                Button("Cancel") { dismiss() }.buttonStyle(.bordered)
                 Spacer()
                 Button("Load Prompt") {
                     if let step = selectedStep { onLoad(step.prompt); dismiss() }
@@ -1528,7 +1519,7 @@ struct LoadExistingPromptSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Text("Load Existing Prompt").font(.headline)
+                Text("Prompt Library").font(.headline)
                 Spacer()
                 Picker("", selection: $scopeFilterState) {
                     Text("All Scopes").tag(nil as PipelineScope?)
@@ -1537,7 +1528,6 @@ struct LoadExistingPromptSheet: View {
                     }
                 }
                 .pickerStyle(.menu).labelsHidden().controlSize(.small).frame(width: 130)
-                Button("Cancel") { dismiss() }.buttonStyle(.bordered)
             }
             .padding(.horizontal, 20).padding(.vertical, 14).background(.bar)
 
@@ -1617,9 +1607,10 @@ struct LoadExistingPromptSheet: View {
             HStack {
                 Button("Delete", role: .destructive) { if let p = selected { delete(p) } }
                     .buttonStyle(.bordered).disabled(selected == nil)
-                Spacer()
                 Button("Duplicate") { if let p = selected { duplicate(p) } }
                     .buttonStyle(.bordered).disabled(selected == nil)
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(.bordered)
                 Button("Load Prompt") { if let p = selected { onLoad(p.text); dismiss() } }
                     .buttonStyle(.borderedProminent).disabled(selected == nil)
             }
@@ -1647,7 +1638,9 @@ struct LoadExistingPromptSheet: View {
 
 // MARK: - Save prompt to library sheet (Phase 25.2)
 
-private struct SavePromptToLibrarySheet: View {
+/// Save the given prompt text to the SavedPrompt library under a new name. Reused by the Prompt
+/// Builder and by the wizard's inline improve panel (so a step's prompt can be banked for reuse).
+struct SavePromptToLibrarySheet: View {
     let promptText: String
     var initialScope: PipelineScope?
     var nextSortOrder: Int
@@ -1665,7 +1658,6 @@ private struct SavePromptToLibrarySheet: View {
             HStack {
                 Text("Save Prompt to Library").font(.headline)
                 Spacer()
-                Button("Cancel") { dismiss() }.buttonStyle(.bordered)
             }
             .padding(.horizontal, 20).padding(.vertical, 14).background(.bar)
 
@@ -1703,6 +1695,7 @@ private struct SavePromptToLibrarySheet: View {
             Divider()
 
             HStack {
+                Button("Cancel") { dismiss() }.buttonStyle(.bordered)
                 Spacer()
                 Button("Save") { save() }.buttonStyle(.borderedProminent).disabled(!canSave)
             }

@@ -7,6 +7,8 @@ import TextifyrViewModels
 struct PipelineStepRow: View {
     @ObservedObject var viewModel: PipelineEditorViewModel
     @EnvironmentObject private var appState: AppState
+    @Environment(\.promptBuilderAvailable) private var promptBuilderAvailable
+    @Environment(\.inlineImprove) private var inlineImprove
     let step: PipelineStep
     @State private var name: String
     @State private var prompt: String
@@ -166,24 +168,40 @@ struct PipelineStepRow: View {
                     .font(.caption2)
                     .foregroundStyle(prompt.count > AppConstants.maxPromptCharacters ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
                 Spacer()
-                Button {
-                    openInBuilder(improve: false)
-                } label: {
-                    Label("Prompt Builder", systemImage: "text.bubble")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .help("Actions are made of one or more prompts. Use the Prompt Builder to write and test individual prompts before adding them here.")
+                // Hidden when the editor is embedded in a sheet over a wizard: these navigate the
+                // main window to the Prompt Builder, which would unmount the wizard (Spec 2 adds a
+                // self-contained inline improve panel for that context instead).
+                if promptBuilderAvailable {
+                    Button {
+                        openInBuilder(improve: false)
+                    } label: {
+                        Label("Prompt Builder", systemImage: "text.bubble")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Actions are made of one or more prompts. Use the Prompt Builder to write and test individual prompts before adding them here.")
 
-                Button {
-                    openInBuilder(improve: true)
-                } label: {
-                    Label("Improve Prompt", systemImage: "wand.and.stars")
-                        .font(.caption)
+                    Button {
+                        openInBuilder(improve: true)
+                    } label: {
+                        Label("Improve Prompt", systemImage: "wand.and.stars")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(prompt.isEmpty)
+                    .help("Open the Prompt Builder to test this prompt and improve it with AI")
+                } else if let inlineImprove {
+                    // Embedded over a wizard: open the sheet's own inline improve panel, which
+                    // tests and improves this prompt against the captured text (no window switch).
+                    Button {
+                        inlineImprove(stepIndex)
+                    } label: {
+                        Label("Test & Improve", systemImage: "wand.and.stars")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Test this prompt against the captured text and improve it with AI")
                 }
-                .buttonStyle(.borderless)
-                .disabled(prompt.isEmpty)
-                .help("Open the Prompt Builder to test this prompt and improve it with AI")
             }
 
             verifyEditor

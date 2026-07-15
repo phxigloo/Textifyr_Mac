@@ -403,7 +403,6 @@ private struct StageEditorSheet: View {
             HStack {
                 Text(stage == nil ? "New Stage" : "Edit Stage").font(.headline)
                 Spacer()
-                Button("Cancel") { dismiss() }.buttonStyle(.borderless)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -433,6 +432,7 @@ private struct StageEditorSheet: View {
             Divider()
 
             HStack {
+                Button("Cancel") { dismiss() }.buttonStyle(.bordered)
                 Spacer()
                 Button("Save") { save() }
                     .buttonStyle(.borderedProminent)

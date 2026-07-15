@@ -148,92 +148,6 @@ struct DictationAwareTextEditor: NSViewRepresentable {
     }
 }
 
-// MARK: - Markdown-aware text view
-
-struct MarkdownOrPlainText: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-
-    private var attributedString: AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
-    }
-
-    var body: some View {
-        Text(attributedString)
-    }
-}
-
-// MARK: - Pipeline run record
-
-struct PipelineRun: Identifiable {
-    let id = UUID()
-    let pipelineName: String
-    let result: String       // plain text for AI chaining
-    var resultRTF: Data?     // RTF for the editable bubble
-    var isTransferred = false
-}
-
-struct PipelineRunBubble: View {
-    @Binding var run: PipelineRun
-    let onTransfer: () -> Void
-    var onDelete: (() -> Void)? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label(run.pipelineName, systemImage: "wand.and.sparkles")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if run.isTransferred {
-                    Label("Applied", systemImage: "checkmark.circle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.green)
-                } else {
-                    Button("Apply", action: onTransfer)
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                    if let onDelete {
-                        Button(action: onDelete) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Remove this result")
-                    }
-                }
-            }
-
-            Group {
-                let lineCount = run.result.components(separatedBy: "\n").count
-                if lineCount > 25 {
-                    ScrollView {
-                        MarkdownOrPlainText(run.result)
-                            .font(.caption)
-                            .foregroundStyle(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                            .padding(6)
-                    }
-                    .frame(maxHeight: 420)
-                } else {
-                    MarkdownOrPlainText(run.result)
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .padding(6)
-                }
-            }
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .padding(10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
 // MARK: - Pipeline progress indicator
 
 struct PipelineProgressView: View {
@@ -300,27 +214,23 @@ struct CaptureReviewStages: View {
 
     @EnvironmentObject private var appState: AppState
 
-    @AppStorage("textifyr.aiExpanded")  private var aiExpanded:  Bool = false
-    @AppStorage("textifyr.focusMode")   private var focusMode:   Bool = false
-
+    // Source (captured input) and Result (the draft that Accept saves). Source→action→Result.
     @State private var sourceRTFData: Data? = nil
-    @StateObject private var editorFormatState = TextFormatState()
+    @State private var resultRTFData: Data? = nil
+    @StateObject private var editorFormatState = TextFormatState()   // source editor + dictation
+    @StateObject private var resultFormatState = TextFormatState()   // result editor
     @StateObject private var dictation = DictationHolder()
 
     @State private var selectedSourcePipelineID: PersistentIdentifier? = nil
-    @State private var pipelineRuns: [PipelineRun] = []
     @State private var isRunningPipeline = false
     @State private var runningPipelineTask: Task<Void, Never>? = nil
     @State private var pipelineProgress: DocumentFormattingService.Progress? = nil
     @State private var errorText: String? = nil
-    @State private var freeformPromptText = ""
-    @State private var isRunningFreeform = false
-    @State private var runningFreeformTask: Task<Void, Never>? = nil
-    @State private var freeformProgress: DocumentFormattingService.Progress? = nil
 
     @State private var isTranslating = false
     @State private var translateTask: Task<Void, Never>? = nil
     @State private var splitSheetRTFData: Data? = nil
+    @State private var showActionEditor = false
 
     private static let splitThreshold = 50_000
 
@@ -362,6 +272,12 @@ struct CaptureReviewStages: View {
                     }
                 }
             }
+            // Build/edit a Before Combining action over the review step; new actions appear in the
+            // "Run Preset Action" picker on dismiss (live @Query). The current transcript is
+            // forwarded so the action can be tested against real text (Spec 2).
+            .sheet(isPresented: $showActionEditor) {
+                ScopedPipelineEditorSheet(scope: .source, sampleText: plainTextForAI)
+            }
     }
 
     // MARK: - RTF initialization
@@ -383,6 +299,9 @@ struct CaptureReviewStages: View {
         } else {
             sourceRTFData = textToRTF(initialText)
         }
+        // Result starts as a copy of the source → "None (keep as captured)" is the default and
+        // Accept is valid immediately with no clicks.
+        if resultRTFData == nil { resultRTFData = sourceRTFData }
         reviewStepIndex = 1
     }
 
@@ -391,7 +310,7 @@ struct CaptureReviewStages: View {
     private var reviewView: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 16) {
 
                     if showAutoStoppedBanner {
                         HStack(spacing: 6) {
@@ -405,299 +324,9 @@ struct CaptureReviewStages: View {
                         .transition(.opacity)
                     }
 
-                    // Header row
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Source")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        if let data = sourceRTFData,
-                           let attr = NSAttributedString(rtf: data, documentAttributes: nil) {
-                            Text("\(attr.string.count.formatted()) chars")
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.tertiary)
-                        }
-                        Button {
-                            sourceRTFData = textToRTF(originalText)
-                        } label: {
-                            Label("Revert", systemImage: "arrow.uturn.backward")
-                        }
-                        .buttonStyle(.borderless)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) { focusMode.toggle() }
-                        } label: {
-                            Image(systemName: focusMode
-                                  ? "arrow.down.right.and.arrow.up.left"
-                                  : "arrow.up.left.and.arrow.down.right")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.borderless)
-                        .help(focusMode ? "Exit focus mode" : "Focus mode — hide AI tools")
-                    }
-
-                    // RTF editor block
-                    VStack(spacing: 0) {
-                        FormattingToolbar(fmt: editorFormatState)
-                        Divider()
-                        RichTextEditor(rtfData: $sourceRTFData, isEditable: true, formatState: editorFormatState)
-                            .frame(minHeight: 240)
-                            .onAppear { connectDictation() }
-                    }
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-
-                    if !focusMode {
-                        // Dictation controls
-                        dictationControlsView
-
-                        // Split warning
-                        if plainTextForAI.count > Self.splitThreshold, onAcceptSplit != nil {
-                            HStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
-                                Text("Large text (~\(estimatedChunks(for: plainTextForAI)) chunks). For better AI results, consider splitting into multiple sources before running AI.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Split Now…") { splitSheetRTFData = sourceRTFData }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color.orange.opacity(0.08))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.25), lineWidth: 0.5))
-                        }
-
-                        Divider()
-
-                        // AI section disclosure header
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) { aiExpanded.toggle() }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "wand.and.sparkles")
-                                    .font(.caption)
-                                    .foregroundStyle(Color.accentColor)
-                                Text("AI Actions")
-                                    .font(.caption.bold())
-                                    .foregroundStyle(.secondary)
-                                if !aiExpanded && !pipelineRuns.isEmpty {
-                                    Text("(\(pipelineRuns.count) result\(pipelineRuns.count == 1 ? "" : "s"))")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                }
-                                Spacer()
-                                Image(systemName: aiExpanded ? "chevron.down" : "chevron.right")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                        }
-                        .buttonStyle(.plain)
-
-                        if aiExpanded {
-                            // AI actions card
-                            VStack(spacing: 0) {
-                                // Card header
-                                HStack {
-                                    Text("AI Actions")
-                                        .font(.caption.bold())
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Button {
-                                        appState.inspectorDefaultScope = .source
-                                        appState.inspectorVisible = true
-                                    } label: {
-                                        Image(systemName: "slider.horizontal.3")
-                                            .font(.caption)
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .help("Manage Before Combining actions")
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Color(nsColor: .controlBackgroundColor))
-
-                                Divider()
-
-                                // Run preset action row
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Run Preset Action")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                        .textCase(.uppercase)
-
-                                    if sourcePipelines.isEmpty {
-                                        Text("No Before Combining actions yet — tap ⠿ to add one.")
-                                            .font(.caption)
-                                            .foregroundStyle(.tertiary)
-                                    } else {
-                                        HStack(spacing: 8) {
-                                            Picker("", selection: $selectedSourcePipelineID) {
-                                                Text("Choose an action…").tag(nil as PersistentIdentifier?)
-                                                ForEach(sourcePipelines) { p in
-                                                    Text(p.name).tag(p.id as PersistentIdentifier?)
-                                                }
-                                            }
-                                            .pickerStyle(.menu)
-                                            .labelsHidden()
-                                            .frame(maxWidth: .infinity)
-
-                                            if isRunningPipeline {
-                                                if let p = pipelineProgress {
-                                                    PipelineProgressView(progress: p).transition(.opacity)
-                                                } else {
-                                                    ProgressView().controlSize(.small)
-                                                }
-                                                Button("Cancel") {
-                                                    runningPipelineTask?.cancel()
-                                                    runningPipelineTask = nil
-                                                }
-                                                .buttonStyle(.bordered)
-                                                .controlSize(.small)
-                                            } else {
-                                                Button("Run") { runSourcePipeline() }
-                                                    .buttonStyle(.borderedProminent)
-                                                    .controlSize(.small)
-                                                    .disabled(selectedSourcePipelineID == nil || plainTextForAI.isEmpty)
-                                            }
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-
-                                HStack {
-                                    VStack { Divider() }
-                                    Text("or")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                        .fixedSize()
-                                    VStack { Divider() }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 4)
-
-                                // Refine with AI row
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack {
-                                        Text("Refine with AI")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                            .textCase(.uppercase)
-                                        Spacer()
-                                        Text("Each prompt builds on the last")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                    }
-
-                                    HStack(alignment: .top, spacing: 8) {
-                                        TextField("Type an instruction…", text: $freeformPromptText, axis: .vertical)
-                                            .textFieldStyle(.roundedBorder)
-                                            .font(.callout)
-                                            .lineLimit(2...4)
-                                            .disabled(isRunningFreeform)
-
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            if isRunningFreeform {
-                                                if let p = freeformProgress, p.chunkCount > 1 {
-                                                    PipelineProgressView(progress: p)
-                                                } else {
-                                                    ProgressView().controlSize(.small)
-                                                }
-                                                Button("Cancel") {
-                                                    runningFreeformTask?.cancel()
-                                                    runningFreeformTask = nil
-                                                }
-                                                .buttonStyle(.bordered)
-                                                .controlSize(.small)
-                                            } else {
-                                                Button("Send") {
-                                                    runningFreeformTask = Task { await runFreeformPrompt() }
-                                                }
-                                                .buttonStyle(.borderedProminent)
-                                                .controlSize(.small)
-                                                .disabled(freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || plainTextForAI.isEmpty)
-                                            }
-                                        }
-                                        .padding(.top, 2)
-                                    }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-
-                                HStack {
-                                    VStack { Divider() }
-                                    Text("or")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                        .fixedSize()
-                                    VStack { Divider() }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 4)
-
-                                // Translate row
-                                HStack(spacing: 8) {
-                                    Text("Translate")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                        .textCase(.uppercase)
-                                    Spacer()
-                                    if isTranslating {
-                                        ProgressView().controlSize(.small)
-                                        Text("Translating…").font(.caption).foregroundStyle(.secondary)
-                                        Button("Cancel") {
-                                            translateTask?.cancel()
-                                            translateTask = nil
-                                            isTranslating = false
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
-                                    } else {
-                                        TranslateButton(
-                                            helpText: "Translate the captured text using AI"
-                                        ) { lang in
-                                            translate(to: lang)
-                                        }
-                                        .disabled(plainTextForAI.isEmpty)
-                                    }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                            }
-                            .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-
-                            if !pipelineRuns.isEmpty {
-                                VStack(spacing: 8) {
-                                    ForEach($pipelineRuns) { $run in
-                                        PipelineRunBubble(
-                                            run: $run,
-                                            onTransfer: {
-                                                sourceRTFData = run.resultRTF
-                                                run.isTransferred = true
-                                            },
-                                            onDelete: run.pipelineName == "Refine with AI" && !run.isTransferred ? {
-                                                pipelineRuns.removeAll { $0.id == run.id }
-                                            } : nil
-                                        )
-                                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                                    }
-                                }
-                                .animation(.spring(response: 0.3, dampingFraction: 0.85), value: pipelineRuns.count)
-                            }
-                        }
-                    } // end if !focusMode
+                    sourceSection
+                    actionSection
+                    resultSection
 
                     if let err = errorText {
                         Text(err).font(.caption).foregroundStyle(.red)
@@ -729,10 +358,216 @@ struct CaptureReviewStages: View {
 
                 Button("Accept") { accept() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(sourceRTFData == nil && plainTextForAI.isEmpty)
+                    .disabled(resultPlain.isEmpty)
             }
         }
     }
+
+    // MARK: - Source (captured input)
+
+    private var sourceSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Captured Source")
+                    .font(.subheadline).bold()
+                    .foregroundStyle(.secondary)
+                if let count = charCount(sourceRTFData) {
+                    Text("\(count) chars")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                dictateControl
+                Button {
+                    sourceRTFData = textToRTF(originalText)
+                } label: {
+                    Label("Revert", systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("Restore the originally captured text")
+            }
+
+            RichTextEditor(rtfData: $sourceRTFData, isEditable: true, formatState: editorFormatState)
+                .frame(minHeight: 130, maxHeight: 260)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
+                .onAppear { connectDictation() }
+
+            if dictation.isActive {
+                dictationLevelBar
+            }
+
+            // Large-text affordance — splits the captured source into multiple sources.
+            if plainTextForAI.count > Self.splitThreshold, onAcceptSplit != nil {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2).foregroundStyle(.orange)
+                    Text("Large text (~\(estimatedChunks(for: plainTextForAI)) chunks). For better AI results, consider splitting into multiple sources.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Split Now…") { splitSheetRTFData = sourceRTFData }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(Color.orange.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.25), lineWidth: 0.5))
+            }
+        }
+    }
+
+    // MARK: - Action (source → result)
+
+    private var actionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Action")
+                    .font(.caption2).textCase(.uppercase)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                if isTranslating {
+                    ProgressView().controlSize(.small)
+                    Text("Translating…").font(.caption).foregroundStyle(.secondary)
+                    Button("Cancel") {
+                        translateTask?.cancel(); translateTask = nil; isTranslating = false
+                    }
+                    .buttonStyle(.borderless).font(.caption)
+                } else {
+                    TranslateButton(helpText: "Translate the captured text into the result") { lang in
+                        translate(to: lang)
+                    }
+                    .disabled(plainTextForAI.isEmpty || isRunningPipeline)
+                }
+                Button {
+                    showActionEditor = true
+                } label: {
+                    Label("New or Edit…", systemImage: "slider.horizontal.3").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Create or edit a Before Combining action")
+            }
+
+            HStack(spacing: 8) {
+                Picker("", selection: $selectedSourcePipelineID) {
+                    Text("None (keep as captured)").tag(nil as PersistentIdentifier?)
+                    ForEach(sourcePipelines) { p in
+                        Text(p.name).tag(p.id as PersistentIdentifier?)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+                .disabled(isRunningPipeline)
+
+                if isRunningPipeline {
+                    if let p = pipelineProgress {
+                        PipelineProgressView(progress: p).transition(.opacity)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Button("Cancel") {
+                        runningPipelineTask?.cancel(); runningPipelineTask = nil
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                } else {
+                    Button(selectedSourcePipelineID == nil ? "Use Captured Text" : "Run") {
+                        runSelectedAction()
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .disabled(plainTextForAI.isEmpty)
+                }
+            }
+
+            Text("Actions are reusable recipes built from prompts. The result appears below, where you can edit it before accepting.")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
+    }
+
+    // MARK: - Result (the draft Accept saves)
+
+    private var resultSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Result")
+                    .font(.subheadline).bold()
+                    .foregroundStyle(.secondary)
+                if let count = charCount(resultRTFData) {
+                    Text("\(count) chars")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Button {
+                    resultRTFData = textToRTF("")
+                } label: {
+                    Label("Clear", systemImage: "xmark.circle")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .disabled(resultPlain.isEmpty)
+                .help("Empty the result field")
+                Text("Saved when you Accept")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+
+            VStack(spacing: 0) {
+                FormattingToolbar(fmt: resultFormatState)
+                Divider()
+                RichTextEditor(rtfData: $resultRTFData, isEditable: true, formatState: resultFormatState)
+                    .frame(minHeight: 200)
+            }
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.15), lineWidth: 1))
+        }
+    }
+
+    // MARK: - Dictation UI
+
+    private var dictateControl: some View {
+        Group {
+            if !dictation.isActive {
+                Button {
+                    errorText = nil
+                    connectDictation()
+                    Task {
+                        do { try await dictation.start() }
+                        catch { errorText = "Dictation failed: \(error.localizedDescription)" }
+                    }
+                } label: {
+                    Label("Dictate", systemImage: "mic.badge.plus").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Dictate text and insert it into the source at the cursor")
+            }
+        }
+    }
+
+    private var dictationLevelBar: some View {
+        HStack(spacing: 10) {
+            GeometryReader { geo in
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.red)
+                    .frame(width: geo.size.width * CGFloat(dictation.level))
+                    .animation(.linear(duration: 0.08), value: dictation.level)
+            }
+            .frame(height: 6)
+            .background(Color.red.opacity(0.2))
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+
+            Button("Stop Dictating") { Task { await dictation.stop() } }
+                .buttonStyle(.bordered).tint(.red).controlSize(.small)
+        }
+        .animation(.easeInOut(duration: 0.2), value: dictation.isActive)
+    }
+
 
     // MARK: - Dictation
 
@@ -752,44 +587,6 @@ struct CaptureReviewStages: View {
         dictation.proxy = proxy
     }
 
-    private var dictationControlsView: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if dictation.isActive {
-                HStack(spacing: 10) {
-                    GeometryReader { geo in
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.red)
-                            .frame(width: geo.size.width * CGFloat(dictation.level))
-                            .animation(.linear(duration: 0.08), value: dictation.level)
-                    }
-                    .frame(height: 6)
-                    .background(Color.red.opacity(0.2))
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-
-                    Button("Stop Dictating") { Task { await dictation.stop() } }
-                        .buttonStyle(.bordered)
-                        .tint(.red)
-                        .controlSize(.small)
-                }
-            } else {
-                Button {
-                    errorText = nil
-                    connectDictation()
-                    Task {
-                        do { try await dictation.start() }
-                        catch { errorText = "Dictation failed: \(error.localizedDescription)" }
-                    }
-                } label: {
-                    Label("Dictate", systemImage: "mic.badge.plus").font(.caption)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Dictate text and insert it at the cursor position")
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: dictation.isActive)
-    }
-
     private func stopDictationIfActive() {
         guard dictation.isActive else { return }
         dictation.cancel()
@@ -804,37 +601,54 @@ struct CaptureReviewStages: View {
         return attr.string.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The Result field's plain text — this is what Accept saves.
+    private var resultPlain: String {
+        guard let data = resultRTFData,
+              let attr = NSAttributedString(rtf: data, documentAttributes: nil)
+        else { return "" }
+        return attr.string.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func charCount(_ data: Data?) -> Int? {
+        guard let data, let attr = NSAttributedString(rtf: data, documentAttributes: nil) else { return nil }
+        return attr.string.count
+    }
+
     // MARK: - Accept
 
     private func accept() {
         stopDictationIfActive()
-        let plain = plainTextForAI
-        onAccept(plain.isEmpty ? "" : plain, sourceRTFData)
+        onAccept(resultPlain, resultRTFData)
     }
 
-    // MARK: - Pipeline
+    // MARK: - Action (source → result)
 
-    private func runSourcePipeline() {
-        let textToProcess = plainTextForAI
-        guard let pipeline = sourcePipelines.first(where: { $0.id == selectedSourcePipelineID }),
-              !textToProcess.isEmpty else { return }
+    /// Produces the Result from the Source. "None" copies the captured text through; a selected
+    /// action runs on the source and writes its output into Result (replacing it).
+    private func runSelectedAction() {
+        let input = plainTextForAI
+        guard !input.isEmpty else { return }
+
+        guard let pipeline = sourcePipelines.first(where: { $0.id == selectedSourcePipelineID }) else {
+            // "None (keep as captured)" — pass the source through unchanged.
+            resultRTFData = sourceRTFData
+            return
+        }
+
         runningPipelineTask?.cancel()
         pipeline.usageCount += 1
         isRunningPipeline = true
         errorText = nil
-        let pipelineName = pipeline.name
         runningPipelineTask = Task { @MainActor in
             do {
                 let result = try await DocumentFormattingService().formatToText(
-                    sourceText: textToProcess, pipeline: pipeline,
+                    sourceText: input, pipeline: pipeline,
                     onProgress: { [self] p in pipelineProgress = p })
-                if !Task.isCancelled {
-                    pipelineRuns.append(PipelineRun(pipelineName: pipelineName, result: result, resultRTF: textToRTF(result)))
-                }
+                if !Task.isCancelled { resultRTFData = textToRTF(result) }
+            } catch is CancellationError {
+                // user cancelled — leave the prior result in place
             } catch {
-                if !Task.isCancelled {
-                    errorText = "Action failed: \(error.localizedDescription)"
-                }
+                if !Task.isCancelled { errorText = "Action failed: \(error.localizedDescription)" }
             }
             isRunningPipeline = false
             pipelineProgress = nil
@@ -851,9 +665,7 @@ struct CaptureReviewStages: View {
             do {
                 let result = try await DocumentFormattingService()
                     .formatWithPrompt(sourceText: source, systemPrompt: language.promptText)
-                if !Task.isCancelled {
-                    pipelineRuns.append(PipelineRun(pipelineName: "Translate to \(language.name)", result: result, resultRTF: textToRTF(result)))
-                }
+                if !Task.isCancelled { resultRTFData = textToRTF(result) }
             } catch is CancellationError {
             } catch {
                 if !Task.isCancelled { errorText = "Translation failed: \(error.localizedDescription)" }
@@ -861,34 +673,6 @@ struct CaptureReviewStages: View {
             isTranslating = false
             translateTask = nil
         }
-    }
-
-    private func runFreeformPrompt() async {
-        let prompt = freeformPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let currentPlain = plainTextForAI
-        guard !prompt.isEmpty, !currentPlain.isEmpty else { return }
-        isRunningFreeform = true
-        freeformProgress = nil
-        errorText = nil
-        let chainInput = pipelineRuns.last(where: { $0.pipelineName == "Refine with AI" })?.result ?? currentPlain
-        let systemPrompt = "You are a helpful assistant editing a text transcript. Follow this instruction exactly and return only the modified text, with no preamble: \(prompt)"
-        do {
-            let result = try await DocumentFormattingService()
-                .formatWithPrompt(sourceText: chainInput, systemPrompt: systemPrompt) { p in
-                    freeformProgress = p
-                }
-            if !result.isEmpty && !Task.isCancelled {
-                pipelineRuns.append(PipelineRun(pipelineName: "Refine with AI", result: result, resultRTF: textToRTF(result)))
-                freeformPromptText = ""
-            }
-        } catch is CancellationError {
-            // user cancelled — no error shown
-        } catch {
-            if !Task.isCancelled { errorText = "AI prompt failed: \(error.localizedDescription)" }
-        }
-        isRunningFreeform = false
-        freeformProgress = nil
-        runningFreeformTask = nil
     }
 
     private func estimatedChunks(for text: String) -> Int {

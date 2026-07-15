@@ -353,7 +353,6 @@ struct SessionEditView: View {
                 Text(showingTrace ? "Run Trace" : "Edit Session")
                     .font(.title2).bold()
                 Spacer()
-                if !showingTrace { stepIndicator }
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -469,22 +468,6 @@ struct SessionEditView: View {
                 }
             )
         }
-    }
-
-    private var stepIndicator: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(reviewStepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: reviewStepIndex == i ? 10 : 7, height: reviewStepIndex == i ? 10 : 7)
-                if i < 2 {
-                    Rectangle()
-                        .fill(reviewStepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 32, height: 2)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: reviewStepIndex)
     }
 
     // MARK: - Failure banner (21.5)
