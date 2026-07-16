@@ -10,6 +10,7 @@ struct PhotoLibraryInputView: View {
     @ObservedObject var captureVM: InputCaptureViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.wizardDismiss) private var wizardDismiss
+    @EnvironmentObject private var appState: AppState
     private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : dismiss() }
 
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "postCapture" },
@@ -32,6 +33,8 @@ struct PhotoLibraryInputView: View {
     @State private var isProcessing = false
     @State private var showingCropView = false
     @State private var errorText: String?
+    @State private var showActionEditor = false
+    @State private var showDiscardConfirm = false
 
     var body: some View {
         Group {
@@ -39,16 +42,7 @@ struct PhotoLibraryInputView: View {
                 reviewPanel
             } else {
                 VStack(spacing: 0) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "photo.on.rectangle.angled").foregroundStyle(.tint)
-                        Text("Photo Library").font(.title2).bold()
-                        Spacer()
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 18)
-                    .padding(.bottom, 14)
-
-                    Divider()
+                    ToolColumnHeader("Photo Library")
 
                     Group {
                         if currentImage == nil && !isLoadingImage {
@@ -56,18 +50,18 @@ struct PhotoLibraryInputView: View {
                         } else if isLoadingImage {
                             loadingContent
                         } else {
-                            reviewContent
+                            readyContent
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    Divider()
-
-                    HStack {
-                        Button("Cancel") { captureVM.reset(); closeWizard() }
+                    ToolColumnFooter {
+                        Button("Cancel") { cancelWizard() }
                             .buttonStyle(.bordered)
                         Spacer()
-                        if currentImage == nil && !isLoadingImage {
+                        if isProcessing || isRunningPostCapture || isLoadingImage {
+                            ProgressView().controlSize(.small)
+                        } else if currentImage == nil {
                             PhotosPicker(
                                 selection: $selectedItem,
                                 matching: .images,
@@ -76,17 +70,11 @@ struct PhotoLibraryInputView: View {
                                 Label("Choose Photo…", systemImage: "photo.on.rectangle")
                             }
                             .buttonStyle(.borderedProminent)
-                        } else if !isLoadingImage {
-                            Button("Continue") {
-                                proceedToReview(text: recognizedText)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing || isRunningPostCapture)
+                        } else {
+                            Button("Crop") { showingCropView = true }
+                                .buttonStyle(.borderedProminent)
                         }
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 14)
-                    .background(.bar)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -110,6 +98,35 @@ struct PhotoLibraryInputView: View {
         .alert("Photo Error", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("OK") { errorText = nil }
         } message: { Text(errorText ?? "") }
+        .sheet(isPresented: $showActionEditor) {
+            ScopedPipelineEditorSheet(scope: .postCapture)
+        }
+        .confirmationDialog("Discard this capture?",
+                            isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { cancelWizard() }
+            Button("Keep Editing", role: .cancel) { }
+        } message: {
+            Text("The recognised text will be lost.")
+        }
+        .onAppear {
+            updateWizardBreadcrumb()
+            appState.captureWizardActive = true
+        }
+        .onChange(of: wizardStep) { _, _ in updateWizardBreadcrumb() }
+        .onDisappear {
+            appState.captureWizardActive = false
+            if appState.workspaceMode == .documents {
+                appState.breadcrumb = [
+                    BreadcrumbCrumb("Documents", targetMode: .documents),
+                    BreadcrumbCrumb(captureVM.document.title, targetMode: .documents),
+                ]
+            }
+        }
+        .onChange(of: appState.requestExitCapture) { _, req in
+            guard req else { return }
+            appState.requestExitCapture = false
+            if hasUnsavedCapture { showDiscardConfirm = true } else { cancelWizard() }
+        }
         .onChange(of: captureVM.phase) { _, phase in
             if phase == .done { closeWizard() }
         }
@@ -119,23 +136,38 @@ struct PhotoLibraryInputView: View {
         }
     }
 
-    // MARK: - Review panel (steps 2 & 3)
+    // MARK: - Chrome helpers
+
+    private var hasUnsavedCapture: Bool {
+        wizardStep == .review || currentImage != nil || isProcessing || isRunningPostCapture
+            || !recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Wizard step in the jump-bar (Phase 22.8): `Documents ▸ Document: <doc> ▸ Add Source ▸ Photo Library [▸ Review]`.
+    private func updateWizardBreadcrumb() {
+        let docTitle = captureVM.document.title
+        var crumbs: [BreadcrumbCrumb] = [
+            BreadcrumbCrumb("Documents", target: .documents),
+            BreadcrumbCrumb("Document: \(docTitle.isEmpty ? "Document" : docTitle)", target: .documents),
+            BreadcrumbCrumb("Add Source"),
+            BreadcrumbCrumb("Photo Library"),
+        ]
+        if wizardStep == .review { crumbs.append(BreadcrumbCrumb("Review")) }
+        appState.breadcrumb = crumbs
+    }
+
+    private func cancelWizard() {
+        postCaptureTask?.cancel()
+        postCaptureTask = nil
+        captureVM.reset()
+        closeWizard()
+    }
+
+    // MARK: - Review panel
 
     private var reviewPanel: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "photo.on.rectangle.angled")
-                    .foregroundStyle(.tint)
-                Text("Photo Library")
-                    .font(.title2).bold()
-                Spacer()
-                stepDotsIndicator
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
-
-            Divider()
+            ToolColumnHeader("Photo Library")
 
             CaptureReviewStages(
                 originalText: capturedText,
@@ -143,15 +175,15 @@ struct PhotoLibraryInputView: View {
                 isEditMode: false,
                 reviewStepIndex: $reviewStepIndex,
                 onBack: {
+                    // Retake: back to a fresh photo pick.
                     postCaptureTask?.cancel()
+                    currentImage = nil
+                    recognizedText = ""
+                    errorText = nil
                     reviewStepIndex = 1
                     wizardStep = .acquire
                 },
-                onCancel: {
-                    postCaptureTask?.cancel()
-                    captureVM.reset()
-                    closeWizard()
-                },
+                onCancel: { cancelWizard() },
                 onAccept: { finalText, rtfData in
                     if let rtf = rtfData {
                         captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .photoLibrary)
@@ -162,22 +194,6 @@ struct PhotoLibraryInputView: View {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var stepDotsIndicator: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(reviewStepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: reviewStepIndex == i ? 10 : 7, height: reviewStepIndex == i ? 10 : 7)
-                if i < 2 {
-                    Rectangle()
-                        .fill(reviewStepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 32, height: 2)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: reviewStepIndex)
     }
 
     // MARK: - Selection
@@ -210,49 +226,36 @@ struct PhotoLibraryInputView: View {
 
     // MARK: - Acquire review (crop + recognized text)
 
-    @ViewBuilder private var reviewContent: some View {
-        VStack(spacing: 8) {
+    @ViewBuilder private var readyContent: some View {
+        VStack(spacing: 12) {
+            if let img = currentImage {
+                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
+                    .resizable().scaledToFit()
+                    .frame(maxHeight: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                    .padding(.horizontal)
+            }
+
             HStack {
-                Label("Recognised Text", systemImage: "text.viewfinder")
-                    .font(.headline).foregroundStyle(.secondary)
-
+                Text("Photo loaded").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-
-                if isProcessing { ProgressView().controlSize(.small) }
-
-                Button("Crop") { showingCropView = true }
-                    .buttonStyle(.bordered)
-
-                Button("Clear") { recognizedText = "" }
-                    .buttonStyle(.bordered)
-                    .disabled(recognizedText.isEmpty)
-
-                PhotosPicker(
-                    selection: $selectedItem,
-                    matching: .images,
-                    photoLibrary: .shared()
-                ) {
-                    Text("Pick More")
+                PhotosPicker(selection: $selectedItem, matching: .images, photoLibrary: .shared()) {
+                    Text("Pick Another")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.bordered).controlSize(.small)
             }
             .padding(.horizontal)
 
-            Text("Crop to select regions for OCR. Each crop appends to the text below.")
-                .font(.caption).foregroundStyle(.tertiary).padding(.horizontal)
-
-            if recognizedText.isEmpty && !isProcessing {
-                Text("No text yet — use Crop to recognise a region.")
-                    .font(.body).foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
+            if isProcessing || isRunningPostCapture {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(isProcessing ? "Recognising text…" : "Running action…")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             } else {
-                TextEditor(text: $recognizedText)
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                    .padding(.horizontal)
+                Text("Crop the region to recognise, then continue to review.")
+                    .font(.caption).foregroundStyle(.tertiary)
             }
 
             if let error = errorText { errorLabel(error).padding(.horizontal) }
@@ -261,23 +264,32 @@ struct PhotoLibraryInputView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 8)
         }
+        .padding(.top, 8)
     }
 
     // MARK: - Pipeline picker card
 
     @ViewBuilder private var pipelinePickerCard: some View {
-        if !postCapturePipelines.isEmpty {
-            VStack(spacing: 0) {
-                LabeledContent("After Capture") {
-                    Picker("", selection: $selectedPostCapturePipelineID) {
-                        Text("None").tag(nil as PersistentIdentifier?)
-                        ForEach(postCapturePipelines) { p in
-                            Text(p.name).tag(p.id as PersistentIdentifier?)
+        VStack(spacing: 0) {
+            if !postCapturePipelines.isEmpty {
+                VStack(spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text("After Capture, run Action")
+                        Picker("", selection: $selectedPostCapturePipelineID) {
+                            Text("Nothing").tag(nil as PersistentIdentifier?)
+                            ForEach(postCapturePipelines) { p in
+                                Text(p.name).tag(p.id as PersistentIdentifier?)
+                            }
                         }
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .disabled(isRunningPostCapture)
                     }
-                    .pickerStyle(.menu)
-                    .disabled(isRunningPostCapture)
+                    Text("Actions are reusable recipes built from prompts.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
+                .frame(maxWidth: .infinity)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
 
@@ -302,9 +314,21 @@ struct PhotoLibraryInputView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                 }
+
+                Divider().padding(.leading, 12)
             }
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            HStack {
+                Spacer()
+                Button {
+                    showActionEditor = true
+                } label: {
+                    Label("New or Edit Action…", systemImage: "slider.horizontal.3").font(.caption)
+                }
+                .buttonStyle(.borderless).foregroundStyle(.secondary)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
         }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func errorLabel(_ text: String) -> some View {
@@ -363,12 +387,17 @@ struct PhotoLibraryInputView: View {
     private func processCroppedImage(_ cgImage: CGImage) async {
         guard !isProcessing else { return }
         isProcessing = true
+        errorText = nil
         do {
             let text = try await VisionTextService.recognizeText(in: cgImage)
             if text.isEmpty {
-                errorText = "No text detected in the cropped region."
+                errorText = "No text detected. Crop a different region."
             } else {
-                recognizedText = recognizedText.isEmpty ? text : recognizedText + "\n\n--- Crop ---\n\n" + text
+                // OCR done → run the After Capture action → straight to the review step.
+                recognizedText = text
+                isProcessing = false
+                proceedToReview(text: text)
+                return
             }
         } catch {
             errorText = error.localizedDescription

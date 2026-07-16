@@ -27,6 +27,8 @@ struct RTFEditorInputView: View {
 
     @StateObject private var formatState = TextFormatState()
     @State private var rtfData: Data? = nil
+    @State private var showActionEditor = false
+    @State private var showDiscardConfirm = false
 
     private var isEmpty: Bool {
         guard let data = rtfData,
@@ -51,17 +53,7 @@ struct RTFEditorInputView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.text").foregroundStyle(.tint)
-                Text("Text Editor").font(.title2).bold()
-                Spacer()
-                stepDotsIndicator
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
-
-            Divider()
+            ToolColumnHeader("Text Editor")
 
             ZStack {
                 if wizardStep == .review {
@@ -77,11 +69,7 @@ struct RTFEditorInputView: View {
                             stepForward = false
                             withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) { wizardStep = .acquire }
                         },
-                        onCancel: {
-                            postCaptureTask?.cancel()
-                            captureVM.reset()
-                            closeWizard()
-                        },
+                        onCancel: { cancelWizard() },
                         onAccept: { finalText, finalRTFData in
                             if let rtf = finalRTFData {
                                 captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText)
@@ -102,25 +90,64 @@ struct RTFEditorInputView: View {
             .clipped()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showActionEditor) {
+            ScopedPipelineEditorSheet(scope: .postCapture)
+        }
+        .confirmationDialog("Discard this text?",
+                            isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { cancelWizard() }
+            Button("Keep Editing", role: .cancel) { }
+        } message: {
+            Text("The text you entered will be lost.")
+        }
+        .onAppear {
+            updateWizardBreadcrumb()
+            appState.captureWizardActive = true
+        }
+        .onChange(of: wizardStep) { _, _ in updateWizardBreadcrumb() }
+        .onDisappear {
+            appState.captureWizardActive = false
+            if appState.workspaceMode == .documents {
+                appState.breadcrumb = [
+                    BreadcrumbCrumb("Documents", targetMode: .documents),
+                    BreadcrumbCrumb(captureVM.document.title, targetMode: .documents),
+                ]
+            }
+        }
+        .onChange(of: appState.requestExitCapture) { _, req in
+            guard req else { return }
+            appState.requestExitCapture = false
+            if hasUnsavedCapture { showDiscardConfirm = true } else { cancelWizard() }
+        }
         .onChange(of: captureVM.phase) { _, phase in
             if phase == .done { closeWizard() }
         }
     }
 
-    private var stepDotsIndicator: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(reviewStepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: reviewStepIndex == i ? 10 : 7, height: reviewStepIndex == i ? 10 : 7)
-                if i < 2 {
-                    Rectangle()
-                        .fill(reviewStepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 32, height: 2)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: reviewStepIndex)
+    // MARK: - Chrome helpers
+
+    private var hasUnsavedCapture: Bool {
+        wizardStep == .review || isRunningPostCapture || !isEmpty
+    }
+
+    /// Wizard step in the jump-bar (Phase 22.8): `Documents ▸ Document: <doc> ▸ Add Source ▸ Text Editor [▸ Review]`.
+    private func updateWizardBreadcrumb() {
+        let docTitle = captureVM.document.title
+        var crumbs: [BreadcrumbCrumb] = [
+            BreadcrumbCrumb("Documents", target: .documents),
+            BreadcrumbCrumb("Document: \(docTitle.isEmpty ? "Document" : docTitle)", target: .documents),
+            BreadcrumbCrumb("Add Source"),
+            BreadcrumbCrumb("Text Editor"),
+        ]
+        if wizardStep == .review { crumbs.append(BreadcrumbCrumb("Review")) }
+        appState.breadcrumb = crumbs
+    }
+
+    private func cancelWizard() {
+        postCaptureTask?.cancel()
+        postCaptureTask = nil
+        captureVM.reset()
+        closeWizard()
     }
 
     // MARK: - Acquire view
@@ -135,17 +162,15 @@ struct RTFEditorInputView: View {
             pipelinePickerCard
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
-            Divider()
-            HStack {
-                Button("Cancel") { captureVM.reset(); closeWizard() }
+                .padding(.bottom, 12)
+            ToolColumnFooter {
+                Button("Cancel") { cancelWizard() }
                     .buttonStyle(.bordered)
                 Spacer()
                 Button("Continue") { proceedToReview(text: plainText) }
                     .buttonStyle(.borderedProminent)
                     .disabled(isEmpty || isRunningPostCapture)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
         }
         .frame(maxWidth: .infinity)
     }
@@ -154,16 +179,24 @@ struct RTFEditorInputView: View {
 
     @ViewBuilder private var pipelinePickerCard: some View {
         VStack(spacing: 0) {
-            LabeledContent("After Capture") {
-                Picker("", selection: $selectedPostCapturePipelineID) {
-                    Text("None").tag(nil as PersistentIdentifier?)
-                    ForEach(postCapturePipelines) { p in
-                        Text(p.name).tag(p.id as PersistentIdentifier?)
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("After Capture, run Action")
+                    Picker("", selection: $selectedPostCapturePipelineID) {
+                        Text("Nothing").tag(nil as PersistentIdentifier?)
+                        ForEach(postCapturePipelines) { p in
+                            Text(p.name).tag(p.id as PersistentIdentifier?)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    .disabled(isRunningPostCapture || postCapturePipelines.isEmpty)
                 }
-                .pickerStyle(.menu)
-                .disabled(isRunningPostCapture || postCapturePipelines.isEmpty)
+                Text("Actions are reusable recipes built from prompts.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
 
@@ -190,10 +223,9 @@ struct RTFEditorInputView: View {
             HStack {
                 Spacer()
                 Button {
-                    appState.inspectorDefaultScope = .postCapture
-                    appState.inspectorVisible = true
+                    showActionEditor = true
                 } label: {
-                    Label("Manage Actions…", systemImage: "slider.horizontal.3").font(.caption)
+                    Label("New or Edit Action…", systemImage: "slider.horizontal.3").font(.caption)
                 }
                 .buttonStyle(.borderless).foregroundStyle(.secondary)
                 .padding(.horizontal, 12).padding(.vertical, 8)

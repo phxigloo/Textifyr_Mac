@@ -40,16 +40,22 @@ struct PDFInputView: View {
     @State private var errorText: String?
     @State private var warningText: String?
     @State private var showCharLimitAlert = false
+    @State private var showActionEditor = false
+    @State private var showDiscardConfirm = false
 
     var body: some View {
-        ZStack {
-            if wizardStep == .review {
-                reviewPanel.transition(stepTransition)
-            } else {
-                acquireView.transition(stepTransition)
+        VStack(spacing: 0) {
+            ToolColumnHeader("Import PDF")
+            ZStack {
+                if wizardStep == .review {
+                    reviewPanel.transition(stepTransition)
+                } else {
+                    acquireView.transition(stepTransition)
+                }
             }
+            .clipped()
         }
-        .clipped()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.pdf], allowsMultipleSelection: false) { result in
             handleFileSelection(result)
         }
@@ -69,78 +75,100 @@ struct PDFInputView: View {
                 .frame(minWidth: 560, minHeight: 480)
             }
         }
+        // Build/edit an After Capture action over the wizard; new actions appear in the picker on dismiss.
+        .sheet(isPresented: $showActionEditor) {
+            ScopedPipelineEditorSheet(scope: .postCapture)
+        }
         .alert("Character Limit Reached", isPresented: $showCharLimitAlert) {
             Button("OK") {}
         } message: {
             Text("The extracted text exceeds \(AppConstants.maxImportCharacters.formatted()) characters and has been truncated. Consider reducing the page range.")
+        }
+        .confirmationDialog("Discard this import?",
+                            isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { cancelWizard() }
+            Button("Keep Editing", role: .cancel) { }
+        } message: {
+            Text("The extracted text will be lost.")
+        }
+        .onAppear {
+            updateWizardBreadcrumb()
+            appState.captureWizardActive = true
+        }
+        .onChange(of: wizardStep) { _, _ in updateWizardBreadcrumb() }
+        .onDisappear {
+            appState.captureWizardActive = false
+            if appState.workspaceMode == .documents {
+                appState.breadcrumb = [
+                    BreadcrumbCrumb("Documents", targetMode: .documents),
+                    BreadcrumbCrumb(captureVM.document.title, targetMode: .documents),
+                ]
+            }
+        }
+        .onChange(of: appState.requestExitCapture) { _, req in
+            guard req else { return }
+            appState.requestExitCapture = false
+            if hasUnsavedCapture { showDiscardConfirm = true } else { cancelWizard() }
         }
         .onChange(of: captureVM.phase) { _, phase in
             if phase == .done { closeWizard() }
         }
     }
 
+    // MARK: - Chrome helpers
+
+    /// True while there's extracted/imported work that leaving would throw away.
+    private var hasUnsavedCapture: Bool {
+        wizardStep == .review || isExtracting || isRunningPostCapture
+            || !extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Wizard step in the jump-bar (Phase 22.8): `Documents ▸ Document: <doc> ▸ Add Source ▸ PDF [▸ Review]`.
+    private func updateWizardBreadcrumb() {
+        let docTitle = captureVM.document.title
+        var crumbs: [BreadcrumbCrumb] = [
+            BreadcrumbCrumb("Documents", target: .documents),
+            BreadcrumbCrumb("Document: \(docTitle.isEmpty ? "Document" : docTitle)", target: .documents),
+            BreadcrumbCrumb("Add Source"),
+            BreadcrumbCrumb("PDF"),
+        ]
+        if wizardStep == .review { crumbs.append(BreadcrumbCrumb("Review")) }
+        appState.breadcrumb = crumbs
+    }
+
+    private func cancelWizard() {
+        postCaptureTask?.cancel()
+        postCaptureTask = nil
+        captureVM.reset()
+        closeWizard()
+    }
+
     // MARK: - Review panel (steps 2 & 3)
 
     private var reviewPanel: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.richtext")
-                    .foregroundStyle(.tint)
-                Text("Import PDF")
-                    .font(.title2).bold()
-                Spacer()
-                stepDotsIndicator
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 14)
-
-            Divider()
-
-            CaptureReviewStages(
-                originalText: capturedText,
-                initialText: capturedText,
-                isEditMode: false,
-                reviewStepIndex: $reviewStepIndex,
-                onBack: {
-                    postCaptureTask?.cancel()
-                    reviewStepIndex = 1
-                    wizardStep = .acquire
-                },
-                onCancel: {
-                    postCaptureTask?.cancel()
-                    captureVM.reset()
-                    closeWizard()
-                },
-                onAccept: { finalText, rtfData in
-                    if let rtf = rtfData {
-                        captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .pdf)
-                    } else {
-                        captureVM.saveTextCapture(finalText, captureMethod: .pdf)
-                    }
-                },
-                onAcceptSplit: { parts in
-                    captureVM.saveMultipleRTFCaptures(parts, captureMethod: .pdf)
+        CaptureReviewStages(
+            originalText: capturedText,
+            initialText: capturedText,
+            isEditMode: false,
+            reviewStepIndex: $reviewStepIndex,
+            onBack: {
+                postCaptureTask?.cancel()
+                reviewStepIndex = 1
+                wizardStep = .acquire
+            },
+            onCancel: { cancelWizard() },
+            onAccept: { finalText, rtfData in
+                if let rtf = rtfData {
+                    captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .pdf)
+                } else {
+                    captureVM.saveTextCapture(finalText, captureMethod: .pdf)
                 }
-            )
-        }
+            },
+            onAcceptSplit: { parts in
+                captureVM.saveMultipleRTFCaptures(parts, captureMethod: .pdf)
+            }
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var stepDotsIndicator: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(reviewStepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: reviewStepIndex == i ? 10 : 7, height: reviewStepIndex == i ? 10 : 7)
-                if i < 2 {
-                    Rectangle()
-                        .fill(reviewStepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 32, height: 2)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: reviewStepIndex)
     }
 
     @State private var stepForward = true
@@ -203,11 +231,7 @@ struct PDFInputView: View {
                 .animation(.easeInOut(duration: 0.2), value: isExtracting)
             }
 
-            Divider()
-
-            controlsBar
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+            ToolColumnFooter { controlsBar }
         }
         .frame(maxWidth: .infinity, minHeight: 480)
     }
@@ -271,37 +295,33 @@ struct PDFInputView: View {
     // MARK: - Controls
 
     @ViewBuilder private var controlsBar: some View {
-        HStack(spacing: 12) {
-            Button("Cancel") { captureVM.reset(); closeWizard() }
+        Button("Cancel") { cancelWizard() }
+            .buttonStyle(.bordered)
+
+        if selectedURL != nil && !isExtracting {
+            Button("Crop Page") { cropAndShowPage() }
                 .buttonStyle(.bordered)
+                .disabled(!isSinglePageSelected)
+                .help(isSinglePageSelected ? "Crop a region of this page for OCR" : "Set From and To to the same page to crop")
 
-            if selectedURL != nil && !isExtracting {
-                Button("Crop Page") { cropAndShowPage() }
-                    .buttonStyle(.bordered)
-                    .disabled(!isSinglePageSelected)
-                    .help(isSinglePageSelected ? "Crop a region of this page for OCR" : "Set From and To to the same page to crop")
+            Button("Clear") { extractedText = "" }
+                .buttonStyle(.bordered)
+                .disabled(extractedText.isEmpty)
+        }
 
-                Button("Clear") { extractedText = "" }
-                    .buttonStyle(.bordered)
-                    .disabled(extractedText.isEmpty)
-            }
+        Spacer()
 
-            Spacer()
-
-            if isExtracting {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Button("Stop") { isExtracting = false }
-                        .buttonStyle(.bordered)
-                }
-            } else if selectedURL == nil {
-                Button("Choose PDF…") { showFilePicker = true }
-                    .buttonStyle(.borderedProminent)
-            } else {
-                Button("Continue") { proceedToReview(text: extractedText) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isRunningPostCapture || extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
+        if isExtracting {
+            ProgressView().controlSize(.small)
+            Button("Stop") { isExtracting = false }
+                .buttonStyle(.bordered)
+        } else if selectedURL == nil {
+            Button("Choose PDF…") { showFilePicker = true }
+                .buttonStyle(.borderedProminent)
+        } else {
+            Button("Continue") { proceedToReview(text: extractedText) }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunningPostCapture || extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 
@@ -309,16 +329,24 @@ struct PDFInputView: View {
 
     @ViewBuilder private var pipelinePickerCard: some View {
         VStack(spacing: 0) {
-            LabeledContent("After Capture") {
-                Picker("", selection: $selectedPostCapturePipelineID) {
-                    Text("None").tag(nil as PersistentIdentifier?)
-                    ForEach(postCapturePipelines) { p in
-                        Text(p.name).tag(p.id as PersistentIdentifier?)
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("After Capture, run Action")
+                    Picker("", selection: $selectedPostCapturePipelineID) {
+                        Text("Nothing").tag(nil as PersistentIdentifier?)
+                        ForEach(postCapturePipelines) { p in
+                            Text(p.name).tag(p.id as PersistentIdentifier?)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    .disabled(isRunningPostCapture || postCapturePipelines.isEmpty)
                 }
-                .pickerStyle(.menu)
-                .disabled(isRunningPostCapture || postCapturePipelines.isEmpty)
+                Text("Actions are reusable recipes built from prompts.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
 
@@ -345,10 +373,9 @@ struct PDFInputView: View {
             HStack {
                 Spacer()
                 Button {
-                    appState.inspectorDefaultScope = .postCapture
-                    appState.inspectorVisible = true
+                    showActionEditor = true
                 } label: {
-                    Label("Manage Actions…", systemImage: "slider.horizontal.3").font(.caption)
+                    Label("New or Edit Action…", systemImage: "slider.horizontal.3").font(.caption)
                 }
                 .buttonStyle(.borderless).foregroundStyle(.secondary)
                 .padding(.horizontal, 12).padding(.vertical, 8)

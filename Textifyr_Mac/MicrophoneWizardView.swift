@@ -30,6 +30,8 @@ struct MicrophoneWizardView: View {
     @State private var postCaptureTask: Task<Void, Never>? = nil
     @State private var postCaptureError: String? = nil
     @State private var postCaptureProgress: DocumentFormattingService.Progress? = nil
+    @State private var showActionEditor = false
+    @State private var showDiscardConfirm = false
     @EnvironmentObject private var appState: AppState
 
     // Session & text (passed to CaptureReviewStages)
@@ -48,13 +50,14 @@ struct MicrophoneWizardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            ToolColumnHeader(title)
             stepContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             restorePostCapturePipeline()
+            updateWizardBreadcrumb()
+            appState.captureWizardActive = true
             if let session = initialSession {
                 capturedSession = session
                 originalText = session.rawText
@@ -63,6 +66,35 @@ struct MicrophoneWizardView: View {
                 reviewStepIndex = 1
                 wizardStep = .review
             }
+        }
+        .onChange(of: wizardStep) { _, _ in updateWizardBreadcrumb() }
+        .onDisappear {
+            appState.captureWizardActive = false
+            if appState.workspaceMode == .documents {
+                appState.breadcrumb = [
+                    BreadcrumbCrumb("Documents", targetMode: .documents),
+                    BreadcrumbCrumb(captureVM.document.title, targetMode: .documents),
+                ]
+            }
+        }
+        // A document-level breadcrumb was clicked — discard any in-progress recording (with a
+        // confirmation) then close back to the source list.
+        .onChange(of: appState.requestExitCapture) { _, req in
+            guard req else { return }
+            appState.requestExitCapture = false
+            if hasUnsavedCapture { showDiscardConfirm = true } else { cancel() }
+        }
+        .confirmationDialog("Discard this recording?",
+                            isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { cancel() }
+            Button("Keep Editing", role: .cancel) { }
+        } message: {
+            Text("The recording and its transcript will be lost.")
+        }
+        // Build/edit an After Capture action over the wizard; new actions appear in the picker
+        // on dismiss (the picker is a live @Query).
+        .sheet(isPresented: $showActionEditor) {
+            ScopedPipelineEditorSheet(scope: .postCapture)
         }
         .onChange(of: captureVM.phase) { _, phase in handlePhaseChange(phase) }
         .onChange(of: postCapturePipelines) { _, pipelines in
@@ -85,37 +117,33 @@ struct MicrophoneWizardView: View {
         selectedPostCapturePipelineID = postCapturePipelines.first { $0.name == name }?.id
     }
 
-    // MARK: - Header
+    // MARK: - Chrome
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: isEditMode ? "pencil.and.list.clipboard" : "mic.fill")
-                .foregroundStyle(.tint)
-            Text(isEditMode ? "Edit Recording" : "New Recording")
-                .font(.title2).bold()
-            Spacer()
-            stepIndicator
+    private var title: String { isEditMode ? "Edit Recording" : "New Recording" }
+
+    /// Is there capture work that leaving would throw away? True once a transcript exists (review)
+    /// or a recording/transcription is running. False on the untouched acquire step.
+    private var hasUnsavedCapture: Bool {
+        if wizardStep == .review || capturedSession != nil { return true }
+        switch captureVM.phase {
+        case .idle, .failed, .done: return false
+        default: return true
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
     }
 
-    private var stepIndicator: some View {
-        let current = wizardStep == .acquire ? 0 : reviewStepIndex
-        return HStack(spacing: 0) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(current >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: current == i ? 10 : 7, height: current == i ? 10 : 7)
-                if i < 2 {
-                    Rectangle()
-                        .fill(current > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 32, height: 2)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: current)
+    /// The wizard's step lives in the jump-bar, not a 1-2-3 dot indicator (Phase 22.8):
+    /// `Documents ▸ Document: <doc> ▸ Add Source ▸ Microphone [▸ Review]`. The wizard's own crumbs
+    /// are plain text — leaving mid-capture discards the recording, so that stays behind Back/Cancel.
+    private func updateWizardBreadcrumb() {
+        let docTitle = captureVM.document.title
+        var crumbs: [BreadcrumbCrumb] = [
+            BreadcrumbCrumb("Documents", target: .documents),
+            BreadcrumbCrumb("Document: \(docTitle.isEmpty ? "Document" : docTitle)", target: .documents),
+            BreadcrumbCrumb("Add Source"),
+            BreadcrumbCrumb("Microphone"),
+        ]
+        if wizardStep == .review { crumbs.append(BreadcrumbCrumb("Review")) }
+        appState.breadcrumb = crumbs
     }
 
     private var stepTransition: AnyTransition {
@@ -226,16 +254,24 @@ struct MicrophoneWizardView: View {
 
                         if !postCapturePipelines.isEmpty {
                             Divider().padding(.leading, 12)
-                            LabeledContent("After Capture") {
-                                Picker("", selection: $selectedPostCapturePipelineID) {
-                                    Text("None").tag(nil as PersistentIdentifier?)
-                                    ForEach(postCapturePipelines) { p in
-                                        Text(p.name).tag(p.id as PersistentIdentifier?)
+                            VStack(spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Text("After Capture, run Action")
+                                    Picker("", selection: $selectedPostCapturePipelineID) {
+                                        Text("Nothing").tag(nil as PersistentIdentifier?)
+                                        ForEach(postCapturePipelines) { p in
+                                            Text(p.name).tag(p.id as PersistentIdentifier?)
+                                        }
                                     }
+                                    .pickerStyle(.menu)
+                                    .fixedSize()
+                                    .disabled(captureVM.phase != .idle)
                                 }
-                                .pickerStyle(.menu)
-                                .disabled(captureVM.phase != .idle)
+                                Text("Actions are reusable recipes built from prompts.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
                             }
+                            .frame(maxWidth: .infinity)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                         }
@@ -243,10 +279,9 @@ struct MicrophoneWizardView: View {
                         HStack {
                             Spacer()
                             Button {
-                                appState.inspectorDefaultScope = .postCapture
-                                appState.inspectorVisible = true
+                                showActionEditor = true
                             } label: {
-                                Label("Manage Actions…", systemImage: "slider.horizontal.3")
+                                Label("New or Edit Action…", systemImage: "slider.horizontal.3")
                                     .font(.caption)
                             }
                             .buttonStyle(.borderless)
@@ -314,9 +349,7 @@ struct MicrophoneWizardView: View {
                 .animation(.easeInOut(duration: 0.2), value: postCaptureError)
             }
 
-            Divider()
-
-            HStack {
+            ToolColumnFooter {
                 Button("Cancel") { cancel() }.buttonStyle(.bordered)
                 if captureVM.phase == .identifySpeakers {
                     Button("Skip") { captureVM.skipSpeakerRename() }.buttonStyle(.bordered)
@@ -324,8 +357,6 @@ struct MicrophoneWizardView: View {
                 Spacer()
                 acquireActionButton
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
         }
     }
 

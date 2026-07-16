@@ -47,6 +47,8 @@ struct CameraInputView: View {
     @State private var isCapturing = false
     @State private var showingCropView = false
     @State private var errorText: String?
+    @State private var showActionEditor = false
+    @State private var showDiscardConfirm = false
 
     @StateObject private var captureTrigger = CameraCaptureTrigger()
 
@@ -54,8 +56,7 @@ struct CameraInputView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            ToolColumnHeader("Camera")
             stepContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -77,44 +78,67 @@ struct CameraInputView: View {
                 .frame(minWidth: 560, minHeight: 480)
             }
         }
+        .sheet(isPresented: $showActionEditor) {
+            ScopedPipelineEditorSheet(scope: .postCapture)
+        }
+        .confirmationDialog("Discard this capture?",
+                            isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { cancelWizard() }
+            Button("Keep Editing", role: .cancel) { }
+        } message: {
+            Text("The captured image and recognised text will be lost.")
+        }
         .onChange(of: captureVM.phase) { _, phase in
             if phase == .done { closeWizard() }
         }
-        .onAppear  { appState.setCameraInUse(true) }
-        .onDisappear { appState.setCameraInUse(false) }
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "camera.fill")
-                .foregroundStyle(.tint)
-            Text("Camera")
-                .font(.title2).bold()
-            Spacer()
-            stepDotsIndicator
+        .onChange(of: wizardStep) { _, _ in updateWizardBreadcrumb() }
+        .onChange(of: appState.requestExitCapture) { _, req in
+            guard req else { return }
+            appState.requestExitCapture = false
+            if hasUnsavedCapture { showDiscardConfirm = true } else { cancelWizard() }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
-    }
-
-    private var stepDotsIndicator: some View {
-        let current = wizardStep == .acquire ? 0 : reviewStepIndex
-        return HStack(spacing: 0) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(current >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: current == i ? 10 : 7, height: current == i ? 10 : 7)
-                if i < 2 {
-                    Rectangle()
-                        .fill(current > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 32, height: 2)
-                }
+        .onAppear {
+            appState.setCameraInUse(true)
+            updateWizardBreadcrumb()
+            appState.captureWizardActive = true
+        }
+        .onDisappear {
+            appState.setCameraInUse(false)
+            appState.captureWizardActive = false
+            if appState.workspaceMode == .documents {
+                appState.breadcrumb = [
+                    BreadcrumbCrumb("Documents", targetMode: .documents),
+                    BreadcrumbCrumb(captureVM.document.title, targetMode: .documents),
+                ]
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: current)
+    }
+
+    // MARK: - Chrome helpers
+
+    private var hasUnsavedCapture: Bool {
+        wizardStep == .review || capturedImage != nil || isProcessing || isRunningPostCapture
+            || !recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Wizard step in the jump-bar (Phase 22.8): `Documents ▸ Document: <doc> ▸ Add Source ▸ Camera [▸ Review]`.
+    private func updateWizardBreadcrumb() {
+        let docTitle = captureVM.document.title
+        var crumbs: [BreadcrumbCrumb] = [
+            BreadcrumbCrumb("Documents", target: .documents),
+            BreadcrumbCrumb("Document: \(docTitle.isEmpty ? "Document" : docTitle)", target: .documents),
+            BreadcrumbCrumb("Add Source"),
+            BreadcrumbCrumb("Camera"),
+        ]
+        if wizardStep == .review { crumbs.append(BreadcrumbCrumb("Review")) }
+        appState.breadcrumb = crumbs
+    }
+
+    private func cancelWizard() {
+        postCaptureTask?.cancel()
+        postCaptureTask = nil
+        captureVM.reset()
+        closeWizard()
     }
 
     private var stepTransition: AnyTransition {
@@ -140,18 +164,19 @@ struct CameraInputView: View {
                     isEditMode: false,
                     reviewStepIndex: $reviewStepIndex,
                     onBack: {
+                        // Retake: back to a fresh live camera (keep the After Capture selection).
                         postCaptureTask?.cancel()
+                        capturedImage = nil
+                        capturedCGImage = nil
+                        recognizedText = ""
+                        errorText = nil
                         reviewStepIndex = 1
                         stepForward = false
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
                             wizardStep = .acquire
                         }
                     },
-                    onCancel: {
-                        postCaptureTask?.cancel()
-                        captureVM.reset()
-                        closeWizard()
-                    },
+                    onCancel: { cancelWizard() },
                     onAccept: { finalText, rtfData in
                         if let rtf = rtfData {
                             captureVM.saveRTFCapture(rtfData: rtf, plainText: finalText, captureMethod: .camera)
@@ -178,18 +203,15 @@ struct CameraInputView: View {
                 .padding(20)
             }
 
-            Divider()
-            acquireTaskBar
+            ToolColumnFooter { acquireTaskBar }
         }
     }
 
-    // MARK: - Live preview / captured / OCR result
+    // MARK: - Live preview / captured
 
     @ViewBuilder
     private var livePreviewOrResult: some View {
-        if !recognizedText.isEmpty || (isProcessing && capturedCGImage != nil) {
-            ocrResultContent
-        } else if capturedImage != nil {
+        if capturedImage != nil {
             capturedImageContent
         } else {
             liveCameraContent
@@ -253,39 +275,13 @@ struct CameraInputView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }
 
-            if let error = errorText {
-                Text(error).font(.caption).foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if isProcessing || isRunningPostCapture {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(isProcessing ? "Recognising text…" : "Running action…")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var ocrResultContent: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Label("Recognised Text", systemImage: "text.viewfinder")
-                    .font(.headline).foregroundStyle(.secondary)
-                Spacer()
-                if isProcessing { ProgressView().controlSize(.small) }
-                Button("Crop Again") { showingCropView = true }
-                    .buttonStyle(.bordered)
-                    .disabled(capturedCGImage == nil)
-                Button("Clear") { recognizedText = "" }
-                    .buttonStyle(.bordered)
-                    .disabled(recognizedText.isEmpty)
-            }
-
-            Text("Crop again to add more regions to the text below.")
-                .font(.caption).foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            TextEditor(text: $recognizedText)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .frame(minHeight: 160)
 
             if let error = errorText {
                 Text(error).font(.caption).foregroundStyle(.red)
@@ -298,16 +294,24 @@ struct CameraInputView: View {
 
     private var pipelinePickerCard: some View {
         VStack(spacing: 0) {
-            LabeledContent("After Capture") {
-                Picker("", selection: $selectedPostCapturePipelineID) {
-                    Text("None").tag(nil as PersistentIdentifier?)
-                    ForEach(postCapturePipelines) { p in
-                        Text(p.name).tag(p.id as PersistentIdentifier?)
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("After Capture, run Action")
+                    Picker("", selection: $selectedPostCapturePipelineID) {
+                        Text("Nothing").tag(nil as PersistentIdentifier?)
+                        ForEach(postCapturePipelines) { p in
+                            Text(p.name).tag(p.id as PersistentIdentifier?)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    .disabled(isRunningPostCapture || postCapturePipelines.isEmpty)
                 }
-                .pickerStyle(.menu)
-                .disabled(isRunningPostCapture || postCapturePipelines.isEmpty)
+                Text("Actions are reusable recipes built from prompts.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
 
@@ -337,10 +341,9 @@ struct CameraInputView: View {
             HStack {
                 Spacer()
                 Button {
-                    appState.inspectorDefaultScope = .postCapture
-                    appState.inspectorVisible = true
+                    showActionEditor = true
                 } label: {
-                    Label("Manage Actions…", systemImage: "slider.horizontal.3")
+                    Label("New or Edit Action…", systemImage: "slider.horizontal.3")
                         .font(.caption)
                 }
                 .buttonStyle(.borderless)
@@ -356,88 +359,48 @@ struct CameraInputView: View {
 
     @ViewBuilder
     private var acquireTaskBar: some View {
-        if !recognizedText.isEmpty || (isProcessing && capturedCGImage != nil) {
-            // OCR result state — Continue task bar
-            HStack {
-                Button("Cancel") {
-                    captureVM.reset()
-                    closeWizard()
-                }
+        if capturedImage != nil {
+            // Captured — recognise (or busy running OCR / the After Capture action).
+            Button("Cancel") { cancelWizard() }
                 .buttonStyle(.bordered)
 
-                Button("Retake") {
-                    capturedImage = nil
-                    capturedCGImage = nil
-                    recognizedText = ""
-                    errorText = nil
-                }
-                .buttonStyle(.bordered)
-
-                Spacer()
-
-                Button("Continue") {
-                    proceedToReview(text: recognizedText)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || isProcessing
-                    || isRunningPostCapture
-                )
+            Button("Retake") {
+                capturedImage = nil
+                capturedCGImage = nil
+                recognizedText = ""
+                errorText = nil
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-        } else if capturedImage != nil {
-            // After capture — Crop & Recognise task bar
-            HStack {
-                Button("Cancel") {
-                    captureVM.reset()
-                    closeWizard()
-                }
-                .buttonStyle(.bordered)
+            .buttonStyle(.bordered)
+            .disabled(isProcessing || isRunningPostCapture)
 
-                Button("Retake") {
-                    capturedImage = nil
-                    capturedCGImage = nil
-                    recognizedText = ""
-                    errorText = nil
-                }
-                .buttonStyle(.bordered)
+            Spacer()
 
-                Spacer()
-
+            if isProcessing || isRunningPostCapture {
+                ProgressView().controlSize(.small)
+            } else {
                 Button("Crop & Recognise") {
                     showingCropView = true
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(capturedCGImage == nil)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
         } else {
             // Live preview — Capture task bar
-            HStack {
-                Button("Cancel") {
-                    captureVM.reset()
-                    closeWizard()
-                }
+            Button("Cancel") { cancelWizard() }
                 .buttonStyle(.bordered)
 
-                Spacer()
+            Spacer()
 
-                if isCapturing {
-                    ProgressView().controlSize(.small)
-                }
-
-                Button("Capture") {
-                    isCapturing = true
-                    captureTrigger.capture()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(capturedImage != nil || isCapturing)
+            if isCapturing {
+                ProgressView().controlSize(.small)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+
+            Button("Capture") {
+                isCapturing = true
+                captureTrigger.capture()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(capturedImage != nil || isCapturing)
         }
     }
 
@@ -497,11 +460,13 @@ struct CameraInputView: View {
         do {
             let text = try await VisionTextService.recognizeText(in: cgImage)
             if text.isEmpty {
-                errorText = "No text detected in the cropped region."
+                errorText = "No text detected. Retake or crop a different region."
             } else {
-                recognizedText = recognizedText.isEmpty
-                    ? text
-                    : recognizedText + "\n\n--- Crop ---\n\n" + text
+                // OCR done → run the After Capture action → straight to the review step.
+                recognizedText = text
+                isProcessing = false
+                proceedToReview(text: text)
+                return
             }
         } catch {
             errorText = error.localizedDescription

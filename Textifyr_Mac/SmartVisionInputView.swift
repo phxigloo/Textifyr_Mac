@@ -50,8 +50,9 @@ struct SmartVisionInputView: View {
     private func closeWizard() { wizardDismiss != nil ? wizardDismiss!() : dismiss() }
     @EnvironmentObject private var appState: AppState
 
-    private enum WizardStep { case capture, process, annotate }
+    private enum WizardStep { case capture, review }
     @State private var wizardStep: WizardStep = .capture
+    @State private var showDiscardConfirm = false
 
     // Capture
     @State private var captureSource: CaptureSourceType? = nil
@@ -84,8 +85,7 @@ struct SmartVisionInputView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            ToolColumnHeader("Embed Image")
             stepContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -98,7 +98,7 @@ struct SmartVisionInputView: View {
                    let cg = ciCtx.createCGImage(ci, from: ci.extent) {
                     capturedImage = cg
                     applyPictureProcessing(to: cg)
-                    wizardStep = .process
+                    wizardStep = .review
                 }
             }
         }
@@ -111,7 +111,7 @@ struct SmartVisionInputView: View {
                             showCropView = false
                             capturedImage = cropped
                             applyPictureProcessing(to: cropped)
-                            wizardStep = .process
+                            wizardStep = .review
                         },
                         onCancel: {
                             showCropView = false
@@ -159,47 +159,59 @@ struct SmartVisionInputView: View {
         .alert("Error", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("OK") { errorText = nil }
         } message: { Text(errorText ?? "") }
+        .confirmationDialog("Discard this image?",
+                            isPresented: $showDiscardConfirm, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) { cancelWizard() }
+            Button("Keep Editing", role: .cancel) { }
+        } message: {
+            Text("The captured image will be lost.")
+        }
+        .onAppear {
+            updateWizardBreadcrumb()
+            appState.captureWizardActive = true
+        }
+        .onChange(of: wizardStep) { _, _ in updateWizardBreadcrumb() }
+        .onDisappear {
+            appState.captureWizardActive = false
+            if appState.workspaceMode == .documents {
+                appState.breadcrumb = [
+                    BreadcrumbCrumb("Documents", targetMode: .documents),
+                    BreadcrumbCrumb(captureVM.document.title, targetMode: .documents),
+                ]
+            }
+        }
+        .onChange(of: appState.requestExitCapture) { _, req in
+            guard req else { return }
+            appState.requestExitCapture = false
+            if hasUnsavedCapture { showDiscardConfirm = true } else { cancelWizard() }
+        }
         .onChange(of: captureVM.phase) { _, phase in
             if phase == .done { closeWizard() }
         }
     }
 
-    // MARK: - Header
+    // MARK: - Chrome helpers
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "photo.badge.plus").foregroundStyle(Color.accentColor)
-            Text("Embed Image").font(.title2).bold()
-            Spacer()
-            stepIndicator
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 12)
+    private var hasUnsavedCapture: Bool {
+        wizardStep == .review || capturedImage != nil || processedImage != nil
     }
 
-    private var stepIndicator: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<3) { i in
-                Circle()
-                    .fill(stepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: stepIndex == i ? 10 : 7, height: stepIndex == i ? 10 : 7)
-                    .animation(.easeInOut(duration: 0.2), value: wizardStep)
-                if i < 2 {
-                    Rectangle()
-                        .fill(stepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 36, height: 2)
-                }
-            }
-        }
+    /// Wizard step in the jump-bar (Phase 22.8): `Documents ▸ Document: <doc> ▸ Add Source ▸ Embed Image [▸ Review]`.
+    private func updateWizardBreadcrumb() {
+        let docTitle = captureVM.document.title
+        var crumbs: [BreadcrumbCrumb] = [
+            BreadcrumbCrumb("Documents", target: .documents),
+            BreadcrumbCrumb("Document: \(docTitle.isEmpty ? "Document" : docTitle)", target: .documents),
+            BreadcrumbCrumb("Add Source"),
+            BreadcrumbCrumb("Embed Image"),
+        ]
+        if wizardStep == .review { crumbs.append(BreadcrumbCrumb("Review")) }
+        appState.breadcrumb = crumbs
     }
 
-    private var stepIndex: Int {
-        switch wizardStep {
-        case .capture: return 0
-        case .process: return 1
-        case .annotate: return 2
-        }
+    private func cancelWizard() {
+        captureVM.reset()
+        closeWizard()
     }
 
     // MARK: - Step dispatch
@@ -207,9 +219,8 @@ struct SmartVisionInputView: View {
     @ViewBuilder
     private var stepContent: some View {
         switch wizardStep {
-        case .capture:  captureStep
-        case .process:  processStep
-        case .annotate: annotateStep
+        case .capture: captureStep
+        case .review:  reviewStep
         }
     }
 
@@ -228,9 +239,7 @@ struct SmartVisionInputView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            Divider()
-
-            HStack {
+            ToolColumnFooter {
                 Button("Cancel") {
                     if showScreenCapturePrepare {
                         showScreenCapturePrepare = false
@@ -239,16 +248,13 @@ struct SmartVisionInputView: View {
                         capturedDisplays = []
                         displayCarouselIndex = 0
                     } else {
-                        captureVM.reset(); closeWizard()
+                        cancelWizard()
                     }
                 }
                 .buttonStyle(.bordered)
                 Spacer()
                 captureStepTrailingButton
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(.bar)
         }
     }
 
@@ -401,165 +407,110 @@ struct SmartVisionInputView: View {
         // Source grid: no trailing button (Cancel is the only action)
     }
 
-    // MARK: - Step 2: Process
+    // MARK: - Step 2: Review & Describe (image preview + colours/category + caption)
 
-    private var processStep: some View {
+    private var reviewStep: some View {
         VStack(spacing: 0) {
-        VStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Step 2 — Process").font(.headline)
-                Text("Optionally adapt colours and choose a category label for the image.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-
-            if let img = processedImage {
-                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
-                    .padding(.horizontal)
-            } else {
-                ProgressView("Processing image…").frame(height: 100)
-            }
-
-            VStack(spacing: 10) {
-                Toggle("Adapt colours to app appearance (grayscale + theme colours)", isOn: $useAppColors)
-                    .font(.caption)
-                    .onChange(of: useAppColors) { _, _ in
-                        if let src = capturedImage { applyPictureProcessing(to: src) }
+            ScrollView {
+                VStack(spacing: 14) {
+                    if let img = processedImage {
+                        Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxHeight: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                            .padding(.horizontal)
+                    } else {
+                        ProgressView("Processing image…").frame(height: 100)
                     }
 
-                HStack {
-                    Text("Category:").font(.caption).foregroundStyle(.secondary)
-                    Picker("", selection: $processingMode) {
-                        ForEach(PictureProcessingMode.allCases) { m in
-                            Text(m.displayName).tag(m)
+                    // Appearance + category
+                    VStack(spacing: 10) {
+                        Toggle("Adapt colours to app appearance (grayscale + theme colours)", isOn: $useAppColors)
+                            .font(.caption)
+                            .onChange(of: useAppColors) { _, _ in
+                                if let src = capturedImage { applyPictureProcessing(to: src) }
+                            }
+
+                        HStack {
+                            Text("Category:").font(.caption).foregroundStyle(.secondary)
+                            Picker("", selection: $processingMode) {
+                                ForEach(PictureProcessingMode.allCases) { m in
+                                    Text(m.displayName).tag(m)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 220)
+                            Spacer()
                         }
                     }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 220)
-                    Spacer()
-                }
-            }
-            .padding(.horizontal)
-
-            if let error = errorText {
-                Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
-            }
-        }
-        .padding(.top, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-
-        Divider()
-        HStack {
-            Button("Cancel") { captureVM.reset(); closeWizard() }
-                .buttonStyle(.bordered)
-            Button("Back") {
-                capturedImage = nil
-                processedImage = nil
-                wizardStep = .capture
-            }
-            .buttonStyle(.bordered)
-            Spacer()
-            Button("Continue") { wizardStep = .annotate }
-                .buttonStyle(.borderedProminent)
-                .disabled(processedImage == nil)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(.bar)
-        }
-    }
-
-    // MARK: - Step 3: Annotate
-
-    private var annotateStep: some View {
-        VStack(spacing: 0) {
-        VStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Step 3 — Description").font(.headline)
-                Text("Optionally add text that will appear below the image in the output.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-
-            if let img = processedImage {
-                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 140)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
                     .padding(.horizontal)
-            }
 
-            TextEditor(text: $annotationText)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .padding(.horizontal)
-                .frame(minHeight: 80, maxHeight: 160)
+                    Divider().padding(.horizontal)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    withAnimation { showAIPrompt.toggle() }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: showAIPrompt ? "chevron.down" : "chevron.right")
-                            .font(.caption2)
-                        Image(systemName: "wand.and.sparkles")
-                            .font(.caption)
-                        Text("Generate text with AI")
-                            .font(.caption)
-                    }
-                    .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
+                    // Caption / description
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Description")
+                            .font(.caption2).textCase(.uppercase).foregroundStyle(.tertiary)
+                        Text("Optional text that appears below the image in the output.")
+                            .font(.caption).foregroundStyle(.secondary)
 
-                if showAIPrompt {
-                    HStack(spacing: 8) {
-                        TextField("Describe what text to generate…", text: $aiPromptText)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.caption)
-                        Button("Generate") { Task { await generateAI() } }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeneratingAI)
-                        if isGeneratingAI {
-                            ProgressView().controlSize(.small)
+                        TextEditor(text: $annotationText)
+                            .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            .frame(minHeight: 80, maxHeight: 160)
+
+                        Button {
+                            withAnimation { showAIPrompt.toggle() }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: showAIPrompt ? "chevron.down" : "chevron.right").font(.caption2)
+                                Image(systemName: "wand.and.sparkles").font(.caption)
+                                Text("Generate text with AI").font(.caption)
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+
+                        if showAIPrompt {
+                            HStack(spacing: 8) {
+                                TextField("Describe what text to generate…", text: $aiPromptText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.caption)
+                                Button("Generate") { Task { await generateAI() } }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .disabled(aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeneratingAI)
+                                if isGeneratingAI { ProgressView().controlSize(.small) }
+                            }
                         }
                     }
+                    .padding(.horizontal)
+
+                    if let error = errorText {
+                        Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
+                    }
                 }
+                .padding(.vertical, 12)
             }
-            .padding(.horizontal)
 
-            if let error = errorText {
-                Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
+            ToolColumnFooter {
+                Button("Cancel") { cancelWizard() }
+                    .buttonStyle(.bordered)
+                Button("Retake") {
+                    capturedImage = nil
+                    processedImage = nil
+                    wizardStep = .capture
+                }
+                .buttonStyle(.bordered)
+                Spacer()
+                Button("Insert") { insertPicture() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(processedImage == nil)
             }
-        }
-        .padding(.top, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-
-        Divider()
-        HStack {
-            Button("Cancel") { captureVM.reset(); closeWizard() }
-                .buttonStyle(.bordered)
-            Button("Back") { wizardStep = .process }
-                .buttonStyle(.bordered)
-            Spacer()
-            Button("Insert") { insertPicture() }
-                .buttonStyle(.borderedProminent)
-                .disabled(processedImage == nil)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(.bar)
         }
     }
 
@@ -704,9 +655,6 @@ struct SmartVisionEditView: View {
 
     @EnvironmentObject private var appState: AppState
 
-    private enum EditStep { case process, annotate }
-    @State private var editStep: EditStep = .process
-
     @State private var capturedImage: CGImage? = nil
     @State private var processingMode: PictureProcessingMode = .none
     @State private var useAppColors = true
@@ -720,9 +668,8 @@ struct SmartVisionEditView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
-            stepContent
+            ToolColumnHeader("Edit Image")
+            reviewContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task { await loadExistingImage() }
@@ -731,186 +678,102 @@ struct SmartVisionEditView: View {
         } message: { Text(errorText ?? "") }
     }
 
-    // MARK: - Header
+    // MARK: - Review & Describe (single screen — preview + colours/category + caption)
 
-    private var header: some View {
-        HStack {
-            Image(systemName: "photo.badge.checkmark").foregroundStyle(Color.accentColor)
-            Text("Edit Image").font(.title2).bold()
-            Spacer()
-            stepIndicator
-            Spacer()
-            Button("Cancel", action: onDismiss).buttonStyle(.borderless)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 12)
-    }
-
-    private var stepIndicator: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<2) { i in
-                Circle()
-                    .fill(stepIndex >= i ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(width: stepIndex == i ? 10 : 7, height: stepIndex == i ? 10 : 7)
-                    .animation(.easeInOut(duration: 0.2), value: editStep)
-                if i < 1 {
-                    Rectangle()
-                        .fill(stepIndex > i ? Color.accentColor : Color.secondary.opacity(0.25))
-                        .frame(width: 36, height: 2)
-                }
-            }
-        }
-    }
-
-    private var stepIndex: Int { editStep == .process ? 0 : 1 }
-
-    @ViewBuilder
-    private var stepContent: some View {
-        switch editStep {
-        case .process:  processStep
-        case .annotate: annotateStep
-        }
-    }
-
-    // MARK: - Step 1: Process
-
-    private var processStep: some View {
-        VStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Step 1 — Process").font(.headline)
-                Text("Optionally adapt colours and choose a category label for the image.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-
-            if let img = processedImage {
-                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
-                    .padding(.horizontal)
-            } else {
-                ProgressView("Processing image…").frame(height: 100)
-            }
-
-            VStack(spacing: 10) {
-                Toggle("Adapt colours to app appearance (grayscale + theme colours)", isOn: $useAppColors)
-                    .font(.caption)
-                    .onChange(of: useAppColors) { _, _ in
-                        if let src = capturedImage { applyPictureProcessing(to: src) }
+    private var reviewContent: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 14) {
+                    if let img = processedImage {
+                        Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxHeight: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                            .padding(.horizontal)
+                    } else {
+                        ProgressView("Processing image…").frame(height: 100)
                     }
 
-                HStack {
-                    Text("Category:").font(.caption).foregroundStyle(.secondary)
-                    Picker("", selection: $processingMode) {
-                        ForEach(PictureProcessingMode.allCases) { m in
-                            Text(m.displayName).tag(m)
+                    VStack(spacing: 10) {
+                        Toggle("Adapt colours to app appearance (grayscale + theme colours)", isOn: $useAppColors)
+                            .font(.caption)
+                            .onChange(of: useAppColors) { _, _ in
+                                if let src = capturedImage { applyPictureProcessing(to: src) }
+                            }
+
+                        HStack {
+                            Text("Category:").font(.caption).foregroundStyle(.secondary)
+                            Picker("", selection: $processingMode) {
+                                ForEach(PictureProcessingMode.allCases) { m in
+                                    Text(m.displayName).tag(m)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: 220)
+                            Spacer()
                         }
                     }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 220)
-                    Spacer()
-                }
-            }
-            .padding(.horizontal)
-
-            if let error = errorText {
-                Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
-            }
-
-            HStack {
-                Button("Cancel", action: onDismiss).buttonStyle(.bordered)
-                Spacer()
-                Button("Continue") { editStep = .annotate }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(processedImage == nil)
-            }
-            .padding(.horizontal)
-            .padding(.bottom)
-            .padding(.top, 8)
-        }
-        .padding(.top, 8)
-    }
-
-    // MARK: - Step 2: Annotate
-
-    private var annotateStep: some View {
-        VStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Step 2 — Description").font(.headline)
-                Text("Optionally add text that will appear below the image in the output.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-
-            if let img = processedImage {
-                Image(nsImage: NSImage(cgImage: img, size: NSSize(width: img.width, height: img.height)))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 140)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
                     .padding(.horizontal)
-            }
 
-            TextEditor(text: $annotationText)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .padding(.horizontal)
-                .frame(minHeight: 80, maxHeight: 160)
+                    Divider().padding(.horizontal)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    withAnimation { showAIPrompt.toggle() }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: showAIPrompt ? "chevron.down" : "chevron.right").font(.caption2)
-                        Image(systemName: "wand.and.sparkles").font(.caption)
-                        Text("Generate text with AI").font(.caption)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Description")
+                            .font(.caption2).textCase(.uppercase).foregroundStyle(.tertiary)
+                        Text("Optional text that appears below the image in the output.")
+                            .font(.caption).foregroundStyle(.secondary)
+
+                        TextEditor(text: $annotationText)
+                            .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            .frame(minHeight: 80, maxHeight: 160)
+
+                        Button {
+                            withAnimation { showAIPrompt.toggle() }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: showAIPrompt ? "chevron.down" : "chevron.right").font(.caption2)
+                                Image(systemName: "wand.and.sparkles").font(.caption)
+                                Text("Generate text with AI").font(.caption)
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+
+                        if showAIPrompt {
+                            HStack(spacing: 8) {
+                                TextField("Describe what text to generate…", text: $aiPromptText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.caption)
+                                Button("Generate") { Task { await generateAI() } }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .disabled(aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeneratingAI)
+                                if isGeneratingAI { ProgressView().controlSize(.small) }
+                            }
+                        }
                     }
-                    .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
+                    .padding(.horizontal)
 
-                if showAIPrompt {
-                    HStack(spacing: 8) {
-                        TextField("Describe what text to generate…", text: $aiPromptText)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.caption)
-                        Button("Generate") { Task { await generateAI() } }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(aiPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGeneratingAI)
-                        if isGeneratingAI { ProgressView().controlSize(.small) }
+                    if let error = errorText {
+                        Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
                     }
                 }
-            }
-            .padding(.horizontal)
-
-            if let error = errorText {
-                Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal)
+                .padding(.vertical, 12)
             }
 
-            HStack {
+            ToolColumnFooter {
                 Button("Cancel", action: onDismiss).buttonStyle(.bordered)
-                Button("Back") { editStep = .process }.buttonStyle(.bordered)
                 Spacer()
                 Button("Save") { savePicture() }
                     .buttonStyle(.borderedProminent)
                     .disabled(processedImage == nil)
             }
-            .padding(.horizontal)
-            .padding(.bottom)
-            .padding(.top, 8)
         }
-        .padding(.top, 8)
     }
 
     // MARK: - Load existing image

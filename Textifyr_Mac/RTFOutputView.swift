@@ -28,6 +28,7 @@ struct RTFOutputView: View {
     @State private var refineProgress: DocumentFormattingService.Progress? = nil
     @State private var refineResult: String? = nil
     @State private var refineError: String? = nil
+    @State private var showActionEditor = false
 
     private var document: TextifyrDocument { viewModel.document }
 
@@ -87,6 +88,11 @@ struct RTFOutputView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: translateError != nil)
+        // Build/edit a Final Document action; new actions appear in the picker on dismiss. The
+        // merged source text is forwarded so the action can be tested against real content (Spec 2).
+        .sheet(isPresented: $showActionEditor) {
+            ScopedPipelineEditorSheet(scope: .output, sampleText: document.mergedSourceText)
+        }
     }
 
     // MARK: - Format nudge banner
@@ -173,10 +179,9 @@ struct RTFOutputView: View {
                 }
                 if !outputPipelines.isEmpty { Divider() }
                 Button {
-                    appState.inspectorDefaultScope = .output
-                    appState.inspectorVisible = true
+                    showActionEditor = true
                 } label: {
-                    Label("Manage Actions…", systemImage: "slider.horizontal.3")
+                    Label("New or Edit Action…", systemImage: "slider.horizontal.3")
                 }
             } label: {
                 HStack(spacing: 4) {
