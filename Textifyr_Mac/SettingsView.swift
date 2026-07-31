@@ -507,14 +507,14 @@ private struct WindowsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Prompt Builder") {
-                LabeledContent("Open Prompt Builder") {
-                    Button("Open Prompt Builder…") {
+            Section("Instruction Lab") {
+                LabeledContent("Open Instruction Lab") {
+                    Button("Open Instruction Lab…") {
                         post(.openPromptBuilderSheet)
                     }
                     .buttonStyle(.bordered)
                 }
-                Text("The Prompt Builder lets you write and test AI prompts against sample text before saving them to an action.")
+                Text("The Instruction Lab lets you write and test an instruction — an AI prompt, a text transform, or a field extraction — against sample text before saving it to an action.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

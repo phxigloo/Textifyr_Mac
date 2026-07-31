@@ -175,11 +175,11 @@ struct PipelineStepRow: View {
                     Button {
                         openInBuilder(improve: false)
                     } label: {
-                        Label("Prompt Builder", systemImage: "text.bubble")
+                        Label("Instruction Lab", systemImage: "text.bubble")
                             .font(.caption)
                     }
                     .buttonStyle(.borderless)
-                    .help("Actions are made of one or more prompts. Use the Prompt Builder to write and test individual prompts before adding them here.")
+                    .help("Actions are made of one or more instructions. Use the Instruction Lab to write and test an instruction before adding it here.")
 
                     Button {
                         openInBuilder(improve: true)
@@ -189,7 +189,7 @@ struct PipelineStepRow: View {
                     }
                     .buttonStyle(.borderless)
                     .disabled(prompt.isEmpty)
-                    .help("Open the Prompt Builder to test this prompt and improve it with AI")
+                    .help("Open the Instruction Lab to test this prompt and improve it with AI")
                 } else if let inlineImprove {
                     // Embedded over a wizard: open the sheet's own inline improve panel, which
                     // tests and improves this prompt against the captured text (no window switch).

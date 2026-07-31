@@ -105,12 +105,12 @@ struct RunTraceInspectorView: View {
                             .help("Re-run the action from this step forward on its captured input — confirm a fix reaches the output.")
                     }
                     if let open = onOpenStepEditor {
-                        Button(step.editRoute == .promptBuilder ? "Improve in Prompt Builder" : "Open in Action Editor") {
+                        Button(step.editRoute == .promptBuilder ? "Improve in Instruction Lab" : "Open in Action Editor") {
                             open(step)
                         }
                         .controlSize(.small)
                         .help(step.editRoute == .promptBuilder
-                              ? "Open the Prompt Builder with this AI step's prompt + input."
+                              ? "Open the Instruction Lab with this AI step's prompt + input."
                               : "Open this step in the Action editor.")
                     }
                 }

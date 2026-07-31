@@ -330,7 +330,7 @@ private struct AppCommands: Commands {
                     .keyboardShortcut("w", modifiers: [.command, .shift])
                 Button("Action Editor")   { openMode(.actions) }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
-                Button("Prompt Editor")   { openMode(.promptBuilder) }
+                Button("Instruction Lab") { openMode(.promptBuilder) }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
             }
             Button("Documents") { openMode(.documents) }

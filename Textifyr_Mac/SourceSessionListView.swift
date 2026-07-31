@@ -543,7 +543,7 @@ struct SessionEditView: View {
                 if remedy != .awaitingRerun {
                     switch StepEditRoute.from(kindRaw: prov.stepKind) {
                     case .promptBuilder:
-                        Button("Improve in Prompt Builder") { improveFailedStep(prov) }.controlSize(.small)
+                        Button("Improve in Instruction Lab") { improveFailedStep(prov) }.controlSize(.small)
                     case .actionEditor:
                         Button("Open the Action") { openAction(prov) }.controlSize(.small)
                     }
@@ -551,7 +551,7 @@ struct SessionEditView: View {
             } else {
                 // No structured failure (a successful or generic source) — still allow refining
                 // its text against a prompt.
-                Button("Improve in Prompt Builder") { openInPromptBuilder() }.controlSize(.small)
+                Button("Improve in Instruction Lab") { openInPromptBuilder() }.controlSize(.small)
             }
 
             Spacer()
