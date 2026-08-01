@@ -170,6 +170,7 @@ extension Notification.Name {
     static let openPipelineEditorSheet = Notification.Name("TextifyrOpenPipelineEditor")
     static let openPromptBuilderSheet  = Notification.Name("TextifyrOpenPromptBuilder")
     static let openWorkflowManager     = Notification.Name("TextifyrOpenWorkflowManager")
+    static let openTextSampleManager   = Notification.Name("TextifyrOpenTextSampleManager")
     // File menu
     static let exportDocument          = Notification.Name("TextifyrExportDocument")
     static let printDocument           = Notification.Name("TextifyrPrintDocument")
@@ -332,6 +333,7 @@ private struct AppCommands: Commands {
                     .keyboardShortcut("e", modifiers: [.command, .shift])
                 Button("Instruction Lab") { openMode(.promptBuilder) }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
+                Button("Text Sample Manager…") { post(.openTextSampleManager) }
             }
             Button("Documents") { openMode(.documents) }
                 .keyboardShortcut("d", modifiers: [.command, .shift])

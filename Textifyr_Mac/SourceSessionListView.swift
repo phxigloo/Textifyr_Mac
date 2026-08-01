@@ -601,14 +601,14 @@ struct SessionEditView: View {
         stage.isEmpty ? "Action: \(name)" : "Action: \(stage) – \(name)"
     }
 
-    /// Appends the Action ▸ Step ▸ Prompt Builder crumbs onto the current source-editor trail
+    /// Appends the Action ▸ Step ▸ Instruction Lab crumbs onto the current source-editor trail
     /// (24.1), so drilling preserves the full path with restorable targets.
     private func pushPromptCascade(stage: String, actionID: UUID, actionName: String,
                                    stepIndex: Int, stepName: String, seed: PromptBuilderSeed) {
         appState.breadcrumb.append(contentsOf: [
             BreadcrumbCrumb(actionCrumbLabel(stage: stage, name: actionName), target: .action(id: actionID)),
             BreadcrumbCrumb("Step \(stepIndex + 1): \(stepName)", target: .promptStep(seed: seed)),
-            BreadcrumbCrumb("Prompt Builder", target: .promptStep(seed: seed)),
+            BreadcrumbCrumb("Instruction Lab", target: .promptStep(seed: seed)),
         ])
     }
 
@@ -626,13 +626,13 @@ struct SessionEditView: View {
             sampleText: session.rawText,
             sampleName: session.sourceName.isEmpty ? session.captureMethod.displayName : session.sourceName)
         appState.promptBuilderSeed = seed
-        appState.breadcrumb.append(BreadcrumbCrumb("Prompt Builder", target: .promptStep(seed: seed)))
+        appState.breadcrumb.append(BreadcrumbCrumb("Instruction Lab", target: .promptStep(seed: seed)))
         appState.workspaceMode = .promptBuilder
         onDismiss()
     }
 
     /// Kind-aware routing (23.3): open a traced step in the *right* editor. AI step →
-    /// Prompt Builder, seeded with its prompt + this run's real input; deterministic step
+    /// Instruction Lab, seeded with its prompt + this run's real input; deterministic step
     /// (Extract Fields / transform) → the Action editor, navigated to that action.
     private func openStepEditor(_ record: StepTraceRecord) {
         setEditOrigin()
@@ -667,7 +667,7 @@ struct SessionEditView: View {
         onDismiss()
     }
 
-    /// Improves a failed AI step's prompt in the Prompt Builder, staging the exact input
+    /// Improves a failed AI step's prompt in the Instruction Lab, staging the exact input
     /// that failed (pulled from the trace) as the test sample (23.3).
     private func improveFailedStep(_ prov: FailureProvenance) {
         setEditOrigin()

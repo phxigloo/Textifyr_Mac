@@ -17,7 +17,7 @@ private enum SampleSelection: Hashable {
 struct PromptBuilderView: View {
     /// Optional initial state when opened from an Action step (see `PromptBuilderSeed`).
     var seed: PromptBuilderSeed? = nil
-    /// True when shown as the Prompt Builder workspace mode (fills the window, no Cancel).
+    /// True when shown as the Instruction Lab workspace mode (fills the window, no Cancel).
     var isEmbedded: Bool = false
 
     @EnvironmentObject private var appState: AppState
@@ -54,8 +54,10 @@ struct PromptBuilderView: View {
     @State private var showingLoadPromptSheet    = false   // pick from the SavedPrompt library
     @State private var showingSaveLibrarySheet   = false   // save the current prompt to the library
     @State private var showingImportActionSheet  = false   // secondary: pull a prompt out of an action step
+    @State private var showingSampleManager      = false   // Text Sample Manager sheet (add/edit/delete + scope)
+    @State private var showingSamplePicker       = false   // Input pane's sample-selection popover
 
-    /// Where the Prompt Builder was opened from — drives which chrome shows and where Save goes.
+    /// Where the Instruction Lab was opened from — drives which chrome shows and where Save goes.
     /// `.documentSource` (a drilled-in source, `editOrigin` set) and `.action` (a step's Improve
     /// button, seed carries `actionID`) both already know the scope; only `.library` needs to pick it.
     private enum Origin { case library, action, documentSource }
@@ -75,6 +77,14 @@ struct PromptBuilderView: View {
 
     // The originating step's "Check the result" settings, when seeded from a step (22.0c).
     @State private var stepVerify: StepVerifyConfig? = nil
+
+    // Kind-aware instruction editing (Stage 3): the middle pane edits one of these per `kind`.
+    @State private var kind: PipelineStepKind = .aiPrompt
+    @State private var transformConfig = TextTransformConfig()
+    @State private var extractConfig = ExtractFieldsConfig()
+    // True when a transform's input/config changed since its result was last computed, so the
+    // user knows to press Test again (transforms are user-run now, not live).
+    @State private var resultStale = false
 
     private static let draftPromptKey     = "promptBuilder.draftText"
     private static let draftScratchpadKey = "promptBuilder.scratchpadText"
@@ -135,13 +145,13 @@ struct PromptBuilderView: View {
 
     /// Feeds the persistent bottom Path Bar. When seeded from an Action step:
     /// `Actions ▸ <Action> ▸ Step N ▸ Improve` (first crumbs link back to Actions);
-    /// otherwise `Prompt Builder ▸ <Scope> ▸ <Sample>`.
+    /// otherwise `Instruction Lab ▸ <Scope> ▸ <Sample>`.
     private func updateBreadcrumb() {
-        // In-context (drilled from a step): extend the cascade trail *after* its "Prompt Builder"
+        // In-context (drilled from a step): extend the cascade trail *after* its "Instruction Lab"
         // crumb with this tool's own depth — `Sample: …` (the forwarded text), `Prompt` (when the
         // prompt editor is focused), and `Improve` (when the improve panel is open). 24.1 A/C.
         if appState.editOrigin != nil {
-            guard let pbIdx = appState.breadcrumb.firstIndex(where: { $0.label == "Prompt Builder" }) else { return }
+            guard let pbIdx = appState.breadcrumb.firstIndex(where: { $0.label == "Instruction Lab" }) else { return }
             var crumbs = Array(appState.breadcrumb.prefix(pbIdx + 1))
             crumbs.append(BreadcrumbCrumb("Sample: \(inContextSampleName)"))
             if promptFocused || showImprovePanel { crumbs.append(BreadcrumbCrumb("Prompt")) }
@@ -158,7 +168,7 @@ struct PromptBuilderView: View {
             // selection), not just the Actions mode with the first action defaulted. (Fix c)
             crumbs.append(BreadcrumbCrumb(actionName, target: .action(id: actionID)))
             if let idx = seed.stepIndex { crumbs.append(BreadcrumbCrumb("Step \(idx + 1)")) }
-            crumbs.append(BreadcrumbCrumb(seed.openImprove ? "Improve" : "Prompt Builder"))
+            crumbs.append(BreadcrumbCrumb(seed.openImprove ? "Improve" : "Instruction Lab"))
         } else {
             crumbs.append(BreadcrumbCrumb(scopeFilter?.displayName ?? "All Scopes"))
             switch sampleSelection {
@@ -175,19 +185,21 @@ struct PromptBuilderView: View {
         VStack(spacing: 0) {
             GeometryReader { geo in
                 HSplitView {
-                    // Test bench ≈ one third of the available width (resizable via the splitter).
-                    testBench
-                        .frame(minWidth: 320,
-                               idealWidth: max(320, geo.size.width * 0.33),
-                               maxWidth: max(380, geo.size.width * 0.45))
+                    // Input · Instruction · Result — seeded to equal thirds, freely resizable.
+                    // The Improve panel slides over the Result column (see resultColumn), so it's
+                    // never a fourth column.
+                    inputPane
+                        .frame(minWidth: 280,
+                               idealWidth: max(280, geo.size.width / 3),
+                               maxWidth: .infinity)
                     promptPane
-                        .frame(minWidth: 380, maxWidth: .infinity)
-                        .layoutPriority(1)
-
-                    if showImprovePanel {
-                        improvePanel
-                            .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
-                    }
+                        .frame(minWidth: 320,
+                               idealWidth: max(320, geo.size.width / 3),
+                               maxWidth: .infinity)
+                    resultColumn
+                        .frame(minWidth: 300,
+                               idealWidth: max(300, geo.size.width / 3),
+                               maxWidth: .infinity)
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
             }
@@ -221,6 +233,16 @@ struct PromptBuilderView: View {
             } else {
                 scratchpadProvenance = nil                  // hand-edited → plain Scratchpad
             }
+            markTransformStale()
+        }
+        .onChange(of: editingText)     { _, _ in markTransformStale() }
+        .onChange(of: transformConfig) { _, _ in
+            markTransformStale()
+            if !improveAvailable { showImprovePanel = false }
+        }
+        .onChange(of: kind) { _, _ in
+            testResult = nil; testError = nil; resultStale = false
+            if !improveAvailable { showImprovePanel = false }
         }
         .onChange(of: testResult) { _, _ in
             if showImprovePanel { resetChat() } else { chatNeedsContextRefresh = true }
@@ -244,20 +266,30 @@ struct PromptBuilderView: View {
                 editingScope = sample.scope
             }
             updateBreadcrumb()
+            resultStale = false
         }
         .sheet(isPresented: $showingLoadPromptSheet) {
-            // Library origin browses all prompts; Action/Wizard pre-filter to the action's scope.
+            // Library origin browses everything; Action/Wizard pre-filter to the action's scope.
             LoadExistingPromptSheet(scopeFilter: origin == .library ? nil : scopeFilter) { loaded in
-                promptText = loaded
+                applyLoadedInstruction(loaded)
             }
         }
         .sheet(isPresented: $showingSaveLibrarySheet) {
             SavePromptToLibrarySheet(promptText: promptText,
                                      initialScope: scopeFilter,
-                                     nextSortOrder: allSavedPrompts.count)
+                                     nextSortOrder: allSavedPrompts.count,
+                                     kind: kind,
+                                     transformConfigJSON: transformConfig.encodedString(),
+                                     extractConfigJSON: extractConfig.encodedString())
         }
         .sheet(isPresented: $showingImportActionSheet) {
             LoadFromActionSheet { loaded in promptText = loaded }
+        }
+        .sheet(isPresented: $showingSampleManager) {
+            TextSampleManagerSheet(initialScope: scopeFilter) { pickedID in
+                // Selecting/creating in the manager reflects back into the Input pane.
+                sampleSelection = .saved(pickedID)
+            }
         }
     }
 
@@ -281,19 +313,80 @@ struct PromptBuilderView: View {
                 .buttonStyle(.bordered)
             }
         } else {
-            Button { runPrompt() } label: {
-                Label("Run Prompt", systemImage: "play.fill")
+            Button { runInstruction() } label: {
+                Label("Test", systemImage: "play.fill")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(promptText.isEmpty || activeText.isEmpty)
+            .disabled(!canRun)
             .help(runHelpText)
         }
     }
 
+    /// Whether the current instruction can run against the current input.
+    private var canRun: Bool {
+        guard !activeText.isEmpty else { return false }
+        switch kind {
+        case .aiPrompt:      return !promptText.isEmpty
+        case .extractFields: return extractConfig.fields.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
+        case .transform:     return true
+        }
+    }
+
     private var runHelpText: String {
-        if promptText.isEmpty  { return "Enter a prompt first" }
-        if activeText.isEmpty  { return "Enter or select sample text first" }
-        return ""
+        if activeText.isEmpty { return "Enter or select sample text first" }
+        switch kind {
+        case .aiPrompt      where promptText.isEmpty: return "Enter a prompt first"
+        case .extractFields where !canRun:            return "Add at least one field to extract"
+        default:                                      return ""
+        }
+    }
+
+    /// Dispatches Test to the right engine for the current kind.
+    private func runInstruction() {
+        switch kind {
+        case .aiPrompt:      runPrompt()
+        case .extractFields: runExtract()
+        case .transform:     runTransform()
+        }
+    }
+
+    /// Runs the deterministic transform once, on demand (instant, local).
+    private func runTransform() {
+        guard kind == .transform else { return }
+        testError = nil
+        let text = activeText
+        testResult = text.isEmpty ? nil : TextTransformEngine.apply(transformConfig, to: text)
+        resultStale = false
+    }
+
+    /// Marks a computed transform result out of date when its input or config changes.
+    private func markTransformStale() {
+        if kind == .transform && testResult != nil { resultStale = true }
+    }
+
+    /// Guided extraction: the model fills the declared fields, then they're combined locally.
+    private func runExtract() {
+        testResult = nil; testError = nil; runProgress = nil; isRunning = true
+        let text = activeText
+        let cfg = extractConfig
+        runTask = Task { @MainActor in
+            let specs = cfg.fields
+                .filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
+                .map { ExtractionFieldSpec(name: $0.name, typeHint: $0.type.rawValue, description: $0.fieldDescription) }
+            if specs.isEmpty {
+                testError = "Add at least one field to extract."
+                isRunning = false; runTask = nil
+                return
+            }
+            do {
+                let record = try await ModelProviderRegistry.current.extractFields(from: text, fields: specs)
+                if !Task.isCancelled { testResult = cfg.formatRecord(record) }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { testError = error.localizedDescription }
+            }
+            isRunning = false; runTask = nil
+        }
     }
 
     // MARK: - Test bench (left pane): input editor on top, scope pop-up, samples list below
@@ -302,309 +395,248 @@ struct PromptBuilderView: View {
     /// document-source cascade, where the input is the forwarded text and there's nothing
     /// to pick) sit the optional Scope pop-up — shown only for the Library origin, since
     /// Action/Wizard already know the scope — and the Samples list.
-    private var testBench: some View {
+    private var inputPane: some View {
         VStack(spacing: 0) {
-            sampleWorkArea
-                .frame(maxHeight: .infinity)
-
-            if origin != .documentSource {
-                Divider()
-                if origin == .library {
-                    scopeTagRow
-                    Divider()
-                }
-                // Scope + Samples take roughly the lower half of the column.
-                samplesList
-                    .frame(maxHeight: .infinity)
-            }
-        }
-    }
-
-    private var scopeTagBinding: Binding<PipelineScope?> {
-        Binding(get: { scopeFilter }, set: { scopeFilter = $0 })
-    }
-
-    /// Optional scope filter (Library only). Scope is a soft tag, not a required category —
-    /// default "Any". Filters the Samples list and pre-fills the tag when saving to the library.
-    private var scopeTagRow: some View {
-        HStack(spacing: 8) {
-            Text("Scope").font(.caption).foregroundStyle(.secondary)
-            Picker("", selection: scopeTagBinding) {
-                Text("Any").tag(nil as PipelineScope?)
-                ForEach(PipelineScope.allCases, id: \.self) { s in
-                    Text(s.displayName).tag(s as PipelineScope?)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .controlSize(.small)
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.bar)
-    }
-
-    // MARK: - Samples list (bottom of the test bench)
-
-    private var samplesList: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Samples").font(.title3.bold())
+            HStack(spacing: 8) {
+                Text("Input").font(.title3.bold())
                 Spacer()
+                samplePickerButton
             }
             .frame(height: 44)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .background(.bar)
 
             Divider()
 
-            List(selection: $sampleSelection) {
-                Label("Scratchpad", systemImage: "pencil.and.scribble")
-                    .font(.callout)
-                    .tag(SampleSelection.scratchpad)
+            inputEditorBody
+        }
+    }
+
+    private var inputIsScratchpad: Bool {
+        if case .saved = sampleSelection { return false }
+        return true
+    }
+
+    private var inputSelectionTitle: String {
+        switch sampleSelection {
+        case .saved(let id): return allSamples.first { $0.id == id }?.name ?? "Sample"
+        default:             return appState.editOrigin != nil ? inContextSampleName : "Scratchpad"
+        }
+    }
+
+    /// The sample-selection popover trigger. Disabled in a document cascade, where the input is
+    /// the forwarded source text and there's nothing to pick.
+    private var samplePickerButton: some View {
+        Button {
+            showingSamplePicker.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: inputIsScratchpad
+                      ? (appState.editOrigin != nil ? "doc.text" : "pencil.and.scribble")
+                      : "text.quote")
+                Text(inputSelectionTitle).lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(appState.editOrigin != nil)
+        .popover(isPresented: $showingSamplePicker, arrowEdge: .bottom) { samplePickerPopover }
+        .help("Choose the text to test against")
+    }
+
+    private var samplePickerPopover: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text("Scope").font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: scopeTagBinding) {
+                    Text("Any").tag(nil as PipelineScope?)
+                    ForEach(PipelineScope.allCases, id: \.self) { s in
+                        Text(s.displayName).tag(s as PipelineScope?)
+                    }
+                }
+                .labelsHidden().pickerStyle(.menu).controlSize(.small)
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+
+            Divider()
+
+            List {
+                Button {
+                    sampleSelection = .scratchpad
+                    showingSamplePicker = false
+                } label: {
+                    Label("Scratchpad", systemImage: "pencil.and.scribble")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
 
                 if !filteredSamples.isEmpty {
                     Section("Saved") {
                         ForEach(filteredSamples, id: \.id) { sample in
-                            SampleRowView(sample: sample)
-                                .tag(SampleSelection.saved(sample.id))
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) { deleteSample(sample) } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
-                                }
-                                .contextMenu {
-                                    Button("Delete", role: .destructive) { deleteSample(sample) }
-                                }
+                            Button {
+                                sampleSelection = .saved(sample.id)
+                                showingSamplePicker = false
+                            } label: {
+                                SampleRowView(sample: sample)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
             }
             .listStyle(.inset)
-            .modifier(MasterListCard())
+            .frame(width: 260, height: 280)
 
             Divider()
 
-            HStack(spacing: 0) {
-                Button {
-                    addSample()
-                } label: {
-                    Image(systemName: "plus").frame(width: 28, height: 22)
-                }
-                .buttonStyle(.borderless)
-                .disabled(allSamples.count >= sampleLimit)
-                .help("Add sample (\(sampleLimit) max)")
-
-                Divider().frame(height: 14)
-
-                Button {
-                    if let s = selectedSample { deleteSample(s) }
-                } label: {
-                    Image(systemName: "minus").frame(width: 28, height: 22)
-                }
-                .buttonStyle(.borderless)
-                .disabled(selectedSample == nil)
-                .help("Delete selected sample")
-
-                Spacer()
+            Button {
+                showingSamplePicker = false
+                showingSampleManager = true
+            } label: {
+                Label("Manage samples…", systemImage: "slider.horizontal.3")
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 2)
-            .frame(height: 28)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .buttonStyle(.borderless)
+            .padding(10)
         }
+        .frame(width: 260)
     }
-
-    // MARK: - Sample work area (middle, flex)
 
     @ViewBuilder
-    private var sampleWorkArea: some View {
+    private var inputEditorBody: some View {
         switch sampleSelection {
-        case .scratchpad:
-            scratchpadWorkArea
         case .saved:
-            if let sample = selectedSample {
-                savedSampleWorkArea(sample)
-            } else {
-                emptySelectionView
-            }
-        case nil:
-            emptySelectionView
+            if let sample = selectedSample { savedSampleEditor(sample) }
+            else { emptySelectionView }
+        default:
+            scratchpadEditor
         }
     }
 
-    private var scratchpadWorkArea: some View {
+    private var scratchpadEditor: some View {
         VStack(spacing: 0) {
-            HStack {
-                if appState.editOrigin != nil {
-                    Text("Forwarded Sample").font(.title3.bold())
-                    Text("· \(inContextSampleName)").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("Selected Sample · Scratchpad").font(.title3.bold())
-                    Text("· not saved").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if !scratchpadText.isEmpty {
-                    Button("Clear") { scratchpadText = "" }
-                        .buttonStyle(.borderless)
-                        .controlSize(.small)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(height: 44)
-            .padding(.horizontal, 16)
-            .background(.bar)
-
-            Divider()
-
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 12) {
                     Text(appState.editOrigin != nil
-                         ? "Forwarded from the action — testing this step's prompt. Results stay here; your sources aren't changed."
-                         : "Temporary — paste or type text to test your prompt.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                         ? "Forwarded from the action — testing against this text. Results stay here; your sources aren't changed."
+                         : "Temporary text to test against. Paste or type, then Run.")
+                        .font(.caption).foregroundStyle(.secondary)
 
                     TextEditor(text: $scratchpadText)
                         .font(.body)
-                        .frame(minHeight: 130, maxHeight: 220)
+                        .frame(minHeight: 160)
                         .scrollContentBackground(.hidden)
                         .padding(6)
-                        .background(.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                        )
-
-                    HStack {
-                        Spacer()
-                        Text("\(scratchpadText.count.formatted()) chars")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
+                        .overlay(RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1))
                 }
                 .padding(16)
             }
+            inputFooter(charCount: scratchpadText.count,
+                        clear: scratchpadText.isEmpty ? nil : { scratchpadText = "" })
         }
     }
 
-    private func savedSampleWorkArea(_ sample: PromptSample) -> some View {
+    private func savedSampleEditor(_ sample: PromptSample) -> some View {
         VStack(spacing: 0) {
-            // Fixed header: editable name + scope picker
             HStack(spacing: 8) {
                 TextField("Untitled Sample", text: $editingName)
-                    .font(.title3.bold())
-                    .textFieldStyle(.plain)
-                Spacer()
-                Picker("Scope", selection: $editingScope) {
+                    .textFieldStyle(.roundedBorder)
+                Picker("", selection: $editingScope) {
                     ForEach(PipelineScope.allCases, id: \.self) { s in
                         Text(s.displayName).tag(s)
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(width: 110)
+                .labelsHidden().pickerStyle(.menu).controlSize(.small).frame(width: 130)
             }
-            .frame(height: 44)
-            .padding(.horizontal, 16)
-            .background(.bar)
-
-            // Save / Discard bar — only visible when there are unsaved changes
-            if sampleIsDirty {
-                Divider()
-                HStack(spacing: 8) {
-                    Button("Discard") {
-                        editingName  = sample.name
-                        editingText  = sample.sampleText
-                        editingScope = sample.scope
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    Spacer()
-                    Button("Save") {
-                        sample.name      = editingName
-                        sample.sampleText = editingText
-                        sample.scope     = editingScope
-                        try? modelContext.save()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .background(Color(nsColor: .controlBackgroundColor))
-            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
 
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    TextEditor(text: $editingText)
-                        .font(.body)
-                        .frame(minHeight: 130, maxHeight: 220)
-                        .scrollContentBackground(.hidden)
-                        .padding(6)
-                        .background(.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                        )
+                TextEditor(text: $editingText)
+                    .font(.body)
+                    .frame(minHeight: 160)
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    .padding(16)
+            }
 
-                    HStack {
-                        Spacer()
-                        Text("\(editingText.count.formatted()) chars")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+            if sampleIsDirty {
+                Divider()
+                HStack(spacing: 8) {
+                    Text("Unsaved changes").font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Discard") {
+                        editingName = sample.name; editingText = sample.sampleText; editingScope = sample.scope
                     }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    Button("Save") {
+                        sample.name = editingName; sample.sampleText = editingText; sample.scope = editingScope
+                        try? modelContext.save()
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
                 }
-                .padding(16)
+                .padding(.horizontal, 14).padding(.vertical, 8).background(.bar)
+            } else {
+                inputFooter(charCount: editingText.count, clear: nil)
             }
         }
     }
 
-    @ViewBuilder
-    private var resultView: some View {
-        if let result = testResult {
-            Divider()
-
-            HStack(alignment: .firstTextBaseline) {
-                Text("Result")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(result, forType: .string)
-                } label: {
-                    Label("Copy", systemImage: "doc.on.doc").font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
+    private func inputFooter(charCount: Int, clear: (() -> Void)?) -> some View {
+        HStack(spacing: 10) {
+            Text("\(charCount.formatted()) chars").font(.caption2).foregroundStyle(.tertiary)
+            Spacer()
+            if let clear {
+                Button("Clear", action: clear)
+                    .buttonStyle(.borderless).controlSize(.small).foregroundStyle(.secondary)
             }
-
-            if let outcome = verifyOutcome {
-                HStack(spacing: 6) {
-                    Image(systemName: outcome.passed ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                    Text(outcome.passed
-                         ? "Passed the check"
-                         : "Failed the check — \(outcome.reason ?? "")")
-                        .font(.caption)
-                }
-                .foregroundStyle(outcome.passed ? Color.green : Color.red)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if inputIsScratchpad {
+                Button("Save as sample…") { saveActiveTextAsSample() }
+                    .buttonStyle(.borderless).controlSize(.small)
+                    .disabled(activeText.isEmpty || allSamples.count >= sampleLimit)
+                    .help("Save this text as a reusable sample (\(sampleLimit) max)")
             }
-
-            PromptBuilderResultText(result)
-                .font(.body)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(Color(nsColor: .controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
         }
+        .padding(.horizontal, 14).padding(.vertical, 8).background(.bar)
+    }
+
+    /// Creates a saved sample from the current Scratchpad text and selects it for renaming.
+    private func saveActiveTextAsSample() {
+        guard allSamples.count < sampleLimit else { return }
+        let sample = PromptSample(name: "Sample \(allSamples.count + 1)",
+                                  sampleText: scratchpadText,
+                                  scope: scopeFilter ?? .source,
+                                  sortOrder: allSamples.count)
+        modelContext.insert(sample)
+        try? modelContext.save()
+        sampleSelection = .saved(sample.id)
+    }
+
+    /// Saves the current Result as a reusable input sample and immediately loads it as the input —
+    /// one-click chaining (run an instruction, bank its output as input, run the next instruction).
+    private func saveResultAsSample(_ text: String) {
+        guard allSamples.count < sampleLimit else { return }
+        let sample = PromptSample(name: "Sample \(allSamples.count + 1)",
+                                  sampleText: text,
+                                  scope: scopeFilter ?? .source,
+                                  sortOrder: allSamples.count)
+        modelContext.insert(sample)
+        try? modelContext.save()
+        // Chain: make the just-saved output the new input (onChange loads it + clears the result).
+        sampleSelection = .saved(sample.id)
+    }
+
+    private var scopeTagBinding: Binding<PipelineScope?> {
+        Binding(get: { scopeFilter }, set: { scopeFilter = $0 })
     }
 
     private var emptySelectionView: some View {
@@ -618,7 +650,7 @@ struct PromptBuilderView: View {
     // MARK: - Prompt panel (right, flexible — takes priority over the sample column)
 
     /// Persistent "Subject:" chip (23.5) — makes clear *what* Run Prompt tests against, and
-    /// that the Prompt Builder is **Test-only** (authoring): `📄 <source>` when drilled in
+    /// that the Instruction Lab is **Test-only** (authoring): `📄 <source>` when drilled in
     /// from a document, else `🧩 <sample>` (a saved sample or the scratchpad).
     private var subjectLabel: String {
         if let origin = appState.editOrigin {
@@ -640,7 +672,7 @@ struct PromptBuilderView: View {
 
     private var subjectChip: some View {
         HStack(spacing: 4) {
-            Text("Subject:").font(.caption2).foregroundStyle(.tertiary)
+            Text("Testing:").font(.caption2).foregroundStyle(.tertiary)
             Text(subjectLabel).font(.caption2.weight(.medium))
         }
         .padding(.horizontal, 8).padding(.vertical, 3)
@@ -650,47 +682,50 @@ struct PromptBuilderView: View {
 
     private var promptPane: some View {
         VStack(spacing: 0) {
-            // Header + prompt toolbar. File actions (Load · Save · Clear) are grouped and
-            // labeled; AI Improve sits by itself against the right edge.
             HStack(spacing: 12) {
-                Label("Prompt", systemImage: "text.bubble")
+                Label("Instruction", systemImage: "text.bubble")
                     .font(.headline)
                 Spacer()
 
-                // Section: Library · Clear (icon + word)
-                HStack(spacing: 6) {
-                    Menu {
-                        librarySaveButtons
-                        Divider()
-                        Button("Browse & Manage…") { showingLoadPromptSheet = true }
+                Menu {
+                    Button("Browse & Manage…") { showingLoadPromptSheet = true }
+                    if kind == .aiPrompt {
                         Button("Import from Action…") { showingImportActionSheet = true }
-                    } label: {
-                        Label("Library", systemImage: "books.vertical")
                     }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help("Save, browse, manage, or import prompts")
+                    Divider()
+                    if kind == .aiPrompt {
+                        Button("Copy") { copyPrompt() }.disabled(promptText.isEmpty)
+                        Divider()
+                    }
+                    saveItems
+                } label: {
+                    Label("Saved Prompts", systemImage: "books.vertical").lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Browse, import, copy, or save instructions")
 
+                if kind == .aiPrompt {
                     Button { promptText = "" } label: {
-                        Label("Clear", systemImage: "xmark.circle")
+                        Image(systemName: "xmark.circle")
                     }
                     .buttonStyle(.borderless)
                     .disabled(promptText.isEmpty)
                     .help("Clear the prompt")
                 }
 
-                Divider().frame(height: 18)
-
-                // AI improvement — on its own, against the right border.
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { showImprovePanel.toggle() }
-                } label: {
-                    Label("Improve", systemImage: "wand.and.sparkles")
-                        .foregroundStyle(showImprovePanel ? Color.accentColor : Color.secondary)
+                if improveAvailable {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { showImprovePanel.toggle() }
+                    } label: {
+                        Image(systemName: "wand.and.sparkles")
+                            .foregroundStyle(showImprovePanel ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(showImprovePanel
+                          ? "Hide AI help"
+                          : (kind == .transform ? "Improve the pattern with AI" : "Improve the prompt with AI"))
                 }
-                .buttonStyle(.borderless)
-                .disabled(promptText.isEmpty)
-                .help(showImprovePanel ? "Hide AI Improvement" : "Improve prompt with AI")
             }
             .frame(height: 44)
             .padding(.horizontal, 16)
@@ -698,47 +733,158 @@ struct PromptBuilderView: View {
 
             Divider()
 
+            kindSwitcher
+
+            Divider()
+
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ZStack(alignment: .topLeading) {
-                        TextEditor(text: $promptText)
-                            .font(.body)
-                            .frame(minHeight: 200)
-                            .scrollContentBackground(.hidden)
-                            .padding(6)
-                            .focused($promptFocused)
-
-                        if promptText.isEmpty {
-                            Text("Enter your prompt here…")
-                                .foregroundStyle(.tertiary)
-                                .padding(10)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .background(.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-                    )
-
-                    HStack {
-                        Spacer()
-                        Text("\(promptText.count) / \(AppConstants.maxPromptCharacters) chars")
-                            .font(.caption2)
-                            .foregroundStyle(promptText.count > AppConstants.maxPromptCharacters
-                                ? AnyShapeStyle(.red)
-                                : AnyShapeStyle(.tertiary))
-                    }
-                }
-                .padding(16)
+                instructionEditor
+                    .padding(16)
             }
 
             Divider()
 
             runBar
+        }
+    }
 
-            resultPane
+    /// AI Prompt · Transform · Extract Fields — what this instruction does.
+    private var kindSwitcher: some View {
+        Picker("Instruction kind", selection: $kind) {
+            Text("AI Prompt").tag(PipelineStepKind.aiPrompt)
+            Text("Transform").tag(PipelineStepKind.transform)
+            Text("Extract Fields").tag(PipelineStepKind.extractFields)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var instructionEditor: some View {
+        switch kind {
+        case .aiPrompt:
+            VStack(alignment: .leading, spacing: 12) {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $promptText)
+                        .font(.body)
+                        .frame(minHeight: 200)
+                        .scrollContentBackground(.hidden)
+                        .padding(6)
+                        .focused($promptFocused)
+
+                    if promptText.isEmpty {
+                        Text("Enter your prompt here…")
+                            .foregroundStyle(.tertiary)
+                            .padding(10)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .background(.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                )
+
+                HStack {
+                    Spacer()
+                    Text("\(promptText.count) / \(AppConstants.maxPromptCharacters) chars")
+                        .font(.caption2)
+                        .foregroundStyle(promptText.count > AppConstants.maxPromptCharacters
+                            ? AnyShapeStyle(.red)
+                            : AnyShapeStyle(.tertiary))
+                }
+            }
+        case .transform:
+            TransformConfigEditor(config: $transformConfig)
+        case .extractFields:
+            ExtractFieldsEditor(config: $extractConfig)
+        }
+    }
+
+    // MARK: - Result column (right pane), with the Improve panel sliding over it
+
+    private var resultColumn: some View {
+        ZStack(alignment: .trailing) {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Text("Result").font(.title3.bold())
+                    Spacer()
+                    if let outcome = verifyOutcome {
+                        Label(outcome.passed ? "Passed the check" : "Failed the check",
+                              systemImage: outcome.passed ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                            .font(.caption)
+                            .foregroundStyle(outcome.passed ? Color.green : Color.red)
+                    }
+                    if let result = testResult {
+                        Button { saveResultAsSample(result) } label: {
+                            Label("Save as Sample", systemImage: "tray.and.arrow.down").font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .disabled(allSamples.count >= sampleLimit)
+                        .help("Save this output as a sample and load it as the input — chain it into your next instruction")
+
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(result, forType: .string)
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc").font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                    }
+                }
+                .frame(height: 44)
+                .padding(.horizontal, 14)
+                .background(.bar)
+
+                Divider()
+
+                resultBody
+            }
+
+            if showImprovePanel {
+                improvePanel
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .transition(.move(edge: .trailing))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var resultBody: some View {
+        if testResult == nil && testError == nil {
+            ContentUnavailableView("No Result Yet",
+                                   systemImage: "play.circle",
+                                   description: Text("Run the instruction to see its output here."))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let err = testError {
+                        Text(err).font(.caption).foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let outcome = verifyOutcome, !outcome.passed, let reason = outcome.reason {
+                        Text(reason).font(.caption).foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let result = testResult {
+                        PromptBuilderResultText(result)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+                .padding(16)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -765,6 +911,13 @@ struct PromptBuilderView: View {
                     .help("This step's “Check the result” settings from the Action Editor.")
             }
 
+            if kind == .transform && resultStale {
+                Label("Out of date", systemImage: "exclamationmark.arrow.circlepath")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .help("The input or pattern changed — press Test to update the result.")
+            }
+
             Spacer()
             runToolbarContent
         }
@@ -773,48 +926,54 @@ struct PromptBuilderView: View {
         .background(.bar)
     }
 
-    /// Result pane (bottom-right): the run result, plus any run error.
-    @ViewBuilder
-    private var resultPane: some View {
-        if testResult != nil || testError != nil {
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    if let err = testError {
-                        Text(err).font(.caption).foregroundStyle(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    resultView
-                }
-                .padding(16)
-            }
-            .frame(maxHeight: .infinity)
-        } else {
-            Spacer(minLength: 0)
-        }
-    }
-
     // MARK: - Contextual Save (Phase 25.2)
 
     /// Save/step actions folded into the Library menu (above the Browse/Import section). Origin-
     /// dependent: the Library saves to the prompt library; an Action can update/append a step or
     /// save-to-library/copy; a document-source test saves-to-library or copies. Disabled while the
     /// prompt is empty; Browse/Import stay enabled regardless.
-    @ViewBuilder private var librarySaveButtons: some View {
-        switch origin {
-        case .library:
-            Button("Save Prompt…") { showingSaveLibrarySheet = true }.disabled(promptText.isEmpty)
-            Button("Copy")         { copyPrompt() }.disabled(promptText.isEmpty)
-        case .action:
-            if rthStepIndex != nil {
-                Button("Update This Step") { updateSeededStep() }.disabled(promptText.isEmpty)
-            }
-            Button("Add as New Step")  { addStepToSeededAction() }.disabled(promptText.isEmpty)
-            Button("Save to Library…") { showingSaveLibrarySheet = true }.disabled(promptText.isEmpty)
-            Button("Copy")             { copyPrompt() }.disabled(promptText.isEmpty)
-        case .documentSource:
-            Button("Save to Library…") { showingSaveLibrarySheet = true }.disabled(promptText.isEmpty)
-            Button("Copy")             { copyPrompt() }.disabled(promptText.isEmpty)
+    /// Whether the AI-help panel applies to the current instruction: prompts (improve wording)
+    /// and Find & Replace transforms (improve the regex). Other transforms have nothing to improve.
+    private var improveAvailable: Bool {
+        switch kind {
+        case .aiPrompt:      return !promptText.isEmpty
+        case .transform:     return transformConfig.type == .findReplace
+        case .extractFields: return false
+        }
+    }
+
+    /// Save items for the "Saved Prompts" menu — save to the reusable library (any kind) plus,
+    /// when the Lab was opened from an action, save back to that action as a step.
+    @ViewBuilder private var saveItems: some View {
+        Button("Save to Library…") { showingSaveLibrarySheet = true }
+            .disabled(currentInstructionIsEmpty)
+        if rthStepIndex != nil {
+            Button("Update This Step") { updateSeededStep() }.disabled(currentInstructionIsEmpty)
+        }
+        if rthActionID != nil {
+            Button("Add as New Step") { addStepToSeededAction() }.disabled(currentInstructionIsEmpty)
+        }
+    }
+
+    /// Whether the current instruction has nothing worth saving/running.
+    private var currentInstructionIsEmpty: Bool {
+        switch kind {
+        case .aiPrompt:
+            return promptText.isEmpty
+        case .transform:
+            return transformConfig.type == .findReplace && transformConfig.find.isEmpty
+        case .extractFields:
+            return !extractConfig.fields.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
+        }
+    }
+
+    /// Loads a saved instruction (any kind) into the Lab.
+    private func applyLoadedInstruction(_ p: SavedPrompt) {
+        kind = p.kind
+        switch p.kind {
+        case .aiPrompt:      promptText = p.text
+        case .transform:     transformConfig = p.transformConfig
+        case .extractFields: extractConfig = p.extractConfig
         }
     }
 
@@ -833,21 +992,32 @@ struct PromptBuilderView: View {
               let pipeline = fetchPipeline(id) else { return }
         let steps = pipeline.sortedSteps
         guard idx >= 0, idx < steps.count else { return }
-        steps[idx].prompt = promptText
+        applyInstruction(to: steps[idx])
         try? modelContext.save()
         navigateToAction(id)
     }
 
-    /// Appends a new step (with the current prompt) to the seeded action, then returns to it.
+    /// Appends a new step (with the current instruction) to the seeded action, then returns to it.
     private func addStepToSeededAction() {
         guard let id = rthActionID, let pipeline = fetchPipeline(id) else { return }
         let order = (pipeline.steps ?? []).count
-        let step = PipelineStep(name: "Step \(order + 1)", prompt: promptText, sortOrder: order)
+        let step = PipelineStep(name: "Step \(order + 1)", prompt: "", sortOrder: order)
+        applyInstruction(to: step)
         modelContext.insert(step)
         step.pipeline  = pipeline
         pipeline.steps = (pipeline.steps ?? []) + [step]
         try? modelContext.save()
         navigateToAction(id)
+    }
+
+    /// Writes the current instruction (kind + its prompt/config) onto a step.
+    private func applyInstruction(to step: PipelineStep) {
+        step.kind = kind
+        switch kind {
+        case .aiPrompt:      step.prompt = promptText
+        case .transform:     step.transformConfig = transformConfig
+        case .extractFields: step.extractConfig = extractConfig
+        }
     }
 
     /// Lands the user on the action they just saved into (item #6 flow).
@@ -862,9 +1032,8 @@ struct PromptBuilderView: View {
 
     private var improvePanel: some View {
         VStack(spacing: 0) {
-            // Header
             HStack {
-                Label("AI Improvement", systemImage: "wand.and.sparkles")
+                Label(kind == .transform ? "Improve Pattern" : "Improve Prompt", systemImage: "wand.and.sparkles")
                     .font(.headline)
                 Spacer()
                 Button {
@@ -873,43 +1042,82 @@ struct PromptBuilderView: View {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
-                .help("Hide AI Improvement")
+                .help("Hide AI help")
             }
             .frame(height: 44)
             .padding(.horizontal, 16)
             .background(.bar)
 
-            // Context badge
-            HStack(spacing: 6) {
-                Image(systemName: "text.bubble").font(.caption2).foregroundStyle(.secondary)
-                Text(chatPromptBadge)
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                Spacer()
-                Image(systemName: testResult != nil ? "checkmark.circle.fill" : "exclamationmark.circle")
-                    .font(.caption2)
-                    .foregroundStyle(testResult != nil ? Color.green : Color.orange)
-                Text(testResult != nil ? "Result ready" : "No result")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
-            .background(Color(nsColor: .controlBackgroundColor))
+            improveContextStrip
 
             Divider()
 
-            // Messages
             chatMessagesView
 
             Divider()
 
-            // Input
             chatInputArea
         }
     }
 
-    private var chatPromptBadge: String {
-        guard !promptText.isEmpty else { return "No prompt entered" }
-        return String(promptText.prefix(40)) + (promptText.count > 40 ? "…" : "")
+    /// Compact reminder of what the assistant is looking at. The panel covers the Result pane,
+    /// so the Input · Instruction · Output first lines are surfaced here instead.
+    private var improveContextStrip: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            improveContextRow("Input", firstLine(activeText))
+            improveContextRow(kind == .transform ? "Pattern" : "Instruction", firstLine(instructionSummaryText))
+            improveContextRow("Output", testResult == nil ? "— not run yet —" : firstLine(testResult!))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func improveContextRow(_ label: String, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 62, alignment: .leading)
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func firstLine(_ s: String) -> String {
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "—" }
+        let line = trimmed.components(separatedBy: .newlines).first ?? trimmed
+        return line.count > 120 ? String(line.prefix(120)) + "…" : line
+    }
+
+    /// A one-line description of the current instruction, for the context strip.
+    private var instructionSummaryText: String {
+        switch kind {
+        case .aiPrompt: return promptText
+        case .transform:
+            if transformConfig.type == .findReplace {
+                return "s/\(transformConfig.find)/\(transformConfig.replace)/"
+            }
+            return transformConfig.type.displayName
+        case .extractFields:
+            let names = extractConfig.fields.map(\.name).filter { !$0.isEmpty }
+            return names.isEmpty ? "(no fields)" : names.joined(separator: ", ")
+        }
+    }
+
+    /// Applies an AI suggestion — a rewritten prompt, or a regex pattern into the Find field.
+    private func applySuggestion(_ text: String, isPattern: Bool) {
+        if isPattern {
+            transformConfig.find = text
+            if !transformConfig.useRegex { transformConfig.useRegex = true }
+        } else {
+            promptText = text
+        }
     }
 
     private var chatMessagesView: some View {
@@ -922,20 +1130,24 @@ struct PromptBuilderView: View {
                                 .font(.system(size: 28))
                                 .foregroundStyle(.tertiary)
                             if testResult == nil {
-                                Text("Run the prompt first so the assistant can see the output it produced — then ask what went wrong.")
+                                Text(kind == .transform
+                                     ? "Add input and a pattern — then ask the assistant to help build or fix your regex."
+                                     : "Run the prompt first so the assistant can see the output it produced — then ask what went wrong.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .multilineTextAlignment(.center)
                                 Button {
-                                    runPrompt()
+                                    runInstruction()
                                 } label: {
-                                    Label("Run Prompt", systemImage: "play.fill")
+                                    Label("Test", systemImage: "play.fill")
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
-                                .disabled(promptText.isEmpty || activeText.isEmpty || isRunning)
+                                .disabled(!canRun || isRunning)
                             } else {
-                                Text("Ask why your prompt produced this output, request improvements, or describe what you wanted instead.")
+                                Text(kind == .transform
+                                     ? "Ask the assistant to write or fix your pattern, or describe what you want matched."
+                                     : "Ask why your prompt produced this output, request improvements, or describe what you wanted instead.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .multilineTextAlignment(.center)
@@ -948,7 +1160,7 @@ struct PromptBuilderView: View {
 
                     ForEach(chatMessages) { msg in
                         PromptChatMessageRow(message: msg) { suggested in
-                            promptText = suggested
+                            applySuggestion(suggested, isPattern: msg.suggestionIsPattern)
                         }
                         .id(msg.id)
                     }
@@ -1043,30 +1255,6 @@ struct PromptBuilderView: View {
 
     // MARK: - Actions
 
-    private func addSample() {
-        guard allSamples.count < sampleLimit else { return }
-        let scope  = scopeFilter ?? .source
-        let sample = PromptSample(
-            name: "Sample \(allSamples.count + 1)",
-            scope: scope,
-            sortOrder: allSamples.count
-        )
-        modelContext.insert(sample)
-        try? modelContext.save()
-        editingName  = sample.name
-        editingText  = sample.sampleText
-        editingScope = sample.scope
-        sampleSelection = .saved(sample.id)
-    }
-
-    private func deleteSample(_ sample: PromptSample) {
-        if case .saved(let id) = sampleSelection, id == sample.id {
-            sampleSelection = .scratchpad
-        }
-        modelContext.delete(sample)
-        try? modelContext.save()
-    }
-
     private func runPrompt() {
         testResult = nil
         testError  = nil
@@ -1092,6 +1280,11 @@ struct PromptBuilderView: View {
     }
 
     private func makeSession() -> any ModelSession {
+        let instructions = kind == .transform ? makeRegexInstructions() : makePromptInstructions()
+        return ModelProviderRegistry.current.makeSession(instructions: instructions)
+    }
+
+    private func makePromptInstructions() -> String {
         var instructions = """
         You are an AI prompt engineering assistant inside an app called Textifyr. \
         Prompts in this app are system instructions given to Apple Intelligence to \
@@ -1123,7 +1316,47 @@ struct PromptBuilderView: View {
         [the complete improved prompt, nothing else]
         """
 
-        return ModelProviderRegistry.current.makeSession(instructions: instructions)
+        return instructions
+    }
+
+    private func makeRegexInstructions() -> String {
+        let sampleIn = activeText.count > 800 ? String(activeText.prefix(800)) + "\n[…truncated]" : activeText
+        var instructions = """
+        You are a regular-expression assistant inside an app called Textifyr. The user is building a \
+        Find & Replace transform that runs on macOS using NSRegularExpression (ICU / Foundation regex \
+        syntax). Help them write or fix the Find pattern, and the Replacement template when useful \
+        ($1, $2 … are capture groups; \\t is a Tab and \\n a newline in the replacement).
+
+        CURRENT FIND PATTERN:
+        \(transformConfig.find.isEmpty ? "(empty)" : transformConfig.find)
+        CURRENT REPLACEMENT:
+        \(transformConfig.replace.isEmpty ? "(empty)" : transformConfig.replace)
+        REGEX MODE: \(transformConfig.useRegex ? "on" : "off (currently literal)")
+
+        INPUT SAMPLE:
+        \(sampleIn.isEmpty ? "(none provided yet)" : sampleIn)
+        """
+
+        if let result = testResult {
+            let preview = result.count > 800 ? String(result.prefix(800)) + "\n[…truncated]" : result
+            instructions += "\n\nCURRENT OUTPUT (the pattern applied to the input):\n\(preview)"
+        }
+
+        instructions += """
+
+        Rules for correct patterns:
+        - Use quantifiers; never repeat a token literally. "one or more X" = X+ · "two or more X" = X{2,} · "exactly 3 X" = X{3} · "between 2 and 5 X" = X{2,5} · "optional X" = X?. For example "2 or more n" is n{2,} — NOT nnn or (n)(n)(n).
+        - Escape metacharacters . * + ? [ ] ( ) { } | \\ ^ $ when matching them literally.
+        - Use \\d \\w \\s \\b and anchors ^ $ where the request implies them.
+        - Prefer the simplest pattern that matches exactly what was asked — nothing more.
+
+        Keep responses short. Explain briefly, then when you propose a pattern end your response with \
+        exactly this and nothing after it:
+        SUGGESTED PATTERN:
+        [the regular expression only — no slashes, no quotes, no explanation]
+        """
+
+        return instructions
     }
 
     private func sendChatMessage() {
@@ -1184,6 +1417,9 @@ struct PromptBuilderView: View {
     private func applySeed() {
         guard let seed else { return }
         if !seed.prompt.isEmpty { promptText = seed.prompt }
+        kind = seed.kind
+        if !seed.transformConfigJSON.isEmpty { transformConfig = TextTransformConfig.decode(seed.transformConfigJSON) }
+        if !seed.extractConfigJSON.isEmpty   { extractConfig   = ExtractFieldsConfig.decode(seed.extractConfigJSON) }
         rthActionID  = seed.actionID
         rthStepIndex = seed.stepIndex
 
@@ -1195,7 +1431,7 @@ struct PromptBuilderView: View {
             scopeFilter = pipeline.scope
         }
 
-        // Seeded from a source (e.g. a flagged source's "Improve in Prompt Builder"):
+        // Seeded from a source (e.g. a flagged source's "Improve in Instruction Lab"):
         // stage its text as the Scratchpad sample so the user iterates against the exact
         // input that failed (21.5/22.9).
         if !seed.sampleText.isEmpty {
@@ -1267,22 +1503,25 @@ private struct PromptChatMessage: Identifiable {
     let role: Role
     let displayContent: String
     let suggestedPrompt: String?
+    let suggestionIsPattern: Bool
 
     init(role: Role, rawContent: String) {
         self.role = role
-        let (display, suggested) = Self.parse(rawContent)
-        self.displayContent = display
-        self.suggestedPrompt = suggested
+        let parsed = Self.parse(rawContent)
+        self.displayContent = parsed.display
+        self.suggestedPrompt = parsed.suggestion
+        self.suggestionIsPattern = parsed.isPattern
     }
 
-    static func parse(_ content: String) -> (display: String, prompt: String?) {
-        let marker = "SUGGESTED PROMPT:"
-        guard let range = content.range(of: marker, options: .caseInsensitive) else {
-            return (content.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+    static func parse(_ content: String) -> (display: String, suggestion: String?, isPattern: Bool) {
+        for (marker, isPattern) in [("SUGGESTED PATTERN:", true), ("SUGGESTED PROMPT:", false)] {
+            if let range = content.range(of: marker, options: .caseInsensitive) {
+                let display = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let suggestion = String(content[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                return (display.isEmpty ? content : display, suggestion.isEmpty ? nil : suggestion, isPattern)
+            }
         }
-        let display = String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let prompt  = String(content[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (display.isEmpty ? content : display, prompt.isEmpty ? nil : prompt)
+        return (content.trimmingCharacters(in: .whitespacesAndNewlines), nil, false)
     }
 }
 
@@ -1314,7 +1553,8 @@ private struct PromptChatMessageRow: View {
                     Button {
                         onUseAsPrompt(suggested)
                     } label: {
-                        Label("Use as Prompt", systemImage: "arrow.up.right.circle")
+                        Label(message.suggestionIsPattern ? "Use as Pattern" : "Use as Prompt",
+                              systemImage: "arrow.up.right.circle")
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
@@ -1342,6 +1582,163 @@ private struct SampleRowView: View {
                 .foregroundStyle(.primary)
         }
         .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Text Sample Manager sheet (app-wide sample CRUD)
+
+/// Standalone add/edit/delete for the reusable test-text samples. Reached from the Instruction
+/// Lab's Input picker and (later) the Tools menu. Editing is explicit-save, matching the app.
+struct TextSampleManagerSheet: View {
+    var initialScope: PipelineScope?
+    /// Called on Done with the currently selected sample, so a caller can adopt it.
+    var onSelect: ((UUID) -> Void)? = nil
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \PromptSample.sortOrder) private var allSamples: [PromptSample]
+
+    @State private var selectedID: UUID?
+    @State private var editingName = ""
+    @State private var editingText = ""
+    @State private var editingScope: PipelineScope = .source
+    @State private var didInit = false
+
+    private let sampleLimit = AppConstants.maxPromptSamples
+
+    private var selected: PromptSample? { allSamples.first { $0.id == selectedID } }
+    private var isDirty: Bool {
+        guard let s = selected else { return false }
+        return editingName != s.name || editingText != s.sampleText || editingScope != s.scope
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Text Sample Manager").font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14).background(.bar)
+
+            Divider()
+
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    List(selection: $selectedID) {
+                        ForEach(allSamples, id: \.id) { sample in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(sample.name.isEmpty ? "Untitled" : sample.name)
+                                    .font(.callout).lineLimit(1)
+                                Text(sample.scope.displayName)
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            .tag(sample.id)
+                        }
+                    }
+                    .listStyle(.inset)
+
+                    Divider()
+
+                    HStack(spacing: 0) {
+                        Button { addSample() } label: { Image(systemName: "plus").frame(width: 28, height: 22) }
+                            .buttonStyle(.borderless).disabled(allSamples.count >= sampleLimit)
+                            .help("Add sample (\(sampleLimit) max)")
+                        Divider().frame(height: 14)
+                        Button { if let s = selected { deleteSample(s) } } label: { Image(systemName: "minus").frame(width: 28, height: 22) }
+                            .buttonStyle(.borderless).disabled(selected == nil)
+                            .help("Delete selected sample")
+                        Spacer()
+                    }
+                    .padding(.horizontal, 2).frame(height: 28)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                }
+                .frame(width: 220)
+
+                Divider()
+
+                Group {
+                    if selected != nil {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 8) {
+                                TextField("Sample name", text: $editingName).textFieldStyle(.roundedBorder)
+                                Picker("", selection: $editingScope) {
+                                    ForEach(PipelineScope.allCases, id: \.self) { s in Text(s.displayName).tag(s) }
+                                }
+                                .labelsHidden().controlSize(.small).frame(width: 140)
+                            }
+                            TextEditor(text: $editingText)
+                                .font(.body).scrollContentBackground(.hidden).padding(6)
+                                .background(Color(nsColor: .textBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                            HStack {
+                                Text("\(editingText.count.formatted()) chars").font(.caption2).foregroundStyle(.tertiary)
+                                Spacer()
+                                if isDirty {
+                                    Button("Discard") { loadEditing(selected) }.buttonStyle(.bordered).controlSize(.small)
+                                    Button("Save") { saveEditing() }.buttonStyle(.borderedProminent).controlSize(.small)
+                                }
+                            }
+                        }
+                        .padding(16)
+                    } else {
+                        ContentUnavailableView("No Sample Selected",
+                                               systemImage: "doc.text",
+                                               description: Text("Select a sample to edit, or add a new one."))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Done") {
+                    if isDirty { saveEditing() }
+                    if let id = selectedID { onSelect?(id) }
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14)
+        }
+        .frame(width: 640, height: 440)
+        .onAppear {
+            if !didInit { selectedID = allSamples.first?.id; loadEditing(selected); didInit = true }
+        }
+        .onChange(of: selectedID) { _, _ in loadEditing(selected) }
+    }
+
+    private func loadEditing(_ s: PromptSample?) {
+        editingName = s?.name ?? ""
+        editingText = s?.sampleText ?? ""
+        editingScope = s?.scope ?? .source
+    }
+
+    private func saveEditing() {
+        guard let s = selected else { return }
+        s.name = editingName; s.sampleText = editingText; s.scope = editingScope
+        try? modelContext.save()
+    }
+
+    private func addSample() {
+        guard allSamples.count < sampleLimit else { return }
+        let s = PromptSample(name: "Sample \(allSamples.count + 1)",
+                             scope: initialScope ?? .source,
+                             sortOrder: allSamples.count)
+        modelContext.insert(s)
+        try? modelContext.save()
+        selectedID = s.id
+        loadEditing(s)
+    }
+
+    private func deleteSample(_ s: PromptSample) {
+        if selectedID == s.id { selectedID = nil }
+        modelContext.delete(s)
+        try? modelContext.save()
+        loadEditing(nil)
     }
 }
 
@@ -1483,7 +1880,7 @@ private struct LoadFromActionSheet: View {
 struct LoadExistingPromptSheet: View {
     /// When non-nil, prompts are pre-filtered to this scope tag (plus untagged "Any" prompts).
     var scopeFilter: PipelineScope?
-    let onLoad: (String) -> Void
+    let onLoad: (SavedPrompt) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \SavedPrompt.sortOrder) private var allPrompts: [SavedPrompt]
@@ -1506,20 +1903,53 @@ struct LoadExistingPromptSheet: View {
     /// One selectable row — name only; the section header carries the scope.
     @ViewBuilder
     private func promptRow(_ p: SavedPrompt) -> some View {
-        Text(p.name.isEmpty ? "Untitled" : p.name)
-            .font(.callout)
-            .lineLimit(1)
-            .tag(p.id)
-            .contextMenu {
-                Button("Duplicate") { duplicate(p) }
-                Button("Delete", role: .destructive) { delete(p) }
+        HStack(spacing: 6) {
+            Text(p.name.isEmpty ? "Untitled" : p.name)
+                .font(.callout)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            Text(Self.kindBadge(p.kind))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(Color.secondary.opacity(0.15), in: Capsule())
+        }
+        .tag(p.id)
+        .contextMenu {
+            Button("Duplicate") { duplicate(p) }
+            Button("Delete", role: .destructive) { delete(p) }
+        }
+    }
+
+    static func kindBadge(_ k: PipelineStepKind) -> String {
+        switch k {
+        case .aiPrompt:      return "Prompt"
+        case .transform:     return "Transform"
+        case .extractFields: return "Extract"
+        }
+    }
+
+    /// A readable preview of a saved item — its prompt text, or a config summary.
+    static func previewText(_ p: SavedPrompt) -> String {
+        switch p.kind {
+        case .aiPrompt:
+            return p.text
+        case .transform:
+            let c = p.transformConfig
+            if c.type == .findReplace {
+                return "Find & Replace\nFind:    \(c.find)\nReplace: \(c.replace)\nRegex: \(c.useRegex ? "on" : "off")"
             }
+            return c.type.displayName
+        case .extractFields:
+            let names = p.extractConfig.fields.map(\.name).filter { !$0.isEmpty }
+            return "Extract Fields: " + (names.isEmpty ? "(none)" : names.joined(separator: ", "))
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Text("Prompt Library").font(.headline)
+                Text("Saved Instructions").font(.headline)
                 Spacer()
                 Picker("", selection: $scopeFilterState) {
                     Text("All Scopes").tag(nil as PipelineScope?)
@@ -1584,7 +2014,9 @@ struct LoadExistingPromptSheet: View {
                                       || editingName == p.name)
                         }
                         ScrollView {
-                            Text(p.text).font(.callout).textSelection(.enabled)
+                            Text(Self.previewText(p))
+                                .font(p.kind == .aiPrompt ? .callout : .system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1611,7 +2043,7 @@ struct LoadExistingPromptSheet: View {
                     .buttonStyle(.bordered).disabled(selected == nil)
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(.bordered)
-                Button("Load Prompt") { if let p = selected { onLoad(p.text); dismiss() } }
+                Button("Load") { if let p = selected { onLoad(p); dismiss() } }
                     .buttonStyle(.borderedProminent).disabled(selected == nil)
             }
             .padding(.horizontal, 20).padding(.vertical, 14)
@@ -1623,7 +2055,10 @@ struct LoadExistingPromptSheet: View {
 
     private func duplicate(_ p: SavedPrompt) {
         let copy = SavedPrompt(name: p.name + " Copy", text: p.text,
-                               scopeTag: p.scopeTag, sortOrder: allPrompts.count)
+                               scopeTag: p.scopeTag, sortOrder: allPrompts.count,
+                               kind: p.kind,
+                               transformConfigJSON: p.transformConfigJSON,
+                               extractConfigJSON: p.extractConfigJSON)
         modelContext.insert(copy)
         try? modelContext.save()
         selectedID = copy.id
@@ -1644,6 +2079,11 @@ struct SavePromptToLibrarySheet: View {
     let promptText: String
     var initialScope: PipelineScope?
     var nextSortOrder: Int
+    /// The instruction kind being saved. Defaults to `.aiPrompt` so existing callers (the wizard
+    /// inline-improve panel) keep working unchanged.
+    var kind: PipelineStepKind = .aiPrompt
+    var transformConfigJSON: String = ""
+    var extractConfigJSON: String = ""
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
@@ -1653,10 +2093,28 @@ struct SavePromptToLibrarySheet: View {
 
     private var canSave: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty }
 
+    /// A readable preview of what's being saved — the prompt for AI, a config summary otherwise.
+    private var previewText: String {
+        switch kind {
+        case .aiPrompt:
+            return promptText
+        case .transform:
+            let c = TextTransformConfig.decode(transformConfigJSON)
+            if c.type == .findReplace {
+                return "Find & Replace\nFind:    \(c.find)\nReplace: \(c.replace)\nRegex: \(c.useRegex ? "on" : "off") · Case-sensitive: \(c.caseSensitive ? "yes" : "no")"
+            }
+            return c.type.displayName
+        case .extractFields:
+            let c = ExtractFieldsConfig.decode(extractConfigJSON)
+            let names = c.fields.map(\.name).filter { !$0.isEmpty }
+            return "Extract Fields: " + (names.isEmpty ? "(none)" : names.joined(separator: ", "))
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Save Prompt to Library").font(.headline)
+                Text("Save to Library").font(.headline)
                 Spacer()
             }
             .padding(.horizontal, 20).padding(.vertical, 14).background(.bar)
@@ -1665,7 +2123,7 @@ struct SavePromptToLibrarySheet: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 LabeledContent("Name") {
-                    TextField("Prompt name", text: $name).textFieldStyle(.roundedBorder).frame(width: 260)
+                    TextField("Name", text: $name).textFieldStyle(.roundedBorder).frame(width: 260)
                 }
                 LabeledContent("Scope tag") {
                     Picker("", selection: $scope) {
@@ -1676,12 +2134,14 @@ struct SavePromptToLibrarySheet: View {
                     }
                     .labelsHidden().pickerStyle(.menu).frame(width: 160)
                 }
-                Text("Scope is an optional filter tag — leave it \"Any\" if the prompt applies broadly.")
+                Text("Scope is an optional filter tag — leave it \"Any\" if the instruction applies broadly.")
                     .font(.caption).foregroundStyle(.secondary)
 
                 Text("Preview").font(.caption.bold()).foregroundStyle(.secondary)
                 ScrollView {
-                    Text(promptText).font(.callout).textSelection(.enabled)
+                    Text(previewText)
+                        .font(kind == .aiPrompt ? .callout : .system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 140)
@@ -1706,11 +2166,14 @@ struct SavePromptToLibrarySheet: View {
     }
 
     private func save() {
-        let prompt = SavedPrompt(name: name.trimmingCharacters(in: .whitespaces),
-                                 text: promptText,
-                                 scopeTag: scope,
-                                 sortOrder: nextSortOrder)
-        modelContext.insert(prompt)
+        let item = SavedPrompt(name: name.trimmingCharacters(in: .whitespaces),
+                               text: kind == .aiPrompt ? promptText : "",
+                               scopeTag: scope,
+                               sortOrder: nextSortOrder,
+                               kind: kind,
+                               transformConfigJSON: transformConfigJSON,
+                               extractConfigJSON: extractConfigJSON)
+        modelContext.insert(item)
         try? modelContext.save()
         dismiss()
     }
@@ -1729,6 +2192,147 @@ private struct PromptBuilderResultText: View {
 
     var body: some View {
         Text(attributedString)
+    }
+}
+
+// MARK: - Reusable instruction editors
+
+/// Editor for a deterministic transform's configuration. Used by the Instruction Lab; the
+/// Action step row (`PipelineStepRow`) has an equivalent inline editor.
+struct TransformConfigEditor: View {
+    @Binding var config: TextTransformConfig
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Transform", selection: $config.type) {
+                ForEach(TextTransformType.allCases, id: \.self) { t in
+                    Label(t.displayName, systemImage: t.icon).tag(t)
+                }
+            }
+            .labelsHidden().pickerStyle(.menu).fixedSize()
+
+            Text(config.type.summary)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            switch config.type {
+            case .findReplace:   findReplace
+            case .delimiter:     delimiter
+            case .whitespace:    whitespace
+            case .caseTransform: caseTransform
+            case .lineOps:       lineOps
+            case .homoglyph:     EmptyView()
+            }
+        }
+    }
+
+    private var findReplace: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Find").font(.caption).foregroundStyle(.secondary)
+                TextField(config.useRegex ? "pattern" : "text to find", text: $config.find)
+                    .textFieldStyle(.roundedBorder).font(.system(.body, design: .monospaced))
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Replace").font(.caption).foregroundStyle(.secondary)
+                TextField("replacement", text: $config.replace)
+                    .textFieldStyle(.roundedBorder).font(.system(.body, design: .monospaced))
+            }
+            HStack(spacing: 16) {
+                Toggle("Regular expression", isOn: $config.useRegex).toggleStyle(.checkbox)
+                Toggle("Case sensitive", isOn: $config.caseSensitive).toggleStyle(.checkbox)
+            }
+            .font(.caption)
+        }
+    }
+
+    private var delimiter: some View {
+        Picker("Conversion", selection: $config.delimiterPreset) {
+            ForEach(DelimiterPreset.allCases, id: \.self) { p in Text(p.displayName).tag(p) }
+        }
+        .pickerStyle(.menu).labelsHidden()
+    }
+
+    private var whitespace: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Normalize line endings", isOn: $config.normalizeNewlines).toggleStyle(.checkbox)
+            Toggle("Trim spaces at the start and end of each line", isOn: $config.trimEachLine).toggleStyle(.checkbox)
+            Toggle("Remove trailing spaces", isOn: $config.trimTrailingSpaces).toggleStyle(.checkbox).disabled(config.trimEachLine)
+            Toggle("Collapse repeated spaces into one", isOn: $config.collapseSpaces).toggleStyle(.checkbox)
+            Toggle("Collapse multiple blank lines into one", isOn: $config.collapseBlankLines).toggleStyle(.checkbox)
+        }
+        .font(.caption)
+    }
+
+    private var caseTransform: some View {
+        Picker("Case", selection: $config.caseMode) {
+            ForEach(LetterCaseMode.allCases, id: \.self) { m in Text(m.displayName).tag(m) }
+        }
+        .pickerStyle(.segmented).labelsHidden()
+    }
+
+    private var lineOps: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Remove empty lines", isOn: $config.removeEmptyLines).toggleStyle(.checkbox)
+            Toggle("Remove duplicate lines", isOn: $config.dedupeLines).toggleStyle(.checkbox)
+            Toggle("Sort lines", isOn: $config.sortLines).toggleStyle(.checkbox)
+            Toggle("Sort descending", isOn: $config.sortDescending).toggleStyle(.checkbox)
+                .disabled(!config.sortLines).padding(.leading, 16)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Header row").font(.caption).foregroundStyle(.secondary)
+                TextField("optional — type \\t between columns", text: $config.headerText)
+                    .textFieldStyle(.roundedBorder).font(.system(.body, design: .monospaced))
+            }
+            .padding(.top, 2)
+        }
+        .font(.caption)
+    }
+}
+
+/// Editor for an Extract-Fields instruction. Mirrors the Action step row's inline editor.
+struct ExtractFieldsEditor: View {
+    @Binding var config: ExtractFieldsConfig
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("The AI fills these fields, then they're combined deterministically — reliable structured output instead of asking a prompt for delimited text.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+
+            ForEach($config.fields) { $field in
+                HStack(spacing: 6) {
+                    TextField("Field name", text: $field.name).textFieldStyle(.roundedBorder).frame(width: 130)
+                    Picker("", selection: $field.type) {
+                        ForEach(ExtractFieldType.allCases, id: \.self) { t in Text(t.displayName).tag(t) }
+                    }
+                    .labelsHidden().fixedSize()
+                    TextField("description (optional)", text: $field.fieldDescription).textFieldStyle(.roundedBorder)
+                    Button(role: .destructive) {
+                        config.fields.removeAll { $0.id == field.id }
+                    } label: { Image(systemName: "minus.circle") }
+                    .buttonStyle(.borderless).help("Remove this field")
+                }
+            }
+
+            Button { config.fields.append(ExtractField()) } label: {
+                Label("Add Field", systemImage: "plus").font(.caption)
+            }
+            .buttonStyle(.borderless)
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Text("Combine with:").font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: $config.delimiter) {
+                    ForEach(ExtractDelimiter.allCases, id: \.self) { d in Text(d.displayName).tag(d) }
+                }
+                .labelsHidden().fixedSize().disabled(!config.template.isEmpty)
+                Spacer()
+            }
+
+            TextField("Optional template, e.g. {Date}\\t{Payee}\\t{Total}", text: $config.template)
+                .textFieldStyle(.roundedBorder).font(.system(.caption, design: .monospaced))
+                .help("If set, overrides the delimiter. Use {Field Name} placeholders; \\t = Tab, \\n = newline.")
+        }
     }
 }
 

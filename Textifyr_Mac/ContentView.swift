@@ -235,6 +235,7 @@ struct ContentView: View {
 
 private struct MainNavigationView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var showingSampleManager = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -277,6 +278,12 @@ private struct MainNavigationView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openWorkflowManager)) { _ in
             appState.workspaceMode = .workflows
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openTextSampleManager)) { _ in
+            showingSampleManager = true
+        }
+        .sheet(isPresented: $showingSampleManager) {
+            TextSampleManagerSheet(initialScope: nil)
         }
     }
 }

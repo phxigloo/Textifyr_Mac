@@ -71,8 +71,8 @@ struct InlineImprovePanel: View {
             // Browse/load/rename/duplicate/delete saved prompts. Loading one replaces this step's
             // prompt; delete/manage close the loop so a prompt saved here can also be removed here.
             LoadExistingPromptSheet(scopeFilter: viewModel.pipeline.scope) { loaded in
-                promptText = loaded
-                if let step { viewModel.updateStep(step, name: step.name, prompt: loaded) }
+                promptText = loaded.text
+                if let step { viewModel.updateStep(step, name: step.name, prompt: loaded.text) }
             }
         }
     }

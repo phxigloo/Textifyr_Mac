@@ -79,9 +79,25 @@ struct PipelineStepRow: View {
         }
         .sheet(isPresented: $showingPromptLibrary) {
             LoadExistingPromptSheet(scopeFilter: viewModel.pipeline.scope) { loaded in
-                prompt = loaded
-                savePrompt()
+                applyLoadedInstruction(loaded)
             }
+        }
+    }
+
+    /// Loads a saved instruction (any kind) from the library into this step.
+    private func applyLoadedInstruction(_ p: SavedPrompt) {
+        kind = p.kind
+        viewModel.updateStepKind(step, p.kind)
+        switch p.kind {
+        case .aiPrompt:
+            prompt = p.text
+            savePrompt()
+        case .transform:
+            config = p.transformConfig
+            viewModel.updateStepConfig(step, config)
+        case .extractFields:
+            extract = p.extractConfig
+            viewModel.updateStepExtract(step, extract)
         }
     }
 
@@ -92,7 +108,10 @@ struct PipelineStepRow: View {
             prompt: prompt,
             openImprove: improve,
             actionID: viewModel.pipeline.id,
-            stepIndex: stepIndex)
+            stepIndex: stepIndex,
+            kind: kind,
+            transformConfigJSON: config.encodedString(),
+            extractConfigJSON: extract.encodedString())
         appState.workspaceMode = .promptBuilder
     }
 
@@ -107,7 +126,7 @@ struct PipelineStepRow: View {
             }
             Divider()
             Button { openPromptLibrary() } label: {
-                Label("Prompt Library…", systemImage: "books.vertical")
+                Label("Load from Library…", systemImage: "books.vertical")
             }
         } label: {
             Label(currentUIKind.label, systemImage: currentUIKind.icon)
@@ -122,7 +141,6 @@ struct PipelineStepRow: View {
     /// Makes this an AI step (if it isn't) and opens the saved-prompt library, filtered to
     /// the action's scope, to fill the step's prompt. (Phase 25 — library access from a step.)
     private func openPromptLibrary() {
-        if kind != .aiPrompt { applyUIKind(.aiPrompt) }
         showingPromptLibrary = true
     }
 
@@ -267,6 +285,15 @@ struct PipelineStepRow: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.caption, design: .monospaced))
                 .help("If set, overrides the delimiter. Use {Field Name} placeholders; \\t = Tab, \\n = newline.")
+
+            if promptBuilderAvailable {
+                Button { openInBuilder(improve: false) } label: {
+                    Label("Test in Instruction Lab", systemImage: "flask")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help("Open this extraction in the Instruction Lab to test it against sample text.")
+            }
         }
     }
 
@@ -342,27 +369,38 @@ struct PipelineStepRow: View {
     @ViewBuilder
     private var transformEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(config.type.summary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(config.type.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            switch config.type {
-            case .findReplace:   findReplaceEditor
-            case .delimiter:     delimiterEditor
-            case .whitespace:    whitespaceEditor
-            case .caseTransform: caseEditor
-            case .lineOps:       lineOpsEditor
-            case .homoglyph:     EmptyView()
+                switch config.type {
+                case .findReplace:   findReplaceEditor
+                case .delimiter:     delimiterEditor
+                case .whitespace:    whitespaceEditor
+                case .caseTransform: caseEditor
+                case .lineOps:       lineOpsEditor
+                case .homoglyph:     EmptyView()
+                }
+            }
+            .padding(10)
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
+            )
+
+            if promptBuilderAvailable {
+                Button { openInBuilder(improve: false) } label: {
+                    Label("Test in Instruction Lab", systemImage: "flask")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help("Open this transform in the Instruction Lab to test it live against sample text.")
             }
         }
-        .padding(10)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
-        )
     }
 
     private var findReplaceEditor: some View {
