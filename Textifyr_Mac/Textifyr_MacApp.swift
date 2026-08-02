@@ -87,14 +87,25 @@ struct Textifyr_MacApp: App {
     let container: ModelContainer
     @StateObject private var appState = AppState()
 
+    /// Captured at the first access (init start) so startup steps can be timed relative to it.
+    static let launchTimestamp = CFAbsoluteTimeGetCurrent()
+
     init() {
+        let t0 = Self.launchTimestamp
         do {
             container = try ModelContainerFactory.makeContainer()
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
+        let afterContainer = CFAbsoluteTimeGetCurrent()
+        print(String(format: "⏱️ [startup] makeContainer (CloudKit SwiftData): %.0f ms", (afterContainer - t0) * 1000))
+
         DataSeeder.seedIfNeeded(context: container.mainContext)
+        let afterSeed = CFAbsoluteTimeGetCurrent()
+        print(String(format: "⏱️ [startup] seedIfNeeded: %.0f ms", (afterSeed - afterContainer) * 1000))
+
         Self.sweepStaleTempFiles()
+        print(String(format: "⏱️ [startup] init() total (blocks main thread): %.0f ms", (CFAbsoluteTimeGetCurrent() - t0) * 1000))
     }
 
     /// Deletes UUID-named export temp files older than 2 hours left by a previous session.
@@ -125,6 +136,10 @@ struct Textifyr_MacApp: App {
             ContentView()
                 .environmentObject(appState)
                 .frame(minWidth: 900, minHeight: 600)
+                .onAppear {
+                    print(String(format: "⏱️ [startup] first window appeared: %.0f ms after init start",
+                                 (CFAbsoluteTimeGetCurrent() - Self.launchTimestamp) * 1000))
+                }
                 .task { await prefetchDiarizationModels() }
         }
         // NOTE: `handlesExternalEvents` is deliberately omitted. With it set,
@@ -160,8 +175,11 @@ struct Textifyr_MacApp: App {
 
 // Downloads SpeakerKit CoreML models silently in the background on first launch.
 private func prefetchDiarizationModels() async {
+    let t0 = CFAbsoluteTimeGetCurrent()
     let service = DiarizationService()
-    _ = await service.ensureModelsLoaded(onDownloadNeeded: {})
+    let ok = await service.ensureModelsLoaded(onDownloadNeeded: {})
+    print(String(format: "⏱️ [startup] prefetchDiarizationModels (off-main): %.0f ms, ok=%@",
+                 (CFAbsoluteTimeGetCurrent() - t0) * 1000, ok ? "true" : "false"))
 }
 
 extension Notification.Name {

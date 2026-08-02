@@ -1,5 +1,7 @@
 import SwiftUI
 import SwiftData
+import AppKit
+import Combine
 import TextifyrModels
 import TextifyrServices
 import TextifyrViewModels
@@ -56,6 +58,8 @@ struct PromptBuilderView: View {
     @State private var showingImportActionSheet  = false   // secondary: pull a prompt out of an action step
     @State private var showingSampleManager      = false   // Text Sample Manager sheet (add/edit/delete + scope)
     @State private var showingSamplePicker       = false   // Input pane's sample-selection popover
+    @State private var showingPromptPicker       = false   // Instruction pane's Saved Prompts popover
+    @State private var promptScopeFilter: PipelineScope? = nil  // scope lens for the Saved Prompts popover
 
     /// Where the Instruction Lab was opened from — drives which chrome shows and where Save goes.
     /// `.documentSource` (a drilled-in source, `editOrigin` set) and `.action` (a step's Improve
@@ -82,6 +86,7 @@ struct PromptBuilderView: View {
     @State private var kind: PipelineStepKind = .aiPrompt
     @State private var transformConfig = TextTransformConfig()
     @State private var extractConfig = ExtractFieldsConfig()
+    @State private var translateConfig = TranslateConfig()
     // True when a transform's input/config changed since its result was last computed, so the
     // user knows to press Test again (transforms are user-run now, not live).
     @State private var resultStale = false
@@ -268,9 +273,25 @@ struct PromptBuilderView: View {
             updateBreadcrumb()
             resultStale = false
         }
+        .onChange(of: allSamples.count) { _, _ in
+            // A sample deleted elsewhere (e.g. the Text Sample Manager) that was the current
+            // input → fall back to Scratchpad so the Input pane never gets stuck in the empty state.
+            if case .saved(let id) = sampleSelection, !allSamples.contains(where: { $0.id == id }) {
+                sampleSelection = .scratchpad
+            }
+        }
         .sheet(isPresented: $showingLoadPromptSheet) {
             // Library origin browses everything; Action/Wizard pre-filter to the action's scope.
-            LoadExistingPromptSheet(scopeFilter: origin == .library ? nil : scopeFilter) { loaded in
+            LoadExistingPromptSheet(
+                scopeFilter: origin == .library ? nil : scopeFilter,
+                newSeed: currentInstructionIsEmpty ? nil : SavedPromptSeed(
+                    kind: kind,
+                    text: promptText,
+                    transformConfigJSON: transformConfig.encodedString(),
+                    extractConfigJSON: extractConfig.encodedString(),
+                    translateConfigJSON: translateConfig.encodedString(),
+                    name: "")
+            ) { loaded in
                 applyLoadedInstruction(loaded)
             }
         }
@@ -280,7 +301,8 @@ struct PromptBuilderView: View {
                                      nextSortOrder: allSavedPrompts.count,
                                      kind: kind,
                                      transformConfigJSON: transformConfig.encodedString(),
-                                     extractConfigJSON: extractConfig.encodedString())
+                                     extractConfigJSON: extractConfig.encodedString(),
+                                     translateConfigJSON: translateConfig.encodedString())
         }
         .sheet(isPresented: $showingImportActionSheet) {
             LoadFromActionSheet { loaded in promptText = loaded }
@@ -329,6 +351,7 @@ struct PromptBuilderView: View {
         case .aiPrompt:      return !promptText.isEmpty
         case .extractFields: return extractConfig.fields.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
         case .transform:     return true
+        case .translate:     return !translateConfig.targetLanguageCode.isEmpty
         }
     }
 
@@ -347,6 +370,28 @@ struct PromptBuilderView: View {
         case .aiPrompt:      runPrompt()
         case .extractFields: runExtract()
         case .transform:     runTransform()
+        case .translate:     runTranslate()
+        }
+    }
+
+    /// Runs an on-device translation of the current input to the chosen language.
+    private func runTranslate() {
+        testResult = nil; testError = nil; runProgress = nil; isRunning = true
+        let text = activeText
+        let cfg = translateConfig
+        runTask = Task { @MainActor in
+            guard !cfg.targetLanguageCode.isEmpty else {
+                testError = "Choose a language to translate to."; isRunning = false; runTask = nil; return
+            }
+            do {
+                let out = try await TranslationCoordinator.shared.translate(
+                    text, sourceCode: cfg.sourceLanguageCode, targetCode: cfg.targetLanguageCode)
+                if !Task.isCancelled { testResult = out }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { testError = error.localizedDescription }
+            }
+            isRunning = false; runTask = nil
         }
     }
 
@@ -505,6 +550,80 @@ struct PromptBuilderView: View {
         .frame(width: 260)
     }
 
+    // MARK: - Saved Prompts picker (Instruction pane) — mirrors the sample picker
+
+    private func savedPrompts(in scope: PipelineScope) -> [SavedPrompt] {
+        allSavedPrompts.filter { $0.scopeTag == scope }
+    }
+    private var generalSavedPrompts: [SavedPrompt] {
+        allSavedPrompts.filter { $0.scopeTag == nil }
+    }
+
+    private func promptPickRow(_ p: SavedPrompt) -> some View {
+        Button {
+            applyLoadedInstruction(p)
+            showingPromptPicker = false
+        } label: {
+            Label(p.name.isEmpty ? "Untitled" : p.name, systemImage: Self.kindIcon(p.kind))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var promptPickerPopover: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text("Scope").font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: $promptScopeFilter) {
+                    Text("All Scopes").tag(nil as PipelineScope?)
+                    ForEach(PipelineScope.allCases, id: \.self) { s in
+                        Text(s.displayName).tag(s as PipelineScope?)
+                    }
+                }
+                .labelsHidden().pickerStyle(.menu).controlSize(.small)
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+
+            Divider()
+
+            List {
+                if allSavedPrompts.isEmpty {
+                    Text("No saved instructions yet.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if let f = promptScopeFilter {
+                    let scoped = savedPrompts(in: f)
+                    if !scoped.isEmpty { Section(f.displayName) { ForEach(scoped, id: \.id) { promptPickRow($0) } } }
+                    if !generalSavedPrompts.isEmpty { Section("General (Any)") { ForEach(generalSavedPrompts, id: \.id) { promptPickRow($0) } } }
+                } else {
+                    ForEach(PipelineScope.allCases, id: \.self) { s in
+                        let group = savedPrompts(in: s)
+                        if !group.isEmpty { Section(s.displayName) { ForEach(group, id: \.id) { promptPickRow($0) } } }
+                    }
+                    if !generalSavedPrompts.isEmpty { Section("General (Any)") { ForEach(generalSavedPrompts, id: \.id) { promptPickRow($0) } } }
+                }
+            }
+            .listStyle(.inset)
+            .frame(width: 300, height: 320)
+
+            if kind == .aiPrompt {
+                Divider()
+                HStack(spacing: 8) {
+                    Button {
+                        showingPromptPicker = false
+                        showingImportActionSheet = true
+                    } label: {
+                        Label("Load from Action…", systemImage: "square.and.arrow.down.on.square")
+                    }
+                    .buttonStyle(.borderless)
+                    Spacer()
+                }
+                .padding(10)
+            }
+        }
+        .frame(width: 300)
+    }
+
     @ViewBuilder
     private var inputEditorBody: some View {
         switch sampleSelection {
@@ -533,6 +652,7 @@ struct PromptBuilderView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8)
                             .stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                        .overlay(alignment: .bottomTrailing) { DictateButton().padding(8) }
                 }
                 .padding(16)
             }
@@ -566,6 +686,7 @@ struct PromptBuilderView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    .overlay(alignment: .bottomTrailing) { DictateButton().padding(8) }
                     .padding(16)
             }
 
@@ -584,7 +705,7 @@ struct PromptBuilderView: View {
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small)
                 }
-                .padding(.horizontal, 14).padding(.vertical, 8).background(.bar)
+                .frame(height: 46).padding(.horizontal, 14).background(.bar)
             } else {
                 inputFooter(charCount: editingText.count, clear: nil)
             }
@@ -606,7 +727,7 @@ struct PromptBuilderView: View {
                     .help("Save this text as a reusable sample (\(sampleLimit) max)")
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 8).background(.bar)
+        .frame(height: 46).padding(.horizontal, 14).background(.bar)
     }
 
     /// Creates a saved sample from the current Scratchpad text and selects it for renaming.
@@ -621,8 +742,7 @@ struct PromptBuilderView: View {
         sampleSelection = .saved(sample.id)
     }
 
-    /// Saves the current Result as a reusable input sample and immediately loads it as the input —
-    /// one-click chaining (run an instruction, bank its output as input, run the next instruction).
+    /// Persists the current Result as a reusable input sample (banking a milestone).
     private func saveResultAsSample(_ text: String) {
         guard allSamples.count < sampleLimit else { return }
         let sample = PromptSample(name: "Sample \(allSamples.count + 1)",
@@ -631,8 +751,16 @@ struct PromptBuilderView: View {
                                   sortOrder: allSamples.count)
         modelContext.insert(sample)
         try? modelContext.save()
-        // Chain: make the just-saved output the new input (onChange loads it + clears the result).
-        sampleSelection = .saved(sample.id)
+    }
+
+    /// Moves the current Result into the Input (Scratchpad) to chain into the next instruction —
+    /// the frequent, ephemeral step of the iterate loop. Persisting is the separate "Save".
+    private func useResultAsInput(_ text: String) {
+        settingScratchpadProgrammatically = true
+        scratchpadProvenance = "From previous result"
+        scratchpadText = text
+        if case .scratchpad = sampleSelection {} else { sampleSelection = .scratchpad }
+        testResult = nil; testError = nil; resultStale = false
     }
 
     private var scopeTagBinding: Binding<PipelineScope?> {
@@ -645,6 +773,7 @@ struct PromptBuilderView: View {
             systemImage: "doc.text.magnifyingglass",
             description: Text("Select a sample from the list, or use Scratchpad to test without saving.")
         )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Prompt panel (right, flexible — takes priority over the sample column)
@@ -687,23 +816,26 @@ struct PromptBuilderView: View {
                     .font(.headline)
                 Spacer()
 
+                Button { showingPromptPicker.toggle() } label: {
+                    Label("Load", systemImage: "books.vertical").lineLimit(1)
+                }
+                .buttonStyle(.borderless)
+                .popover(isPresented: $showingPromptPicker, arrowEdge: .bottom) { promptPickerPopover }
+                .help("Load a saved instruction")
+
                 Menu {
-                    Button("Browse & Manage…") { showingLoadPromptSheet = true }
-                    if kind == .aiPrompt {
-                        Button("Import from Action…") { showingImportActionSheet = true }
-                    }
-                    Divider()
+                    saveItems
                     if kind == .aiPrompt {
                         Button("Copy") { copyPrompt() }.disabled(promptText.isEmpty)
-                        Divider()
                     }
-                    saveItems
+                    Divider()
+                    Button("Manage Prompts…") { showingLoadPromptSheet = true }
                 } label: {
-                    Label("Saved Prompts", systemImage: "books.vertical").lineLimit(1)
+                    Image(systemName: "square.and.arrow.down")
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("Browse, import, copy, or save instructions")
+                .help("Save or manage instructions")
 
                 if kind == .aiPrompt {
                     Button { promptText = "" } label: {
@@ -754,6 +886,7 @@ struct PromptBuilderView: View {
             Text("AI Prompt").tag(PipelineStepKind.aiPrompt)
             Text("Transform").tag(PipelineStepKind.transform)
             Text("Extract Fields").tag(PipelineStepKind.extractFields)
+            Text("Translate").tag(PipelineStepKind.translate)
         }
         .pickerStyle(.segmented)
         .labelsHidden()
@@ -787,6 +920,9 @@ struct PromptBuilderView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                 )
+                .overlay(alignment: .bottomTrailing) {
+                    DictateButton().padding(8)
+                }
 
                 HStack {
                     Spacer()
@@ -801,6 +937,8 @@ struct PromptBuilderView: View {
             TransformConfigEditor(config: $transformConfig)
         case .extractFields:
             ExtractFieldsEditor(config: $extractConfig)
+        case .translate:
+            TranslateConfigEditor(config: $translateConfig)
         }
     }
 
@@ -818,24 +956,6 @@ struct PromptBuilderView: View {
                             .font(.caption)
                             .foregroundStyle(outcome.passed ? Color.green : Color.red)
                     }
-                    if let result = testResult {
-                        Button { saveResultAsSample(result) } label: {
-                            Label("Save as Sample", systemImage: "tray.and.arrow.down").font(.caption)
-                        }
-                        .buttonStyle(.borderless)
-                        .controlSize(.small)
-                        .disabled(allSamples.count >= sampleLimit)
-                        .help("Save this output as a sample and load it as the input — chain it into your next instruction")
-
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(result, forType: .string)
-                        } label: {
-                            Label("Copy", systemImage: "doc.on.doc").font(.caption)
-                        }
-                        .buttonStyle(.borderless)
-                        .controlSize(.small)
-                    }
                 }
                 .frame(height: 44)
                 .padding(.horizontal, 14)
@@ -844,14 +964,55 @@ struct PromptBuilderView: View {
                 Divider()
 
                 resultBody
+
+                Divider()
+
+                resultFooter
             }
 
             if showImprovePanel {
                 improvePanel
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(nsColor: .windowBackgroundColor))
                     .transition(.move(edge: .trailing))
             }
         }
+    }
+
+    /// Result pane footer — mirrors the Input/Instruction footers (output size + chaining actions).
+    private var resultFooter: some View {
+        HStack(spacing: 10) {
+            if let result = testResult {
+                Text("\(result.count.formatted()) chars")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            Spacer()
+            if let result = testResult {
+                Button { useResultAsInput(result) } label: {
+                    Label("Use as Input", systemImage: "arrow.left.circle").font(.caption)
+                }
+                .buttonStyle(.borderless).controlSize(.small)
+                .help("Send this output to the Input pane to chain it into your next instruction")
+
+                Button { saveResultAsSample(result) } label: {
+                    Label("Save", systemImage: "tray.and.arrow.down").font(.caption)
+                }
+                .buttonStyle(.borderless).controlSize(.small)
+                .disabled(allSamples.count >= sampleLimit)
+                .help("Save this output as a reusable sample")
+
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(result, forType: .string)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc").font(.caption)
+                }
+                .buttonStyle(.borderless).controlSize(.small)
+            }
+        }
+        .frame(height: 46)
+        .padding(.horizontal, 14)
+        .background(.bar)
     }
 
     @ViewBuilder
@@ -921,8 +1082,8 @@ struct PromptBuilderView: View {
             Spacer()
             runToolbarContent
         }
+        .frame(height: 46)
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
         .background(.bar)
     }
 
@@ -939,6 +1100,7 @@ struct PromptBuilderView: View {
         case .aiPrompt:      return !promptText.isEmpty
         case .transform:     return transformConfig.type == .findReplace
         case .extractFields: return false
+        case .translate:     return false
         }
     }
 
@@ -964,6 +1126,8 @@ struct PromptBuilderView: View {
             return transformConfig.type == .findReplace && transformConfig.find.isEmpty
         case .extractFields:
             return !extractConfig.fields.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
+        case .translate:
+            return translateConfig.targetLanguageCode.isEmpty
         }
     }
 
@@ -974,6 +1138,17 @@ struct PromptBuilderView: View {
         case .aiPrompt:      promptText = p.text
         case .transform:     transformConfig = p.transformConfig
         case .extractFields: extractConfig = p.extractConfig
+        case .translate:     translateConfig = p.translateConfig
+        }
+    }
+
+    /// SF Symbol for a saved instruction's kind — disambiguates the quick-pick list.
+    static func kindIcon(_ k: PipelineStepKind) -> String {
+        switch k {
+        case .aiPrompt:      return "sparkles"
+        case .transform:     return "wrench.and.screwdriver"
+        case .extractFields: return "tablecells"
+        case .translate:     return "globe"
         }
     }
 
@@ -1017,6 +1192,7 @@ struct PromptBuilderView: View {
         case .aiPrompt:      step.prompt = promptText
         case .transform:     step.transformConfig = transformConfig
         case .extractFields: step.extractConfig = extractConfig
+        case .translate:     step.translateConfig = translateConfig
         }
     }
 
@@ -1107,6 +1283,11 @@ struct PromptBuilderView: View {
         case .extractFields:
             let names = extractConfig.fields.map(\.name).filter { !$0.isEmpty }
             return names.isEmpty ? "(no fields)" : names.joined(separator: ", ")
+        case .translate:
+            guard !translateConfig.targetLanguageCode.isEmpty else { return "(no language)" }
+            let name = translationLanguages.first { $0.id == translateConfig.targetLanguageCode }?.name
+                ?? translateConfig.targetLanguageCode
+            return "Translate to \(name)"
         }
     }
 
@@ -1212,6 +1393,7 @@ struct PromptBuilderView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
             )
+            .overlay(alignment: .bottomTrailing) { DictateButton().padding(6) }
 
             HStack {
                 Button("New Conversation") { resetChat() }
@@ -1877,9 +2059,21 @@ private struct LoadFromActionSheet: View {
 // MARK: - Load existing prompt sheet (Phase 25.4)
 
 /// Internal (not private) so the Action step editor can reuse it to pick a saved prompt.
+/// The current instruction, so the manager's "+" can pre-fill a new saved prompt from it.
+struct SavedPromptSeed {
+    var kind: PipelineStepKind
+    var text: String
+    var transformConfigJSON: String
+    var extractConfigJSON: String
+    var translateConfigJSON: String = ""
+    var name: String
+}
+
 struct LoadExistingPromptSheet: View {
     /// When non-nil, prompts are pre-filtered to this scope tag (plus untagged "Any" prompts).
     var scopeFilter: PipelineScope?
+    /// When set, the "+" button pre-fills a new prompt from the current instruction (else blank).
+    var newSeed: SavedPromptSeed? = nil
     let onLoad: (SavedPrompt) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -1889,6 +2083,11 @@ struct LoadExistingPromptSheet: View {
     @State private var scopeFilterState: PipelineScope?
     @State private var didInit = false
     @State private var editingName: String = ""
+    @State private var editingScope: PipelineScope? = nil
+    @State private var editingText: String = ""
+    @State private var editingTransform = TextTransformConfig()
+    @State private var editingExtract = ExtractFieldsConfig()
+    @State private var editingTranslate = TranslateConfig()
 
     /// Prompts tagged with a specific scope, in sort order.
     private func prompts(in scope: PipelineScope) -> [SavedPrompt] {
@@ -1926,6 +2125,7 @@ struct LoadExistingPromptSheet: View {
         case .aiPrompt:      return "Prompt"
         case .transform:     return "Transform"
         case .extractFields: return "Extract"
+        case .translate:     return "Translate"
         }
     }
 
@@ -1943,6 +2143,10 @@ struct LoadExistingPromptSheet: View {
         case .extractFields:
             let names = p.extractConfig.fields.map(\.name).filter { !$0.isEmpty }
             return "Extract Fields: " + (names.isEmpty ? "(none)" : names.joined(separator: ", "))
+        case .translate:
+            let name = translationLanguages.first { $0.id == p.translateConfig.targetLanguageCode }?.name
+                ?? p.translateConfig.targetLanguageCode
+            return "Translate to " + (name.isEmpty ? "(none)" : name)
         }
     }
 
@@ -1967,6 +2171,7 @@ struct LoadExistingPromptSheet: View {
                 // Option 3: a chosen stage shows its own prompts, then a "General (Any)"
                 // section of untagged prompts below — universal prompts are never hidden,
                 // and there's no extra toggle to learn.
+                VStack(spacing: 0) {
                 List(selection: $selectedID) {
                     if let f = scopeFilterState {
                         let scoped = prompts(in: f)
@@ -1998,35 +2203,82 @@ struct LoadExistingPromptSheet: View {
                     }
                 }
                 .listStyle(.inset)
+
+                Divider()
+
+                HStack(spacing: 0) {
+                    Button { addBlankPrompt() } label: { Image(systemName: "plus").frame(width: 28, height: 22) }
+                        .buttonStyle(.borderless)
+                        .help(newSeed != nil ? "Add — pre-filled with the current instruction" : "Add a blank prompt")
+                    Divider().frame(height: 14)
+                    Button { if let p = selected { delete(p) } } label: { Image(systemName: "minus").frame(width: 28, height: 22) }
+                        .buttonStyle(.borderless).disabled(selected == nil).help("Delete selected prompt")
+                    Divider().frame(height: 14)
+                    Button { if let p = selected { duplicate(p) } } label: { Image(systemName: "doc.on.doc").frame(width: 28, height: 22) }
+                        .buttonStyle(.borderless).disabled(selected == nil).help("Duplicate selected prompt")
+                    Spacer()
+                }
+                .padding(.horizontal, 2).frame(height: 28)
+                .background(Color(nsColor: .controlBackgroundColor))
+                }
                 .frame(width: 220)
 
                 Divider()
 
                 VStack(alignment: .leading, spacing: 10) {
                     if let p = selected {
-                        HStack {
+                        HStack(spacing: 8) {
                             TextField("Name", text: $editingName).textFieldStyle(.roundedBorder)
-                            Button("Rename") {
-                                p.name = editingName.trimmingCharacters(in: .whitespaces)
-                                try? modelContext.save()
+                            Picker("", selection: $editingScope) {
+                                Text("Any").tag(nil as PipelineScope?)
+                                ForEach(PipelineScope.allCases, id: \.self) { s in
+                                    Text(s.displayName).tag(s as PipelineScope?)
+                                }
                             }
-                            .disabled(editingName.trimmingCharacters(in: .whitespaces).isEmpty
-                                      || editingName == p.name)
+                            .labelsHidden().controlSize(.small).frame(width: 130)
+                            Text(Self.kindBadge(p.kind))
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Color.secondary.opacity(0.15), in: Capsule())
                         }
-                        ScrollView {
-                            Text(Self.previewText(p))
-                                .font(p.kind == .aiPrompt ? .callout : .system(.caption, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Group {
+                            switch p.kind {
+                            case .aiPrompt:
+                                TextEditor(text: $editingText)
+                                    .font(.callout).scrollContentBackground(.hidden).padding(6)
+                                    .background(Color(nsColor: .textBackgroundColor))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                                    .overlay(alignment: .bottomTrailing) { DictateButton().padding(8) }
+                            case .transform:
+                                ScrollView { TransformConfigEditor(config: $editingTransform).padding(6) }
+                                    .background(Color(nsColor: .controlBackgroundColor))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            case .extractFields:
+                                ScrollView { ExtractFieldsEditor(config: $editingExtract).padding(6) }
+                                    .background(Color(nsColor: .controlBackgroundColor))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            case .translate:
+                                ScrollView { TranslateConfigEditor(config: $editingTranslate).padding(6) }
+                                    .background(Color(nsColor: .controlBackgroundColor))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(8)
-                        .background(Color(nsColor: .controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                        HStack {
+                            Spacer()
+                            if isDirty {
+                                Button("Discard") { loadEditing(p) }.buttonStyle(.bordered).controlSize(.small)
+                                Button("Save") { saveEditing(p) }.buttonStyle(.borderedProminent).controlSize(.small)
+                                    .disabled(editingName.trimmingCharacters(in: .whitespaces).isEmpty)
+                            }
+                        }
                     } else {
                         ContentUnavailableView("No Prompt Selected",
                                                systemImage: "text.badge.plus",
-                                               description: Text("Select a prompt to preview it. Right-click to duplicate or delete."))
+                                               description: Text("Select a prompt to edit it, or add one with +."))
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
@@ -2037,10 +2289,6 @@ struct LoadExistingPromptSheet: View {
             Divider()
 
             HStack {
-                Button("Delete", role: .destructive) { if let p = selected { delete(p) } }
-                    .buttonStyle(.bordered).disabled(selected == nil)
-                Button("Duplicate") { if let p = selected { duplicate(p) } }
-                    .buttonStyle(.bordered).disabled(selected == nil)
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(.bordered)
                 Button("Load") { if let p = selected { onLoad(p); dismiss() } }
@@ -2049,8 +2297,58 @@ struct LoadExistingPromptSheet: View {
             .padding(.horizontal, 20).padding(.vertical, 14)
         }
         .frame(width: 620, height: 460)
-        .onAppear { if !didInit { scopeFilterState = scopeFilter; didInit = true } }
-        .onChange(of: selectedID) { _, _ in editingName = selected?.name ?? "" }
+        .onAppear { if !didInit { scopeFilterState = scopeFilter; didInit = true }; loadEditing(selected) }
+        .onChange(of: selectedID) { _, _ in loadEditing(selected) }
+    }
+
+    private var isDirty: Bool {
+        guard let p = selected else { return false }
+        if editingName != p.name { return true }
+        if editingScope != p.scopeTag { return true }
+        switch p.kind {
+        case .aiPrompt:      return editingText != p.text
+        case .transform:     return editingTransform != p.transformConfig
+        case .extractFields: return editingExtract != p.extractConfig
+        case .translate:     return editingTranslate != p.translateConfig
+        }
+    }
+
+    private func loadEditing(_ p: SavedPrompt?) {
+        editingName = p?.name ?? ""
+        editingScope = p?.scopeTag
+        editingText = p?.text ?? ""
+        editingTransform = p?.transformConfig ?? TextTransformConfig()
+        editingExtract = p?.extractConfig ?? ExtractFieldsConfig()
+        editingTranslate = p?.translateConfig ?? TranslateConfig()
+    }
+
+    private func saveEditing(_ p: SavedPrompt) {
+        p.name = editingName.trimmingCharacters(in: .whitespaces)
+        p.scopeTag = editingScope
+        switch p.kind {
+        case .aiPrompt:      p.text = editingText
+        case .transform:     p.transformConfig = editingTransform
+        case .extractFields: p.extractConfig = editingExtract
+        case .translate:     p.translateConfig = editingTranslate
+        }
+        try? modelContext.save()
+    }
+
+    private func addBlankPrompt() {
+        let p: SavedPrompt
+        if let s = newSeed {
+            p = SavedPrompt(name: s.name.isEmpty ? "New Prompt" : s.name,
+                            text: s.text, sortOrder: allPrompts.count,
+                            kind: s.kind,
+                            transformConfigJSON: s.transformConfigJSON,
+                            extractConfigJSON: s.extractConfigJSON,
+                            translateConfigJSON: s.translateConfigJSON)
+        } else {
+            p = SavedPrompt(name: "New Prompt", text: "", sortOrder: allPrompts.count)
+        }
+        modelContext.insert(p)
+        try? modelContext.save()
+        selectedID = p.id
     }
 
     private func duplicate(_ p: SavedPrompt) {
@@ -2058,7 +2356,8 @@ struct LoadExistingPromptSheet: View {
                                scopeTag: p.scopeTag, sortOrder: allPrompts.count,
                                kind: p.kind,
                                transformConfigJSON: p.transformConfigJSON,
-                               extractConfigJSON: p.extractConfigJSON)
+                               extractConfigJSON: p.extractConfigJSON,
+                               translateConfigJSON: p.translateConfigJSON)
         modelContext.insert(copy)
         try? modelContext.save()
         selectedID = copy.id
@@ -2084,6 +2383,7 @@ struct SavePromptToLibrarySheet: View {
     var kind: PipelineStepKind = .aiPrompt
     var transformConfigJSON: String = ""
     var extractConfigJSON: String = ""
+    var translateConfigJSON: String = ""
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
@@ -2108,6 +2408,10 @@ struct SavePromptToLibrarySheet: View {
             let c = ExtractFieldsConfig.decode(extractConfigJSON)
             let names = c.fields.map(\.name).filter { !$0.isEmpty }
             return "Extract Fields: " + (names.isEmpty ? "(none)" : names.joined(separator: ", "))
+        case .translate:
+            let c = TranslateConfig.decode(translateConfigJSON)
+            let name = translationLanguages.first { $0.id == c.targetLanguageCode }?.name ?? c.targetLanguageCode
+            return "Translate to " + (name.isEmpty ? "(none)" : name)
         }
     }
 
@@ -2172,7 +2476,8 @@ struct SavePromptToLibrarySheet: View {
                                sortOrder: nextSortOrder,
                                kind: kind,
                                transformConfigJSON: transformConfigJSON,
-                               extractConfigJSON: extractConfigJSON)
+                               extractConfigJSON: extractConfigJSON,
+                               translateConfigJSON: translateConfigJSON)
         modelContext.insert(item)
         try? modelContext.save()
         dismiss()
@@ -2333,6 +2638,121 @@ struct ExtractFieldsEditor: View {
                 .textFieldStyle(.roundedBorder).font(.system(.caption, design: .monospaced))
                 .help("If set, overrides the delimiter. Use {Field Name} placeholders; \\t = Tab, \\n = newline.")
         }
+    }
+}
+
+// MARK: - Dictation (app-wide voice input into any multiline field, Phase 28)
+
+/// Drives live dictation into the *currently focused* text view. Reuses `SpeechCaptureService`
+/// (its `finalSegments` stream is built for real-time insertion) and inserts each recognised
+/// phrase at the caret via the responder chain — so it works with existing SwiftUI `TextEditor`s
+/// without replacing them.
+@MainActor
+final class DictationEngine: ObservableObject {
+    @Published var isRecording = false
+    @Published var errorText: String?
+
+    private let service = SpeechCaptureService()
+    private var task: Task<Void, Never>?
+    private weak var target: NSTextView?
+
+    // The range currently holding the live (uncommitted) volatile preview at the caret.
+    private var volatileStart = 0
+    private var volatileLength = 0
+
+    func toggle() { isRecording ? stop() : start() }
+
+    private func start() {
+        // The field being edited is the window's first responder. Capture it as the target.
+        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView, tv.isEditable else {
+            NSSound.beep()
+            errorText = "Click into a text field first, then dictate."
+            return
+        }
+        target = tv
+        // Seed the volatile region with the current selection so the first dictated words
+        // *replace* selected text (rather than inserting before it).
+        let sel = tv.selectedRange()
+        volatileStart = sel.location
+        volatileLength = sel.length
+        errorText = nil
+        isRecording = true
+        task = Task { @MainActor in
+            do {
+                let streams = try await service.startCapture()
+                // Consume both streams: volatileText drives the live word-by-word preview,
+                // finalSegments commit each phrase. Both run on the main actor.
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask { @MainActor [weak self] in
+                        for await text in streams.volatileText { self?.showVolatile(text) }
+                    }
+                    group.addTask { @MainActor [weak self] in
+                        for await segment in streams.finalSegments { self?.commit(segment) }
+                    }
+                }
+            } catch {
+                errorText = error.localizedDescription
+            }
+            isRecording = false
+        }
+    }
+
+    func stop() {
+        guard isRecording else { return }
+        isRecording = false
+        // Do NOT cancel — stopCapture() finalizes the last phrase through the streams, which
+        // then finish on their own. Cancelling would drop that phrase.
+        Task { _ = await service.stopCapture() }
+    }
+
+    /// Live preview: replace the current volatile region at the caret with the latest in-progress text.
+    private func showVolatile(_ text: String) {
+        guard let tv = target, tv.window != nil else { return }
+        let range = safeRange(volatileStart, volatileLength, in: tv)
+        tv.insertText(text, replacementRange: range)
+        volatileStart = range.location
+        volatileLength = (text as NSString).length
+    }
+
+    /// Commit a finalized phrase (replacing its live preview) and advance the caret past it.
+    private func commit(_ segment: String) {
+        guard let tv = target, tv.window != nil else { return }
+        let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = trimmed.isEmpty ? "" : trimmed + " "
+        let range = safeRange(volatileStart, volatileLength, in: tv)
+        tv.insertText(text, replacementRange: range)
+        volatileStart = range.location + (text as NSString).length
+        volatileLength = 0
+    }
+
+    private func safeRange(_ loc: Int, _ len: Int, in tv: NSTextView) -> NSRange {
+        let total = (tv.string as NSString).length
+        let l = max(0, min(loc, total))
+        let n = max(0, min(len, total - l))
+        return NSRange(location: l, length: n)
+    }
+}
+
+/// Standard app-wide dictate control: **green mic = ready**, **red mic = recording** (tap to stop).
+/// Place next to (or overlaid on) any multiline field; it dictates into whichever field is focused.
+struct DictateButton: View {
+    @StateObject private var engine = DictationEngine()
+
+    var body: some View {
+        Button {
+            engine.toggle()
+        } label: {
+            Image(systemName: engine.isRecording ? "mic.fill" : "mic")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(engine.isRecording ? Color.red : Color.green)
+                .padding(5)
+                .background(.thinMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help(engine.isRecording
+              ? "Stop dictation"
+              : "Dictate — inserts speech at the cursor of the focused field")
     }
 }
 

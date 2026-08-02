@@ -16,7 +16,9 @@ struct PipelineStepRow: View {
     @State private var config: TextTransformConfig
     @State private var verify: StepVerifyConfig
     @State private var extract: ExtractFieldsConfig
+    @State private var translate: TranslateConfig
     @State private var showingPromptLibrary = false
+    @State private var showingKindPicker = false
 
     private var stepIndex: Int {
         viewModel.steps.firstIndex(where: { $0.id == step.id }) ?? 0
@@ -31,6 +33,7 @@ struct PipelineStepRow: View {
         _config = State(initialValue: step.transformConfig)
         _verify = State(initialValue: step.verifyConfig)
         _extract = State(initialValue: step.extractConfig)
+        _translate = State(initialValue: step.translateConfig)
     }
 
     var body: some View {
@@ -64,6 +67,7 @@ struct PipelineStepRow: View {
             case .aiPrompt:      aiPromptEditor
             case .extractFields: extractFieldsEditor
             case .transform:     transformEditor
+            case .translate:     TranslateConfigEditor(config: $translate)
             }
         }
         .padding(12)
@@ -73,6 +77,7 @@ struct PipelineStepRow: View {
         .onChange(of: config) { _, newValue in viewModel.updateStepConfig(step, newValue) }
         .onChange(of: verify) { _, newValue in viewModel.updateStepVerify(step, newValue) }
         .onChange(of: extract) { _, newValue in viewModel.updateStepExtract(step, newValue) }
+        .onChange(of: translate) { _, newValue in viewModel.updateStepTranslate(step, newValue) }
         .onChange(of: step.prompt) { _, newValue in
             // Sync back if AI improvement changed the step in the view model
             if newValue != prompt { prompt = newValue }
@@ -98,6 +103,9 @@ struct PipelineStepRow: View {
         case .extractFields:
             extract = p.extractConfig
             viewModel.updateStepExtract(step, extract)
+        case .translate:
+            translate = p.translateConfig
+            viewModel.updateStepTranslate(step, translate)
         }
     }
 
@@ -120,22 +128,70 @@ struct PipelineStepRow: View {
     private var currentUIKind: StepUIKind { StepUIKind(kind: kind, type: config.type) }
 
     private var kindMenu: some View {
-        Menu {
-            ForEach(StepUIKind.allCases) { k in
-                Button { applyUIKind(k) } label: { Label(k.label, systemImage: k.icon) }
-            }
-            Divider()
-            Button { openPromptLibrary() } label: {
-                Label("Load from Library…", systemImage: "books.vertical")
-            }
-        } label: {
+        Button { showingKindPicker.toggle() } label: {
             Label(currentUIKind.label, systemImage: currentUIKind.icon)
                 .font(.caption)
                 .labelStyle(.titleAndIcon)
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.borderless)
         .fixedSize()
-        .help("Choose whether this step uses AI or a deterministic text transform")
+        .popover(isPresented: $showingKindPicker, arrowEdge: .bottom) { kindPickerPopover }
+        .help("Choose what this step does — AI, a transform, or field extraction")
+    }
+
+    private func kindRow(_ k: StepUIKind) -> some View {
+        Button {
+            applyUIKind(k)
+            showingKindPicker = false
+        } label: {
+            HStack {
+                Label(k.label, systemImage: k.icon)
+                Spacer()
+                if k == currentUIKind {
+                    Image(systemName: "checkmark").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var kindPickerPopover: some View {
+        VStack(spacing: 0) {
+            List {
+                Section("AI") {
+                    kindRow(.aiPrompt)
+                    kindRow(.extractFields)
+                }
+                Section("Transforms (no AI)") {
+                    kindRow(.findReplace)
+                    kindRow(.delimiter)
+                    kindRow(.whitespace)
+                    kindRow(.caseTransform)
+                    kindRow(.lineOps)
+                    kindRow(.homoglyph)
+                }
+                Section("On-device") {
+                    kindRow(.translate)
+                }
+            }
+            .listStyle(.inset)
+            .frame(width: 260, height: 300)
+
+            Divider()
+
+            Button {
+                showingKindPicker = false
+                openPromptLibrary()
+            } label: {
+                Label("Load from Library…", systemImage: "books.vertical")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.borderless)
+            .padding(10)
+        }
+        .frame(width: 260)
     }
 
     /// Makes this an AI step (if it isn't) and opens the saved-prompt library, filtered to
@@ -153,6 +209,10 @@ struct PipelineStepRow: View {
             kind = .extractFields
             viewModel.updateStepKind(step, .extractFields)
             if name.isEmpty || name == "New Step" { name = "Extract Fields" }
+        case .translate:
+            kind = .translate
+            viewModel.updateStepKind(step, .translate)
+            if name.isEmpty || name == "New Step" { name = "Translate" }
         default:
             if let type = newKind.transformType {
                 kind = .transform
@@ -179,6 +239,7 @@ struct PipelineStepRow: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
                 )
+                .overlay(alignment: .bottomTrailing) { DictateButton().padding(6) }
                 .onChange(of: prompt) { _, _ in savePrompt() }
 
             HStack {
@@ -492,11 +553,12 @@ struct PipelineStepRow: View {
 private enum StepUIKind: String, CaseIterable, Identifiable {
     case aiPrompt
     case extractFields
+    case translate
     case findReplace, delimiter, whitespace, caseTransform, lineOps, homoglyph
 
     var id: String { rawValue }
 
-    private var isNonTransform: Bool { self == .aiPrompt || self == .extractFields }
+    private var isNonTransform: Bool { self == .aiPrompt || self == .extractFields || self == .translate }
 
     var transformType: TextTransformType? {
         isNonTransform ? nil : TextTransformType(rawValue: rawValue)
@@ -506,6 +568,7 @@ private enum StepUIKind: String, CaseIterable, Identifiable {
         switch kind {
         case .aiPrompt:      self = .aiPrompt
         case .extractFields: self = .extractFields
+        case .translate:     self = .translate
         case .transform:     self = StepUIKind(rawValue: type.rawValue) ?? .findReplace
         }
     }
@@ -514,6 +577,7 @@ private enum StepUIKind: String, CaseIterable, Identifiable {
         switch self {
         case .aiPrompt:      return "AI Prompt"
         case .extractFields: return "Extract Fields"
+        case .translate:     return "Translate"
         default:             return transformType?.displayName ?? "AI Prompt"
         }
     }
@@ -522,6 +586,7 @@ private enum StepUIKind: String, CaseIterable, Identifiable {
         switch self {
         case .aiPrompt:      return "sparkles"
         case .extractFields: return "tablecells"
+        case .translate:     return "globe"
         default:             return transformType?.icon ?? "sparkles"
         }
     }

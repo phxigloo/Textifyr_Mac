@@ -153,6 +153,8 @@ struct ContentView: View {
                 DisclaimerView()
             }
         }
+        // Hidden host that keeps an on-device TranslationSession available for `.translate` steps.
+        .background { TranslationHostView() }
         // Deep links arrive via the AppDelegate's Apple Event handler (not
         // onOpenURL) so SwiftUI doesn't open a duplicate window for them.
         .onReceive(NotificationCenter.default.publisher(for: .incomingDeepLink)) { note in
