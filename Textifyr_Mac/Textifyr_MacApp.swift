@@ -105,6 +105,15 @@ struct Textifyr_MacApp: App {
         print(String(format: "⏱️ [startup] seedIfNeeded: %.0f ms", (afterSeed - afterContainer) * 1000))
 
         Self.sweepStaleTempFiles()
+
+        // Registered at launch, not when a view appears (26.5). An installed language pair now
+        // translates through a directly-constructed session, so a `.translate` step no longer needs a
+        // document window open — but it does need the translator in the registry before any run
+        // starts, and `TranslationHostView.onAppear` was too late for a windowless launch.
+        if TranslationRegistry.current == nil {
+            TranslationRegistry.current = SessionTextTranslator()
+        }
+
         print(String(format: "⏱️ [startup] init() total (blocks main thread): %.0f ms", (CFAbsoluteTimeGetCurrent() - t0) * 1000))
     }
 
@@ -355,6 +364,7 @@ private struct AppCommands: Commands {
             }
             Button("Documents") { openMode(.documents) }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
+
         }
 
         // MARK: View menu

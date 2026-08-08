@@ -227,8 +227,6 @@ struct CaptureReviewStages: View {
     @State private var pipelineProgress: DocumentFormattingService.Progress? = nil
     @State private var errorText: String? = nil
 
-    @State private var isTranslating = false
-    @State private var translateTask: Task<Void, Never>? = nil
     @State private var splitSheetRTFData: Data? = nil
     @State private var showActionEditor = false
 
@@ -338,7 +336,6 @@ struct CaptureReviewStages: View {
             ToolColumnFooter {
                 Button("Cancel") {
                     runningPipelineTask?.cancel()
-                    translateTask?.cancel()
                     stopDictationIfActive()
                     onCancel()
                 }
@@ -427,19 +424,11 @@ struct CaptureReviewStages: View {
                     .font(.caption2).textCase(.uppercase)
                     .foregroundStyle(.tertiary)
                 Spacer()
-                if isTranslating {
-                    ProgressView().controlSize(.small)
-                    Text("Translating…").font(.caption).foregroundStyle(.secondary)
-                    Button("Cancel") {
-                        translateTask?.cancel(); translateTask = nil; isTranslating = false
-                    }
-                    .buttonStyle(.borderless).font(.caption)
-                } else {
-                    TranslateButton(helpText: "Translate the captured text into the result") { lang in
-                        translate(to: lang)
-                    }
+                // Progress and cancellation live in the sheet now.
+                TranslateButton(helpText: "Translate the captured text into the result",
+                                sourceText: { plainTextForAI },
+                                onTranslated: { resultRTFData = textToRTF($0) })
                     .disabled(plainTextForAI.isEmpty || isRunningPipeline)
-                }
                 Button {
                     showActionEditor = true
                 } label: {
@@ -653,25 +642,6 @@ struct CaptureReviewStages: View {
             isRunningPipeline = false
             pipelineProgress = nil
             runningPipelineTask = nil
-        }
-    }
-
-    private func translate(to language: TranslationLanguage) {
-        let source = plainTextForAI
-        guard !source.isEmpty else { return }
-        isTranslating = true
-        errorText = nil
-        translateTask = Task { @MainActor in
-            do {
-                let result = try await DocumentFormattingService()
-                    .formatWithPrompt(sourceText: source, systemPrompt: language.promptText)
-                if !Task.isCancelled { resultRTFData = textToRTF(result) }
-            } catch is CancellationError {
-            } catch {
-                if !Task.isCancelled { errorText = "Translation failed: \(error.localizedDescription)" }
-            }
-            isTranslating = false
-            translateTask = nil
         }
     }
 

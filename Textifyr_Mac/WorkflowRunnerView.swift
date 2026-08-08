@@ -17,12 +17,13 @@ struct WorkflowRunnerView: View {
     var existingDocument: TextifyrDocument? = nil
     /// Re-run only the flagged sources of `existingDocument` (21.5) instead of a full run.
     var rerunFlagged: Bool = false
+    /// Passed in by the launcher, not owned here — see `AppState.workflowRunner`. A `@StateObject`
+    /// here was re-created whenever a system sheet appeared over this one, starting a second run.
+    @ObservedObject var vm: WorkflowPresetViewModel
     let onClose: (_ openedDocument: Bool) -> Void
 
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var appState: AppState
-    @StateObject private var vm = WorkflowPresetViewModel()
-    @State private var started = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,6 +48,49 @@ struct WorkflowRunnerView: View {
         } message: { req in
             Text("\(req.message)\n\nThis file was kept as-is. Continue with the remaining files, or stop here?")
         }
+        // Asked before the first stage: a workflow can't fetch a language once it's running (26.6).
+        .alert(
+            "Languages needed first",
+            isPresented: Binding(get: { vm.languagePreflight != nil }, set: { _ in }),
+            presenting: vm.languagePreflight
+        ) { req in
+            if !req.needsDownload.isEmpty {
+                Button("Download Now") { vm.resolveLanguagePreflight(.download) }
+            }
+            Button("Run Anyway") { vm.resolveLanguagePreflight(.proceed) }
+            Button("Cancel", role: .cancel) { vm.resolveLanguagePreflight(.cancel) }
+        } message: { req in
+            Text(Self.preflightMessage(req))
+        }
+    }
+
+    /// Spells out which pairs are missing and why it's being asked now rather than mid-run.
+    private static func preflightMessage(_ req: WorkflowPresetViewModel.LanguagePreflightRequest) -> String {
+        var lines: [String] = []
+
+        if !req.needsDownload.isEmpty {
+            let pairs = req.needsDownload
+                .map { "• \(TranslationCatalog.displayName(for: $0.sourceCode)) → \(TranslationCatalog.displayName(for: $0.targetCode))" }
+                .joined(separator: "\n")
+            lines.append("This workflow translates between languages that aren't on this Mac yet:\n\(pairs)")
+        }
+
+        if !req.unsupported.isEmpty {
+            let pairs = req.unsupported
+                .map { "• \(TranslationCatalog.displayName(for: $0.sourceCode)) → \(TranslationCatalog.displayName(for: $0.targetCode))" }
+                .joined(separator: "\n")
+            lines.append("This Mac can't translate these at all, and downloading won't help:\n\(pairs)")
+        }
+
+        // Accurate as of testing 2026-08-07: with the app open, choosing Run Anyway does *not* skip
+        // those steps quietly — macOS puts up its own download sheet when the run reaches each source,
+        // one per file. The earlier wording ("downloads can't start once the run is under way") was
+        // simply wrong, and would have left someone baffled by three system dialogs.
+        lines.append(req.needsDownload.isEmpty
+            ? "Those steps will fail and their text will be kept as-is."
+            : "Download them now, or choose Run Anyway and macOS will ask for each language as the run reaches it — once per file.")
+
+        return lines.joined(separator: "\n\n")
     }
 
     // MARK: - Header
@@ -217,8 +261,9 @@ struct WorkflowRunnerView: View {
     }
 
     private func startIfNeeded() {
-        guard !started else { return }
-        started = true
+        // The view model is shared and survives this view being re-created, so its own
+        // run-in-progress token is the guard — a per-view flag would reset with the new instance.
+        guard !vm.hasActiveRun else { return }
         if let existingDocument {
             if rerunFlagged {
                 // 21.5: re-run only the flagged sources, then re-finalize + export.

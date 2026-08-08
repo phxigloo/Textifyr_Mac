@@ -351,7 +351,7 @@ struct PromptBuilderView: View {
         case .aiPrompt:      return !promptText.isEmpty
         case .extractFields: return extractConfig.fields.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
         case .transform:     return true
-        case .translate:     return !translateConfig.targetLanguageCode.isEmpty
+        case .translate:     return translateConfig.hasTarget
         }
     }
 
@@ -380,12 +380,15 @@ struct PromptBuilderView: View {
         let text = activeText
         let cfg = translateConfig
         runTask = Task { @MainActor in
-            guard !cfg.targetLanguageCode.isEmpty else {
+            guard cfg.hasTarget else {
                 testError = "Choose a language to translate to."; isRunning = false; runTask = nil; return
             }
             do {
+                // "Into my language" resolves at run time, matching what the pipeline engine does.
+                let target = cfg.effectiveTargetCode(
+                    systemCode: TranslationCatalog.shared.systemLanguageCode)
                 let out = try await TranslationCoordinator.shared.translate(
-                    text, sourceCode: cfg.sourceLanguageCode, targetCode: cfg.targetLanguageCode)
+                    text, sourceCode: cfg.sourceLanguageCode, targetCode: target)
                 if !Task.isCancelled { testResult = out }
             } catch is CancellationError {
             } catch {
@@ -456,6 +459,14 @@ struct PromptBuilderView: View {
             inputEditorBody
         }
     }
+
+    /// Height of the control strip that sits directly under each column header — the sample
+    /// name/scope row in Input, the instruction-kind picker in Instruction.
+    ///
+    /// Shared and fixed so the two columns' editors start on the same line. They used to be laid out
+    /// independently and only *happened* to line up for a saved sample; the Scratchpad had no strip at
+    /// all, so its editor floated ~18pt higher than the Instruction editor beside it.
+    private static let columnStripHeight: CGFloat = 40
 
     private var inputIsScratchpad: Bool {
         if case .saved = sampleSelection { return false }
@@ -637,25 +648,39 @@ struct PromptBuilderView: View {
 
     private var scratchpadEditor: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(appState.editOrigin != nil
-                         ? "Forwarded from the action — testing against this text. Results stay here; your sources aren't changed."
-                         : "Temporary text to test against. Paste or type, then Run.")
-                        .font(.caption).foregroundStyle(.secondary)
-
-                    TextEditor(text: $scratchpadText)
-                        .font(.body)
-                        .frame(minHeight: 160)
-                        .scrollContentBackground(.hidden)
-                        .padding(6)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1))
-                        .overlay(alignment: .bottomTrailing) { DictateButton().padding(8) }
-                }
-                .padding(16)
+            // The hint lives in a strip of the shared height — same position the saved-sample name row
+            // and the Instruction kind picker occupy — so the editor below starts on the same line as
+            // the instruction editor. Kept to one line for that reason; the full wording is the tooltip.
+            HStack {
+                Text(appState.editOrigin != nil
+                     ? "Forwarded from the action — your sources aren't changed."
+                     : "Temporary text to test against. Paste or type, then Run.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(appState.editOrigin != nil
+                          ? "Forwarded from the action — testing against this text. Results stay here; your sources aren't changed."
+                          : "Temporary text to test against. Paste or type, then Run.")
+                Spacer()
             }
+            .frame(height: Self.columnStripHeight)
+            .padding(.horizontal, 14)
+
+            Divider()
+
+            ScrollView {
+                TextEditor(text: $scratchpadText)
+                    .font(.body)
+                    .frame(minHeight: 160)
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                    .overlay(alignment: .bottomTrailing) { DictateButton().padding(8) }
+                    .padding(16)
+            }
+
             inputFooter(charCount: scratchpadText.count,
                         clear: scratchpadText.isEmpty ? nil : { scratchpadText = "" })
         }
@@ -673,7 +698,8 @@ struct PromptBuilderView: View {
                 }
                 .labelsHidden().pickerStyle(.menu).controlSize(.small).frame(width: 130)
             }
-            .padding(.horizontal, 14).padding(.vertical, 8)
+            .frame(height: Self.columnStripHeight)
+            .padding(.horizontal, 14)
 
             Divider()
 
@@ -890,8 +916,8 @@ struct PromptBuilderView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+        .frame(height: Self.columnStripHeight)
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 
     @ViewBuilder
@@ -938,7 +964,9 @@ struct PromptBuilderView: View {
         case .extractFields:
             ExtractFieldsEditor(config: $extractConfig)
         case .translate:
-            TranslateConfigEditor(config: $translateConfig)
+            // Hand over the text being tested so the source language is detected from what will
+            // actually run, not assumed from the system language (26.2).
+            TranslateConfigEditor(config: $translateConfig, sampleText: activeText)
         }
     }
 
@@ -1127,7 +1155,7 @@ struct PromptBuilderView: View {
         case .extractFields:
             return !extractConfig.fields.contains { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
         case .translate:
-            return translateConfig.targetLanguageCode.isEmpty
+            return !translateConfig.hasTarget
         }
     }
 
@@ -1284,10 +1312,8 @@ struct PromptBuilderView: View {
             let names = extractConfig.fields.map(\.name).filter { !$0.isEmpty }
             return names.isEmpty ? "(no fields)" : names.joined(separator: ", ")
         case .translate:
-            guard !translateConfig.targetLanguageCode.isEmpty else { return "(no language)" }
-            let name = translationLanguages.first { $0.id == translateConfig.targetLanguageCode }?.name
-                ?? translateConfig.targetLanguageCode
-            return "Translate to \(name)"
+            guard translateConfig.hasTarget else { return "(no language)" }
+            return TranslationCatalog.shared.summary(for: translateConfig)
         }
     }
 
@@ -2144,9 +2170,7 @@ struct LoadExistingPromptSheet: View {
             let names = p.extractConfig.fields.map(\.name).filter { !$0.isEmpty }
             return "Extract Fields: " + (names.isEmpty ? "(none)" : names.joined(separator: ", "))
         case .translate:
-            let name = translationLanguages.first { $0.id == p.translateConfig.targetLanguageCode }?.name
-                ?? p.translateConfig.targetLanguageCode
-            return "Translate to " + (name.isEmpty ? "(none)" : name)
+            return TranslationCatalog.shared.summary(for: p.translateConfig)
         }
     }
 
@@ -2409,9 +2433,7 @@ struct SavePromptToLibrarySheet: View {
             let names = c.fields.map(\.name).filter { !$0.isEmpty }
             return "Extract Fields: " + (names.isEmpty ? "(none)" : names.joined(separator: ", "))
         case .translate:
-            let c = TranslateConfig.decode(translateConfigJSON)
-            let name = translationLanguages.first { $0.id == c.targetLanguageCode }?.name ?? c.targetLanguageCode
-            return "Translate to " + (name.isEmpty ? "(none)" : name)
+            return TranslationCatalog.shared.summary(for: TranslateConfig.decode(translateConfigJSON))
         }
     }
 

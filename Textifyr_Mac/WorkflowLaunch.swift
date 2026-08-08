@@ -47,7 +47,7 @@ struct WorkflowLaunchModifier: ViewModifier {
                 Text("This workflow will transcribe/extract and AI-process \(req.fileURLs.count) files. That can take a while and use significant on-device processing.")
             }
             .sheet(item: $runRequest) { req in
-                WorkflowRunnerView(preset: req.preset, fileURLs: req.fileURLs) { _ in
+                WorkflowRunnerView(preset: req.preset, fileURLs: req.fileURLs, vm: appState.workflowRunner) { _ in
                     runRequest = nil
                 }
                 .environmentObject(appState)
@@ -120,7 +120,7 @@ private struct LiveWorkflowResumeView: View {
 
     var body: some View {
         if let preset = resolvePreset(), let doc = resolveDocument() {
-            WorkflowRunnerView(preset: preset, fileURLs: [], existingDocument: doc) { _ in
+            WorkflowRunnerView(preset: preset, fileURLs: [], existingDocument: doc, vm: appState.workflowRunner) { _ in
                 appState.liveWorkflowResume = nil
             }
             .environmentObject(appState)
@@ -147,7 +147,7 @@ private struct RerunFlaggedView: View {
 
     var body: some View {
         if let preset = resolvePreset(), let doc = resolveDocument() {
-            WorkflowRunnerView(preset: preset, fileURLs: [], existingDocument: doc, rerunFlagged: true) { _ in
+            WorkflowRunnerView(preset: preset, fileURLs: [], existingDocument: doc, rerunFlagged: true, vm: appState.workflowRunner) { _ in
                 appState.rerunFlaggedRequest = nil
             }
             .environmentObject(appState)

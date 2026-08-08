@@ -17,9 +17,6 @@ struct RTFOutputView: View {
     @Query(filter: #Predicate<FormattingPipeline> { $0.scopeRawValue == "output" },
            sort: \FormattingPipeline.name) private var outputPipelines: [FormattingPipeline]
     @State private var formatBannerDismissed = false
-    @State private var isTranslating = false
-    @State private var translateTask: Task<Void, Never>? = nil
-    @State private var translateError: String? = nil
 
     @State private var showRefinePanel = false
     @State private var refinePromptText = ""
@@ -68,26 +65,6 @@ struct RTFOutputView: View {
                 }
             }
         }
-        .overlay(alignment: .top) {
-            if let err = translateError {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text(err).font(.caption).foregroundStyle(.primary)
-                    Spacer()
-                    Button { translateError = nil } label: {
-                        Image(systemName: "xmark").font(.caption2).foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .padding(.horizontal, 16)
-                .padding(.top, 52)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: translateError != nil)
         // Build/edit a Final Document action; new actions appear in the picker on dismiss. The
         // merged source text is forwarded so the action can be tested against real content (Spec 2).
         .sheet(isPresented: $showActionEditor) {
@@ -230,26 +207,15 @@ struct RTFOutputView: View {
                 .help("Run the selected action on all sources")
             }
 
-            // Translate (only when output exists and not currently formatting)
-            if document.hasOutput && !viewModel.isFormatting {
-                if isTranslating {
-                    ProgressView().controlSize(.small)
-                    Text("Translating…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Button("Cancel") {
-                        translateTask?.cancel()
-                        translateTask = nil
-                        isTranslating = false
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                } else {
-                    TranslateButton(helpText: "Translate the formatted output using AI", bordered: true) { lang in
-                        translateOutput(to: lang)
-                    }
-                }
+            // Translate (only when output exists and not currently formatting).
+            // Progress and cancellation now live in the sheet, so no inline running state here.
+            // `hasOutput` can be true with empty text (an RTF blob containing nothing), which used to
+            // open a translate UI with nothing to translate.
+            if document.hasOutput && !viewModel.isFormatting && !plainOutputText().isEmpty {
+                TranslateButton(helpText: "Translate the formatted output",
+                                bordered: true,
+                                sourceText: { plainOutputText() },
+                                onTranslated: { applyTranslatedOutput($0) })
             }
 
             // ── Section 3: Export ─────────────────────────────────────────
@@ -543,37 +509,24 @@ struct RTFOutputView: View {
 
     // MARK: - Translation
 
-    private func translateOutput(to language: TranslationLanguage) {
+    /// The current output as plain text, for the translate sheet to work on.
+    private func plainOutputText() -> String {
         guard let rtfData = document.outputRTF,
-              let attr = NSAttributedString(rtf: rtfData, documentAttributes: nil) else { return }
-        let plainText = attr.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !plainText.isEmpty else { return }
-        isTranslating = true
-        translateError = nil
-        translateTask = Task { @MainActor in
-            do {
-                let result = try await DocumentFormattingService()
-                    .formatWithPrompt(sourceText: plainText, systemPrompt: language.promptText)
-                if !Task.isCancelled {
-                    let newAttr = NSAttributedString(
-                        string: result,
-                        attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]
-                    )
-                    let range = NSRange(location: 0, length: newAttr.length)
-                    if let newRTF = try? newAttr.data(
-                        from: range,
-                        documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
-                    ) {
-                        document.outputRTF = newRTF
-                    }
-                }
-            } catch is CancellationError {
-            } catch {
-                if !Task.isCancelled { translateError = error.localizedDescription }
-            }
-            isTranslating = false
-            translateTask = nil
-        }
+              let attr = NSAttributedString(rtf: rtfData, documentAttributes: nil) else { return "" }
+        return attr.string.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Replaces the document output with translated text.
+    private func applyTranslatedOutput(_ text: String) {
+        guard !text.isEmpty else { return }
+        let attr = NSAttributedString(
+            string: text,
+            attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)])
+        guard let rtf = try? attr.data(
+            from: NSRange(location: 0, length: attr.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+        else { return }
+        document.outputRTF = rtf
     }
 }
 
